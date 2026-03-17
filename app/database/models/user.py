@@ -1,0 +1,37 @@
+"""User model for real people using VPN."""
+
+from typing import TYPE_CHECKING
+
+from sqlalchemy import BigInteger, Boolean, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.database.models.base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.database.models.subscription_group import SubscriptionGroup
+
+
+class User(Base, TimestampMixin):
+    """Real person who uses VPN."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    telegram_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        nullable=True,
+        unique=True,
+    )
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    subscription_groups: Mapped[list["SubscriptionGroup"]] = relationship(
+        "SubscriptionGroup",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, name='{self.name}', telegram_id={self.telegram_id})>"

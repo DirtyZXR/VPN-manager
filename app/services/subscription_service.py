@@ -1,0 +1,496 @@
+"""Subscription service for managing VPN subscriptions."""
+
+from datetime import datetime
+from typing import Sequence
+
+from loguru import logger
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.database.models import (
+    Inbound,
+    Profile,
+    Server,
+    ServerSubscription,
+    SubscriptionGroup,
+    User,
+)
+from app.utils import generate_email, generate_subscription_token, generate_uuid
+from app.xui_client import XUIAddClientRequest, XUIClient, XUIError
+
+
+class SubscriptionService:
+    """Service for managing VPN subscriptions."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        """Initialize service with database session.
+
+        Args:
+            session: Async database session
+        """
+        self.session = session
+        self._xui_clients: dict[int, XUIClient] = {}
+
+    # Subscription Groups
+
+    async def get_user_subscription_groups(self, user_id: int) -> Sequence[SubscriptionGroup]:
+        """Get all subscription groups for user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            List of subscription groups
+        """
+        result = await self.session.execute(
+            select(SubscriptionGroup)
+            .where(SubscriptionGroup.user_id == user_id)
+            .options(selectinload(SubscriptionGroup.server_subscriptions))
+            .order_by(SubscriptionGroup.created_at)
+        )
+        return result.scalars().all()
+
+    async def get_subscription_group(self, group_id: int) -> SubscriptionGroup | None:
+        """Get subscription group by ID.
+
+        Args:
+            group_id: Group ID
+
+        Returns:
+            Subscription group or None
+        """
+        result = await self.session.execute(
+            select(SubscriptionGroup)
+            .where(SubscriptionGroup.id == group_id)
+            .options(
+                selectinload(SubscriptionGroup.user),
+                selectinload(SubscriptionGroup.server_subscriptions),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_subscription_group(
+        self,
+        user_id: int,
+        name: str,
+    ) -> SubscriptionGroup:
+        """Create a new subscription group.
+
+        Args:
+            user_id: User ID
+            name: Group name
+
+        Returns:
+            Created subscription group
+        """
+        group = SubscriptionGroup(
+            user_id=user_id,
+            name=name,
+        )
+        self.session.add(group)
+        await self.session.flush()
+        return group
+
+    async def delete_subscription_group(self, group_id: int) -> bool:
+        """Delete subscription group and all related data.
+
+        Args:
+            group_id: Group ID
+
+        Returns:
+            True if deleted
+        """
+        group = await self.get_subscription_group(group_id)
+        if not group:
+            return False
+
+        # Delete all profiles from XUI panels
+        for server_sub in group.server_subscriptions:
+            for profile in server_sub.profiles:
+                try:
+                    await self._delete_profile_from_xui(profile)
+                except Exception as e:
+                    logger.error(f"Failed to delete profile from XUI: {e}")
+
+        await self.session.delete(group)
+        await self.session.flush()
+        return True
+
+    # Server Subscriptions
+
+    async def get_server_subscription(
+        self,
+        group_id: int,
+        server_id: int,
+    ) -> ServerSubscription | None:
+        """Get server subscription by group and server.
+
+        Args:
+            group_id: Subscription group ID
+            server_id: Server ID
+
+        Returns:
+            Server subscription or None
+        """
+        result = await self.session.execute(
+            select(ServerSubscription)
+            .where(
+                ServerSubscription.subscription_group_id == group_id,
+                ServerSubscription.server_id == server_id,
+            )
+            .options(
+                selectinload(ServerSubscription.server),
+                selectinload(ServerSubscription.profiles),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_or_create_server_subscription(
+        self,
+        group_id: int,
+        server_id: int,
+    ) -> ServerSubscription:
+        """Get existing or create new server subscription.
+
+        Args:
+            group_id: Subscription group ID
+            server_id: Server ID
+
+        Returns:
+            Server subscription
+        """
+        server_sub = await self.get_server_subscription(group_id, server_id)
+        if server_sub:
+            return server_sub
+
+        # Create new server subscription with token
+        server_sub = ServerSubscription(
+            subscription_group_id=group_id,
+            server_id=server_id,
+            subscription_token=generate_subscription_token(),
+        )
+        self.session.add(server_sub)
+        await self.session.flush()
+
+        # Load relationships
+        result = await self.session.execute(
+            select(ServerSubscription)
+            .where(ServerSubscription.id == server_sub.id)
+            .options(
+                selectinload(ServerSubscription.server),
+                selectinload(ServerSubscription.subscription_group),
+            )
+        )
+        return result.scalar_one()
+
+    # Profiles
+
+    async def get_profile(self, profile_id: int) -> Profile | None:
+        """Get profile by ID.
+
+        Args:
+            profile_id: Profile ID
+
+        Returns:
+            Profile or None
+        """
+        result = await self.session.execute(
+            select(Profile)
+            .where(Profile.id == profile_id)
+            .options(
+                selectinload(Profile.inbound).selectinload(Inbound.server),
+                selectinload(Profile.server_subscription).selectinload(
+                    ServerSubscription.subscription_group
+                ),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_server_subscription_profiles(
+        self,
+        server_subscription_id: int,
+    ) -> Sequence[Profile]:
+        """Get all profiles for server subscription.
+
+        Args:
+            server_subscription_id: Server subscription ID
+
+        Returns:
+            List of profiles
+        """
+        result = await self.session.execute(
+            select(Profile)
+            .where(Profile.server_subscription_id == server_subscription_id)
+            .options(selectinload(Profile.inbound))
+            .order_by(Profile.created_at)
+        )
+        return result.scalars().all()
+
+    async def create_profile(
+        self,
+        server_subscription_id: int,
+        inbound_id: int,
+        total_gb: int = 0,
+        expiry_days: int | None = None,
+    ) -> Profile:
+        """Create a new profile on XUI panel and in database.
+
+        Args:
+            server_subscription_id: Server subscription ID
+            inbound_id: Inbound ID
+            total_gb: Traffic limit in GB (0 = unlimited)
+            expiry_days: Days until expiry (None = never)
+
+        Returns:
+            Created profile
+
+        Raises:
+            XUIError: If creation fails
+        """
+        # Get server subscription with related data
+        result = await self.session.execute(
+            select(ServerSubscription)
+            .where(ServerSubscription.id == server_subscription_id)
+            .options(
+                selectinload(ServerSubscription.server),
+                selectinload(ServerSubscription.subscription_group).selectinload(
+                    SubscriptionGroup.user
+                ),
+            )
+        )
+        server_sub = result.scalar_one_or_none()
+        if not server_sub:
+            raise XUIError("Server subscription not found")
+
+        # Get inbound
+        result = await self.session.execute(
+            select(Inbound)
+            .where(Inbound.id == inbound_id)
+            .options(selectinload(Inbound.server))
+        )
+        inbound = result.scalar_one_or_none()
+        if not inbound:
+            raise XUIError("Inbound not found")
+
+        # Verify server matches
+        if inbound.server_id != server_sub.server_id:
+            raise XUIError("Inbound does not belong to this server")
+
+        # Generate profile data
+        uuid = generate_uuid()
+        email = generate_email(
+            server_sub.subscription_group.user.name,
+            server_sub.server.name,
+            server_sub.subscription_group.name,
+        )
+
+        # Calculate expiry time
+        expiry_time = 0
+        if expiry_days:
+            from datetime import timedelta
+
+            expiry_dt = datetime.utcnow() + timedelta(days=expiry_days)
+            expiry_time = int(expiry_dt.timestamp() * 1000)
+
+        # Create client in XUI
+        client_request = XUIAddClientRequest(
+            id=uuid,
+            email=email,
+            enable=True,
+            flow="xtls-rprx-vision",
+            total_gb=total_gb * 1024 * 1024 * 1024,  # Convert GB to bytes
+            expiry_time=expiry_time,
+            sub_id=server_sub.subscription_token,
+        )
+
+        xui_client = await self._get_xui_client(inbound.server)
+        await xui_client.add_client(inbound.xui_id, client_request)
+
+        # Create profile in database
+        expiry_date = None
+        if expiry_days:
+            expiry_date = datetime.utcnow() + timedelta(days=expiry_days)
+
+        profile = Profile(
+            server_subscription_id=server_subscription_id,
+            inbound_id=inbound_id,
+            xui_client_id=uuid,
+            email=email,
+            uuid=uuid,
+            total_gb=total_gb,
+            used_gb=0,
+            expiry_date=expiry_date,
+            is_enabled=True,
+        )
+        self.session.add(profile)
+        await self.session.flush()
+
+        logger.info(
+            f"Created profile {email} on {inbound.server.name}/{inbound.remark}"
+        )
+        return profile
+
+    async def enable_profile(self, profile_id: int, enable: bool = True) -> Profile | None:
+        """Enable or disable profile.
+
+        Args:
+            profile_id: Profile ID
+            enable: True to enable, False to disable
+
+        Returns:
+            Updated profile or None
+        """
+        profile = await self.get_profile(profile_id)
+        if not profile:
+            return None
+
+        # Update in XUI
+        inbound = profile.inbound
+        server = inbound.server
+
+        xui_client = await self._get_xui_client(server)
+        await xui_client.enable_client(inbound.xui_id, profile.uuid, enable)
+
+        # Update in database
+        profile.is_enabled = enable
+        await self.session.flush()
+
+        logger.info(f"{'Enabled' if enable else 'Disabled'} profile {profile.email}")
+        return profile
+
+    async def delete_profile(self, profile_id: int) -> bool:
+        """Delete profile from XUI and database.
+
+        Args:
+            profile_id: Profile ID
+
+        Returns:
+            True if deleted
+        """
+        profile = await self.get_profile(profile_id)
+        if not profile:
+            return False
+
+        # Delete from XUI
+        await self._delete_profile_from_xui(profile)
+
+        # Delete from database
+        await self.session.delete(profile)
+        await self.session.flush()
+
+        logger.info(f"Deleted profile {profile.email}")
+        return True
+
+    async def _delete_profile_from_xui(self, profile: Profile) -> None:
+        """Delete profile from XUI panel.
+
+        Args:
+            profile: Profile to delete
+        """
+        inbound = profile.inbound
+        server = inbound.server
+
+        xui_client = await self._get_xui_client(server)
+        await xui_client.delete_client(inbound.xui_id, profile.uuid)
+
+    async def _get_xui_client(self, server: Server) -> XUIClient:
+        """Get or create XUI client for server.
+
+        Args:
+            server: Server model
+
+        Returns:
+            XUI client instance
+        """
+        from app.services.xui_service import XUIService
+
+        if server.id in self._xui_clients:
+            return self._xui_clients[server.id]
+
+        # Use XUIService to get client
+        xui_service = XUIService(self.session)
+        client = await xui_service._get_client(server)
+        self._xui_clients[server.id] = client
+        return client
+
+    async def close_all_clients(self) -> None:
+        """Close all XUI clients."""
+        for client in self._xui_clients.values():
+            await client.close()
+        self._xui_clients.clear()
+
+    # Subscription URLs
+
+    async def get_subscription_urls(self, user_id: int) -> list[dict]:
+        """Get all subscription URLs for user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            List of subscription info dicts
+        """
+        groups = await self.get_user_subscription_groups(user_id)
+
+        urls = []
+        for group in groups:
+            for server_sub in group.server_subscriptions:
+                server = server_sub.server
+                # Extract host from server URL
+                from urllib.parse import urlparse
+
+                host = urlparse(server.url).netloc
+
+                urls.append(
+                    {
+                        "group_name": group.name,
+                        "server_name": server.name,
+                        "url": f"https://{host}/sub/{server_sub.subscription_token}",
+                        "token": server_sub.subscription_token,
+                    }
+                )
+
+        return urls
+
+    async def get_all_profile_links(self, user_id: int) -> list[str]:
+        """Get all direct VLESS links for user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            List of VLESS URLs
+        """
+        # This would require parsing inbound settings to build links
+        # For now, return subscription URLs as they're more practical
+        urls = await self.get_subscription_urls(user_id)
+        return [u["url"] for u in urls]
+
+    # User view helpers
+
+    async def get_user_with_subscriptions(
+        self,
+        user_id: int,
+    ) -> User | None:
+        """Get user with all subscription data.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            User with loaded relationships
+        """
+        result = await self.session.execute(
+            select(User)
+            .where(User.id == user_id)
+            .options(
+                selectinload(User.subscription_groups).selectinload(
+                    SubscriptionGroup.server_subscriptions
+                ).selectinload(ServerSubscription.server),
+                selectinload(User.subscription_groups).selectinload(
+                    SubscriptionGroup.server_subscriptions
+                ).selectinload(ServerSubscription.profiles).selectinload(Profile.inbound),
+            )
+        )
+        return result.scalar_one_or_none()
