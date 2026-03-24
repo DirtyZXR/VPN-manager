@@ -1,5 +1,6 @@
 """Service for synchronizing data between bot database and XUI panels."""
 
+import asyncio
 from datetime import datetime, timezone, timedelta
 
 from loguru import logger
@@ -30,6 +31,7 @@ class SyncService:
         """
         self.session = session
         self._is_running = False
+        self._sync_lock = asyncio.Lock()  # Блокировка для предотвращения параллельных синхронизаций
 
     # === CORE METHODS ===
 
@@ -56,30 +58,43 @@ class SyncService:
         self._is_running = False
         logger.info("🛑 Остановка фоновой синхронизации")
 
-    async def _sync_cycle(self) -> None:
-        """Один цикл синхронизации."""
-        start_time = datetime.now(timezone.utc)
-        logger.info(f"🔄 Начало цикла синхронизации в {start_time}")
+    async def _sync_cycle(self, skip_sleep: bool = False) -> None:
+        """Один цикл синхронизации.
 
-        try:
-            # 1. Синхронизировать сервера и inbounds
-            servers_synced = await self.sync_all_servers()
+        Args:
+            skip_sleep: Пропустить ожидание после завершения (для ручной синхронизации)
+        """
+        # Проверить, есть ли другая активная синхронизация
+        if self._sync_lock.locked():
+            logger.debug("⏸️ Пропуск цикла синхронизации - другая синхронизация уже выполняется")
+            if not skip_sleep:
+                await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
+            return
 
-            # 2. Проверить целостность подключений
-            integrity_ok = await self.verify_connections_integrity()
+        async with self._sync_lock:
+            start_time = datetime.now(timezone.utc)
+            logger.info(f"🔄 Начало цикла синхронизации в {start_time}")
 
-            # 3. Логировать результаты
-            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-            logger.info(
-                f"✅ Цикл синхронизации завершен за {duration:.2f}s. "
-                f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
-            )
+            try:
+                # 1. Синхронизировать сервера и inbounds
+                servers_synced = await self.sync_all_servers()
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка в цикле синхронизации: {e}", exc_info=True)
+                # 2. Проверить целостность подключений
+                integrity_ok = await self.verify_connections_integrity()
 
-        # Подождать до следующей итерации
-        await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
+                # 3. Логировать результаты
+                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+                logger.info(
+                    f"✅ Цикл синхронизации завершен за {duration:.2f}s. "
+                    f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
+                )
+
+            except Exception as e:
+                logger.error(f"❌ Ошибка в цикле синхронизации: {e}", exc_info=True)
+
+        # Подождать до следующей итерации (за пределами блокировки)
+        if not skip_sleep:
+            await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
 
     # === SERVER SYNC ===
 
@@ -122,6 +137,7 @@ class SyncService:
         Returns:
             True если успешно, False если ошибка
         """
+        xui_service = None
         try:
             # Проверить, нужна ли синхронизация
             if not force and not self._needs_sync(server):
@@ -163,6 +179,11 @@ class SyncService:
             server.sync_error = f"Unexpected: {str(e)}"
             logger.error(f"❌ Неожиданная ошибка сервера {server.id}: {e}", exc_info=True)
             return False
+
+        finally:
+            # Закрыть все aiohttp сессии
+            if xui_service:
+                await xui_service.close_all_clients()
 
     def _needs_sync(self, model: object) -> bool:
         """Проверить, нужна ли синхронизация.
@@ -290,6 +311,7 @@ class SyncService:
 
             # Дополнительная проверка: клиент существует в XUI?
             if status == "synced":
+                xui_service = None
                 try:
                     inbound = connection.inbound
                     if inbound and hasattr(inbound, "server"):
@@ -311,6 +333,9 @@ class SyncService:
 
                 except Exception as e:
                     logger.debug(f"Не удалось проверить {connection.uuid}: {e}")
+                finally:
+                    if xui_service:
+                        await xui_service.close_all_clients()
 
         await self.session.flush()
         logger.info(f"📊 Статистика целостности: {stats}")
@@ -332,39 +357,52 @@ class SyncService:
         """
         results = {"synced": 0, "errors": 0, "details": []}
 
-        try:
-            if entity_type == "all":
-                # Полная синхронизация
-                await self._sync_cycle()
-                results["synced"] = 1
+        logger.info(f"📝 manual_sync вызван с параметрами: entity_type={entity_type}, entity_id={entity_id}")
 
-            elif entity_type == "server":
-                if entity_id:
-                    server = await self.session.get(Server, entity_id)
-                    if server and await self.sync_server(server, force=True):
-                        results["synced"] += 1
+        # Использовать блокировку для предотвращения конфликтов с фоновой синхронизацией
+        logger.info(f"📝 Попытка получить блокировку для manual_sync")
+        async with self._sync_lock:
+            logger.info(f"📝 Блокировка получена, начало обработки entity_type={entity_type}")
+            try:
+                if entity_type == "all":
+                    # Полная синхронизация (без ожидания после завершения)
+                    logger.info("📝 Запуск _sync_cycle с skip_sleep=True")
+                    await self._sync_cycle(skip_sleep=True)
+                    results["synced"] = 1
+                    logger.info(f"📝 _sync_cycle завершен, results={results}")
+
+                elif entity_type == "server":
+                    if entity_id:
+                        logger.info(f"📝 Синхронизация сервера {entity_id}")
+                        server = await self.session.get(Server, entity_id)
+                        if server and await self.sync_server(server, force=True):
+                            results["synced"] += 1
+                        else:
+                            results["errors"] += 1
                     else:
-                        results["errors"] += 1
-                else:
-                    synced = await self.sync_all_servers(force=True)
-                    results["synced"] = synced
+                        logger.info("📝 Синхронизация всех серверов")
+                        synced = await self.sync_all_servers(force=True)
+                        results["synced"] = synced
+                        logger.info(f"📝 Синхронизировано {synced} серверов")
 
-            elif entity_type == "connection":
-                if entity_id:
-                    connection = await self.session.get(InboundConnection, entity_id)
-                    if connection:
-                        # TODO: Реализовать двустороннюю синхронизацию подключений
-                        connection.sync_status = "synced"
-                        connection.last_sync_at = datetime.now(timezone.utc)
-                        results["synced"] += 1
-                    else:
-                        results["errors"] += 1
+                elif entity_type == "connection":
+                    if entity_id:
+                        logger.info(f"📝 Синхронизация подключения {entity_id}")
+                        connection = await self.session.get(InboundConnection, entity_id)
+                        if connection:
+                            # TODO: Реализовать двустороннюю синхронизацию подключений
+                            connection.sync_status = "synced"
+                            connection.last_sync_at = datetime.now(timezone.utc)
+                            results["synced"] += 1
+                        else:
+                            results["errors"] += 1
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка ручной синхронизации: {e}", exc_info=True)
-            results["errors"] += 1
-            results["details"].append(str(e))
+            except Exception as e:
+                logger.error(f"❌ Ошибка ручной синхронизации: {e}", exc_info=True)
+                results["errors"] += 1
+                results["details"].append(str(e))
 
+        logger.info(f"📝 manual_sync завершен, финальные results={results}")
         return results
 
 

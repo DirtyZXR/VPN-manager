@@ -177,6 +177,9 @@ class NewSubscriptionService:
         if subscription.expiry_date:
             expiry_time = int(subscription.expiry_date.timestamp() * 1000)
 
+        # Get Telegram ID from client
+        tg_id = int(subscription.client.telegram_id) if subscription.client.telegram_id else 0
+
         # Create client in XUI
         client_request = XUIAddClientRequest(
             id=client_uuid,
@@ -186,6 +189,7 @@ class NewSubscriptionService:
             totalGB=subscription.total_gb * 1024 * 1024 * 1024,  # Convert GB to bytes
             expiryTime=expiry_time,
             subId=subscription.subscription_token,
+            tgId=tg_id,  # Pass Telegram ID to XUI
         )
 
         try:
@@ -367,6 +371,70 @@ class NewSubscriptionService:
                     logger.warning(f"Failed to delete client from XUI: {e}")
 
         return deleted_count
+
+    async def sync_client_telegram_id(self, client_id: int) -> int:
+        """Sync Telegram ID to all XUI clients for a client.
+
+        Args:
+            client_id: Client ID
+
+        Returns:
+            Number of connections updated in XUI
+        """
+        # Get client
+        from app.database.models import Client
+        client = await self.session.get(Client, client_id)
+        if not client:
+            return 0
+
+        # Get all subscriptions for client
+        result = await self.session.execute(
+            select(Subscription)
+            .where(Subscription.client_id == client_id)
+            .options(
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+            )
+        )
+        subscriptions = result.scalars().all()
+
+        updated_count = 0
+        tg_id = int(client.telegram_id) if client.telegram_id else 0
+
+        for subscription in subscriptions:
+            for connection in subscription.inbound_connections:
+                # Update tg_id in XUI
+                inbound = connection.inbound
+                try:
+                    xui_client = await self._get_xui_client(inbound.server)
+
+                    # Create update request with new tg_id
+                    from app.xui_client.models import XUIAddClientRequest
+                    expiry_time = 0
+                    if subscription.expiry_date:
+                        expiry_time = int(subscription.expiry_date.timestamp() * 1000)
+
+                    update_request = XUIAddClientRequest(
+                        id=connection.uuid,
+                        email=connection.email,
+                        enable=True,
+                        flow="xtls-rprx-vision",
+                        totalGB=subscription.total_gb * 1024 * 1024 * 1024,
+                        expiryTime=expiry_time,
+                        subId=subscription.subscription_token,
+                        tgId=tg_id,  # Update Telegram ID
+                    )
+
+                    # Use update_client instead of add_client to avoid duplicate email error
+                    await xui_client.update_client(inbound.xui_id, update_request)
+                    updated_count += 1
+                    logger.info(f"✅ Updated Telegram ID for client {client_id} in inbound {inbound.id}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to update Telegram ID for client {client_id}: {e}")
+
+        return updated_count
 
     # Helper methods
 

@@ -300,7 +300,8 @@ class XUIService:
                 self.session.add(inbound)
             synced += 1
 
-        server.last_sync = datetime.now(timezone.utc)
+        server.last_sync_at = datetime.now(timezone.utc)
+        server.sync_status = "synced"
         await self.session.flush()
 
         logger.info(f"Synced {synced} inbounds from server {server.name}")

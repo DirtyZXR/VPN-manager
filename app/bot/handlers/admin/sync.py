@@ -47,6 +47,8 @@ async def sync_all(callback: CallbackQuery, is_admin: bool) -> None:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
+    logger.info("🔄 Начало полной синхронизации через UI")
+
     try:
         await callback.message.edit_text(
             "🔄 Запуск полной синхронизации...\n"
@@ -54,9 +56,13 @@ async def sync_all(callback: CallbackQuery, is_admin: bool) -> None:
             reply_markup=get_back_keyboard("admin_sync"),
         )
 
+        logger.info("📝 Создание сессии базы данных")
         async with async_session_factory() as session:
+            logger.info("📝 Создание SyncService")
             sync_service = SyncService(session)
+            logger.info("📝 Вызов manual_sync с параметром 'all'")
             results = await sync_service.manual_sync("all")
+            logger.info(f"📝 Результаты manual_sync: {results}")
 
         status_emoji = "✅" if results["errors"] == 0 else "⚠️"
         await callback.message.edit_text(
@@ -66,6 +72,7 @@ async def sync_all(callback: CallbackQuery, is_admin: bool) -> None:
             reply_markup=get_back_keyboard("admin_sync"),
         )
         await callback.answer("✅ Синхронизация завершена")
+        logger.info("✅ Полная синхронизация через UI завершена успешно")
 
     except Exception as e:
         logger.error(f"Ошибка полной синхронизации: {e}", exc_info=True)

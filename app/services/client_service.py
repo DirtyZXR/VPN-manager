@@ -1,6 +1,7 @@
 """Client service for managing VPN clients."""
 
 from typing import Sequence
+from loguru import logger
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -156,6 +157,11 @@ class ClientService:
         if not client:
             return None
 
+        # Track if Telegram ID is being updated
+        telegram_id_changed = False
+        if telegram_id is not None and telegram_id != client.telegram_id:
+            telegram_id_changed = True
+
         if name is not None:
             client.name = name
         if email is not None:
@@ -170,6 +176,18 @@ class ClientService:
             client.is_admin = is_admin
 
         await self.session.flush()
+
+        # Sync Telegram ID to XUI if changed
+        if telegram_id_changed:
+            try:
+                from app.services.new_subscription_service import NewSubscriptionService
+                sub_service = NewSubscriptionService(self.session)
+                updated = await sub_service.sync_client_telegram_id(client_id)
+                logger.info(f"✅ Synced Telegram ID for client {client_id}, updated {updated} connections in XUI")
+                await sub_service.close_all_clients()
+            except Exception as e:
+                logger.error(f"Failed to sync Telegram ID for client {client_id}: {e}", exc_info=True)
+
         return client
 
     async def delete_client(self, client_id: int) -> bool:

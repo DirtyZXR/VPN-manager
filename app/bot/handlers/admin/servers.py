@@ -255,10 +255,10 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
         try:
             count = await service.sync_server_inbounds(server_id)
             await session.commit()
-            await callback.answer(f"✅ Синхронизировано {count} inbounds", show_alert=True)
+            await callback.answer(f"✅ Синхронизация завершена! Обработано {count} inbounds", show_alert=True)
         except Exception as e:
             logger.error(f"Error syncing server {server_id}: {e}", exc_info=True)
-            await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+            await callback.answer(f"❌ Ошибка при синхронизации: {e}", show_alert=True)
         finally:
             await service.close_all_clients()
 
