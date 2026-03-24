@@ -5,14 +5,14 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.models.base import Base, TimestampMixin
+from app.database.models.base import Base, TimestampMixin, SyncMixin
 
 if TYPE_CHECKING:
     from app.database.models.server import Server
-    from app.database.models.profile import Profile
+    from app.database.models.inbound_connection import InboundConnection
 
 
-class Inbound(Base, TimestampMixin):
+class Inbound(Base, TimestampMixin, SyncMixin):
     """Cached inbound configuration from 3x-ui."""
 
     __tablename__ = "inbounds"
@@ -28,15 +28,16 @@ class Inbound(Base, TimestampMixin):
     protocol: Mapped[str] = mapped_column(String(50), nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     settings_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    client_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Number of XUI clients
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
     server: Mapped["Server"] = relationship("Server", back_populates="inbounds")
-    profiles: Mapped[list["Profile"]] = relationship(
-        "Profile",
+    client_connections: Mapped[list["InboundConnection"]] = relationship(
+        "InboundConnection",
         back_populates="inbound",
         cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
-        return f"<Inbound(id={self.id}, remark='{self.remark}', protocol='{self.protocol}')>"
+        return f"<Inbound(id={self.id}, remark='{self.remark}', protocol='{self.protocol}', clients={self.client_count})>"

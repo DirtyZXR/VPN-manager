@@ -188,25 +188,34 @@ class NewSubscriptionService:
             subId=subscription.subscription_token,
         )
 
-        xui_client = await self._get_xui_client(inbound.server)
-        await xui_client.add_client(inbound.xui_id, client_request)
+        try:
+            xui_client = await self._get_xui_client(inbound.server)
+            await xui_client.add_client(inbound.xui_id, client_request)
 
-        # Create inbound connection
-        connection = InboundConnection(
-            subscription_id=subscription_id,
-            inbound_id=inbound_id,
-            xui_client_id=client_uuid,
-            email=client_email,
-            uuid=client_uuid,
-            is_enabled=True,
-        )
-        self.session.add(connection)
-        await self.session.flush()
+            # Create inbound connection
+            connection = InboundConnection(
+                subscription_id=subscription_id,
+                inbound_id=inbound_id,
+                xui_client_id=client_uuid,
+                email=client_email,
+                uuid=client_uuid,
+                is_enabled=True,
+                sync_status="synced",
+                last_sync_at=datetime.now(timezone.utc),
+            )
+            self.session.add(connection)
+            await self.session.flush()
 
-        # Update inbound client count
-        inbound.client_count += 1
+            # Update inbound client count
+            inbound.client_count += 1
 
-        return connection
+            return connection
+
+        except Exception as e:
+            # Rollback on XUI error
+            await self.session.rollback()
+            logger.error(f"Failed to create XUI client: {e}", exc_info=True)
+            raise XUIError(f"Failed to create XUI client: {str(e)}")
 
     async def remove_inbound_from_subscription(
         self,

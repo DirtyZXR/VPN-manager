@@ -1,11 +1,13 @@
 """Services package."""
 
-from app.services.subscription_service import SubscriptionService
-from app.services.user_service import UserService
+from app.services.client_service import ClientService
+from app.services.new_subscription_service import NewSubscriptionService
+from app.services.sync_service import SyncService
 from app.services.xui_service import XUIService
 
 __all__ = [
-    "UserService",
-    "SubscriptionService",
+    "ClientService",
+    "NewSubscriptionService",
+    "SyncService",
     "XUIService",
 ]
