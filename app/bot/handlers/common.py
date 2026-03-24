@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
+from app.database.models import Client
 from app.bot.filters import is_admin_user
 from app.bot.keyboards import get_main_menu_keyboard
 
@@ -12,17 +13,9 @@ router = Router()
 
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext) -> None:
+async def cmd_start(message: Message, state: FSMContext, client: Client | None, is_admin: bool) -> None:
     """Handle /start command."""
     await state.clear()
-
-    # Get user info from middleware
-    user = message.data.get("user") if hasattr(message, "data") else None
-    is_admin = message.data.get("is_admin", False) if hasattr(message, "data") else False
-
-    # Check from kwargs (set by middleware)
-    user = message.conf.get("user")
-    is_admin = message.conf.get("is_admin", False)
 
     text = (
         f"👋 Добро пожаловать в VPN Manager!\n\n"
@@ -52,10 +45,8 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "admin_menu")
-async def show_admin_menu(callback: CallbackQuery) -> None:
+async def show_admin_menu(callback: CallbackQuery, is_admin: bool) -> None:
     """Show admin menu."""
-    is_admin = callback.conf.get("is_admin", False)
-
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
@@ -68,14 +59,12 @@ async def show_admin_menu(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "back")
-async def go_back(callback: CallbackQuery, state: FSMContext) -> None:
+async def go_back(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Handle back button."""
     current_state = await state.get_state()
 
     if current_state:
         await state.clear()
-
-    is_admin = callback.conf.get("is_admin", False)
 
     await callback.message.edit_text(
         "Главное меню",

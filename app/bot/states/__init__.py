@@ -1,6 +1,7 @@
 """States package."""
 
 from app.bot.states.admin import (
+    ClientManagement,
     ExportData,
     ServerManagement,
     SubscriptionManagement,
@@ -9,6 +10,7 @@ from app.bot.states.admin import (
 from app.bot.states.user import UserSubscription
 
 __all__ = [
+    "ClientManagement",
     "ServerManagement",
     "UserManagement",
     "SubscriptionManagement",

@@ -84,18 +84,42 @@ class XUIClientSettings(BaseModel):
 
 
 class XUIAddClientRequest(BaseModel):
-    """Request to add client to inbound."""
+    """Request to add/update client to inbound.
+
+    Note: Field names use camelCase to match 3x-ui API expectations.
+    """
 
     id: str  # UUID
     email: str
     enable: bool = True
-    flow: str = "xtls-rprx-vision"
-    total_gb: int = 0
-    expiry_time: int = 0
-    sub_id: str = ""
-    limit_ip: int = 0
-    tg_id: str = ""
+    flow: str = ""
+    totalGB: int = 0
+    expiryTime: int = 0
+    subId: str = ""
+    limitIp: int = 0
+    tgId: int = 0
     reset: int = 0
+
+    # Aliases for backwards compatibility
+    @property
+    def total_gb(self) -> int:
+        return self.totalGB
+
+    @property
+    def expiry_time(self) -> int:
+        return self.expiryTime
+
+    @property
+    def sub_id(self) -> str:
+        return self.subId
+
+    @property
+    def limit_ip(self) -> int:
+        return self.limitIp
+
+    @property
+    def tg_id(self) -> str:
+        return str(self.tgId)
 
 
 class XUIInboundResponse(XUIResponse):

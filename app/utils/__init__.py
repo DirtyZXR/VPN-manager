@@ -23,11 +23,14 @@ def generate_email(prefix: str, server_name: str, group_name: str) -> str:
         group_name: Subscription group name
 
     Returns:
-        Email string like "prefix_server_group@vpn"
+        Email string like "prefix_server_group_uuid@vpn"
     """
     # Clean up names for email
     clean_prefix = prefix.lower().replace(" ", "_").replace("@", "_at_")
     clean_server = server_name.lower().replace(" ", "_")
     clean_group = group_name.lower().replace(" ", "_")
 
-    return f"{clean_prefix}_{clean_server}_{clean_group}@vpn"
+    # Add UUID for uniqueness
+    unique_suffix = str(uuid_lib.uuid4())[:8]
+
+    return f"{clean_prefix}_{clean_server}_{clean_group}_{unique_suffix}@vpn"

@@ -42,6 +42,7 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+*.db-journal
 data/
 
 # Logs
@@ -62,3 +63,7 @@ dmypy.json
 
 # Ruff
 .ruff_cache/
+
+# Alembic
+alembic/versions/*.py
+!alembic/versions/.gitkeep

@@ -1,6 +1,6 @@
 """XUI service for managing 3x-ui panel connections."""
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Sequence
 
 from cryptography.fernet import Fernet
@@ -23,8 +23,10 @@ class XUIService:
         Args:
             session: Async database session
         """
+        settings = get_settings()
         self.session = session
-        self._cipher = Fernet(get_settings().encryption_key.encode())
+        self._cipher = Fernet(settings.encryption_key.encode())
+        self._timeout = settings.xui_timeout
         self._clients: dict[int, XUIClient] = {}
 
     def _encrypt_password(self, password: str) -> str:
@@ -66,6 +68,7 @@ class XUIService:
             base_url=server.url,
             username=server.username,
             password=password,
+            timeout=self._timeout,
         )
         await client.connect()
         self._clients[server.id] = client
@@ -78,13 +81,22 @@ class XUIService:
             server_id: Server ID
         """
         if server_id in self._clients:
-            await self._clients[server_id].close()
-            del self._clients[server_id]
+            try:
+                client = self._clients[server_id]
+                if client._session and not client._session.closed:
+                    await client.close()
+            except Exception as e:
+                logger.warning(f"Error closing XUI client for server {server_id}: {e}")
+            finally:
+                self._clients.pop(server_id, None)
 
     async def close_all_clients(self) -> None:
-        """Close all XUI clients."""
+        """Close all XUI clients properly."""
         for server_id in list(self._clients.keys()):
-            await self.close_client(server_id)
+            try:
+                await self.close_client(server_id)
+            except Exception as e:
+                logger.warning(f"Error closing client for server {server_id}: {e}")
 
     # Server management
 
@@ -288,7 +300,7 @@ class XUIService:
                 self.session.add(inbound)
             synced += 1
 
-        server.last_sync = datetime.utcnow()
+        server.last_sync = datetime.now(timezone.utc)
         await self.session.flush()
 
         logger.info(f"Synced {synced} inbounds from server {server.name}")
@@ -339,3 +351,62 @@ class XUIService:
             .where(Inbound.id == inbound_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_inbound_clients(self, inbound_id: int) -> list[dict]:
+        """Get clients from XUI panel for specific inbound.
+
+        Args:
+            inbound_id: Inbound ID
+
+        Returns:
+            List of client information dicts
+        """
+        inbound = await self.get_inbound_by_id(inbound_id)
+        if not inbound:
+            return []
+
+        client = await self._get_client(inbound.server)
+        clients = await client.get_clients(inbound.xui_id)
+
+        return clients
+
+    async def get_inbound_client_stats(self, inbound_id: int) -> dict:
+        """Get statistics for clients in inbound.
+
+        Args:
+            inbound_id: Inbound ID
+
+        Returns:
+            Dictionary with client statistics
+        """
+        clients = await self.get_inbound_clients(inbound_id)
+
+        stats = {
+            "total_clients": len(clients),
+            "enabled_clients": 0,
+            "disabled_clients": 0,
+            "total_used_gb": 0,
+            "clients": []
+        }
+
+        for client in clients:
+            is_enabled = client.get("enable", True)
+            if is_enabled:
+                stats["enabled_clients"] += 1
+            else:
+                stats["disabled_clients"] += 1
+
+            # Calculate used traffic (convert from bytes to GB)
+            used_gb = client.get("up", 0) + client.get("down", 0)
+            stats["total_used_gb"] += used_gb / (1024**3)
+
+            stats["clients"].append({
+                "email": client.get("email", "N/A"),
+                "uuid": client.get("id", "N/A"),
+                "enabled": is_enabled,
+                "used_gb": used_gb / (1024**3),
+                "total_gb": client.get("totalGB", 0) / (1024**3) if client.get("totalGB") else 0,
+                "expiry_time": client.get("expiryTime", 0),
+            })
+
+        return stats

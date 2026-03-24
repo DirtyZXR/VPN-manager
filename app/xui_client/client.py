@@ -59,14 +59,18 @@ class XUIClient:
         await self.login()
 
     async def close(self) -> None:
-        """Close session and logout."""
+        """Close session properly.
+
+        Note: Logout is not necessary for 3x-ui panels. Session cleanup
+        happens automatically when closing the HTTP session.
+        """
         if self._session:
             try:
-                await self.logout()
+                await self._session.close()
             except Exception as e:
-                logger.warning(f"Error during logout: {e}")
-            await self._session.close()
-            self._session = None
+                logger.warning(f"Error closing session: {e}")
+            finally:
+                self._session = None
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Get active session or raise error."""
@@ -117,6 +121,10 @@ class XUIClient:
             raise XUIConnectionError(f"Connection error: {e}") from e
         except json.JSONDecodeError as e:
             raise XUIError(f"Invalid JSON response: {e}") from e
+        except Exception as e:
+            # Catch any other exceptions to prevent session leaks
+            logger.warning(f"Unexpected error in XUI request: {e}")
+            raise XUIError(f"Request failed: {e}") from e
 
     async def login(self) -> bool:
         """Login to panel and store session cookie.
@@ -150,19 +158,6 @@ class XUIClient:
 
         except aiohttp.ClientError as e:
             raise XUIConnectionError(f"Connection error during login: {e}") from e
-
-    async def logout(self) -> bool:
-        """Logout from panel.
-
-        Returns:
-            True if logout successful
-        """
-        try:
-            data = await self._request("POST", "/logout")
-            return data.get("success", False)
-        except Exception as e:
-            logger.warning(f"Error during logout: {e}")
-            return False
 
     async def get_inbounds(self) -> list[XUIInbound]:
         """Get list of all inbounds.
@@ -241,8 +236,8 @@ class XUIClient:
 
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/addClient/{inbound_id}",
-            json=settings,
+            "/panel/api/inbounds/addClient",
+            data={"id": str(inbound_id), "settings": json.dumps(settings)},
         )
 
         if not data.get("success", False):
@@ -276,8 +271,8 @@ class XUIClient:
 
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/updateClient/{inbound_id}",
-            json=settings,
+            f"/panel/api/inbounds/updateClient/{client.id}",
+            data={"id": inbound_id, "settings": json.dumps(settings)},
         )
 
         if not data.get("success", False):
@@ -330,10 +325,14 @@ class XUIClient:
         Returns:
             True if successful
         """
-        # First get current client data
-        clients = await self.get_clients(inbound_id)
+        # First get current client data from inbound
+        inbound = await self.get_inbound(inbound_id)
+        import json
+        settings_data = json.loads(inbound.settings)
+        clients_list = settings_data.get("clients", [])
+
         client_data = None
-        for c in clients:
+        for c in clients_list:
             if c.get("id") == client_uuid:
                 client_data = c
                 break
@@ -379,24 +378,24 @@ class XUIClient:
     async def reset_client_traffic(
         self,
         inbound_id: int,
-        client_uuid: str,
+        client_email: str,
     ) -> bool:
         """Reset client traffic statistics.
 
         Args:
             inbound_id: Inbound ID
-            client_uuid: Client UUID
+            client_email: Client email
 
         Returns:
             True if successful
         """
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/{inbound_id}/resetClientTraffic/{client_uuid}",
+            f"/panel/api/inbounds/{inbound_id}/resetClientTraffic/{client_email}",
         )
 
         if not data.get("success", False):
             raise XUIError(f"Failed to reset traffic: {data.get('msg', 'Unknown error')}")
 
-        logger.info(f"Reset traffic for client {client_uuid}")
+        logger.info(f"Reset traffic for client {client_email}")
         return True

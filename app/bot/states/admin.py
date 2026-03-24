@@ -23,30 +23,38 @@ class UserManagement(StatesGroup):
     waiting_for_new_name = State()
 
 
+class ClientManagement(StatesGroup):
+    """Client management states."""
+
+    waiting_for_name = State()
+    waiting_for_email = State()
+    waiting_for_telegram_id = State()
+    waiting_for_new_name = State()
+    waiting_for_new_telegram_id = State()
+    confirm_delete = State()
+
+    # Add inbound to subscription states
+    waiting_for_inbound_server = State()
+    waiting_for_inbound_selection = State()
+
+
 class SubscriptionManagement(StatesGroup):
     """Subscription management states."""
 
-    # Select user
-    waiting_for_user_selection = State()
+    # Select client
+    waiting_for_client_selection = State()
 
     # Select server
     waiting_for_server_selection = State()
 
-    # Select inbound
+    # Select inbound (multiple selection)
     waiting_for_inbound_selection = State()
 
-    # Select or create group
-    waiting_for_group_action = State()
-    waiting_for_new_group_name = State()
-
-    # Profile parameters
+    # Subscription parameters
+    waiting_for_subscription_name = State()
     waiting_for_traffic_limit = State()
     waiting_for_expiry_days = State()
     confirm_creation = State()
-
-    # Profile management
-    waiting_for_profile_action = State()
-    confirm_profile_delete = State()
 
 
 class ExportData(StatesGroup):
