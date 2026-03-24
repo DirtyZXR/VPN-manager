@@ -4,20 +4,28 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.config import get_settings
 
-settings = get_settings()
+def _get_engine():
+    """Get database engine (lazy loaded)."""
+    from app.config import get_settings
+    settings = get_settings()
+    return create_async_engine(
+        settings.database_url,
+        echo=settings.log_level == "DEBUG",
+    )
 
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.log_level == "DEBUG",
-)
 
-async_session_factory = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
+def _get_session_factory():
+    """Get session factory (lazy loaded)."""
+    return async_sessionmaker(
+        _get_engine(),
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+
+engine = _get_engine()
+async_session_factory = _get_session_factory()
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

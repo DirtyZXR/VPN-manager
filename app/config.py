@@ -41,6 +41,12 @@ class Settings(BaseSettings):
         description="Logging level",
     )
 
+    # XUI Client
+    xui_timeout: int = Field(
+        default=30,
+        description="XUI client timeout in seconds",
+    )
+
     @property
     def admin_ids(self) -> Set[int]:
         """Parse admin Telegram IDs from comma-separated string."""

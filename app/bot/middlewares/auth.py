@@ -1,25 +1,26 @@
-"""Auth middleware for checking user permissions."""
+"""Auth middleware for checking client permissions."""
 
-from typing import Callable, Awaitable
+from typing import Any, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject, User as TgUser
+from loguru import logger
 
 from app.config import get_settings
 from app.database import async_session_factory
-from app.services.user_service import UserService
+from app.services.client_service import ClientService
 
 
 class AuthMiddleware(BaseMiddleware):
-    """Middleware for user authentication and registration."""
+    """Middleware for client authentication and registration."""
 
     async def __call__(
         self,
-        handler: Callable[[TelegramObject, dict[str, any]], Awaitable[any]],
+        handler: Callable[[TelegramObject, dict[str, Any]], Any],
         event: TelegramObject,
-        data: dict[str, any],
-    ) -> any:
-        """Process request and add user to data.
+        data: dict[str, Any],
+    ) -> Any:
+        """Process request and add client to data.
 
         Args:
             handler: Next handler
@@ -34,28 +35,37 @@ class AuthMiddleware(BaseMiddleware):
         if not tg_user:
             return await handler(event, data)
 
+        logger.debug(f"Checking client: ID={tg_user.id}, full_name={tg_user.full_name}")
         settings = get_settings()
 
-        # Check if user is admin by telegram ID
+        # Check if client is admin by telegram ID from config
         is_admin = settings.is_admin(tg_user.id)
+        logger.debug(f"Client is_admin={is_admin}, admin_ids={settings.admin_ids}")
 
         async with async_session_factory() as session:
-            user_service = UserService(session)
+            client_service = ClientService(session)
 
-            # Try to find user by telegram ID
-            user = await user_service.get_user_by_telegram_id(tg_user.id)
+            # Try to find client by telegram ID
+            client = await client_service.get_client_by_telegram_id(tg_user.id)
 
-            if not user and is_admin:
-                # Auto-create admin user
-                user = await user_service.create_user(
+            if not client and is_admin:
+                # Auto-create admin client
+                logger.info(f"Auto-creating admin client: {tg_user.full_name} (ID: {tg_user.id})")
+                client = await client_service.create_client(
                     name=tg_user.full_name,
                     telegram_id=tg_user.id,
                     is_admin=True,
                 )
                 await session.commit()
 
-            # Add user to data
-            data["user"] = user
-            data["is_admin"] = is_admin
+            # Update client admin status from database if exists
+            if client:
+                is_admin = client.is_admin
+
+            # Update data dict with middleware results
+            data.update({
+                "client": client,
+                "is_admin": is_admin,
+            })
 
         return await handler(event, data)

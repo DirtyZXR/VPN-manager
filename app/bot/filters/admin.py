@@ -7,22 +7,18 @@ from aiogram.types import Message, CallbackQuery
 class AdminFilter(BaseFilter):
     """Filter to check if user is admin."""
 
-    async def __call__(self, event: Message | CallbackQuery) -> bool:
+    async def __call__(self, event: Message | CallbackQuery, **kwargs) -> bool:
         """Check if user is admin.
 
         Args:
             event: Message or CallbackQuery
+            **kwargs: Additional data from middleware (including is_admin)
 
         Returns:
             True if user is admin
         """
-        # Get is_admin from middleware data
-        if isinstance(event, CallbackQuery):
-            # For callback queries, check from middleware
-            return event.data is not None
-
-        # For messages, this will be checked via middleware data
-        return True
+        # Get is_admin from middleware data passed via kwargs
+        return kwargs.get("is_admin", False)
 
 
 def is_admin_user(data: dict) -> bool:

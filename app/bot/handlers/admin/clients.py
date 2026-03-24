@@ -13,7 +13,7 @@ from app.bot.keyboards import (
     get_servers_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
-from app.database import async_session_factory
+from app.database import get_session, async_session_factory
 from app.services.client_service import ClientService
 
 router = Router()
@@ -26,7 +26,7 @@ async def show_clients(callback: CallbackQuery, is_admin: bool) -> None:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         clients = await service.get_all_clients()
 
@@ -121,7 +121,7 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
             await message.answer("❌ Telegram ID должен быть числом или '-'.")
             return
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         try:
             client = await service.create_client(
@@ -129,8 +129,6 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
                 email=data.get("email"),
                 telegram_id=telegram_id,
             )
-            await session.commit()
-
             await state.clear()
             await message.answer(
                 f"✅ Клиент '{client.name}' успешно создан!\n\n"
@@ -151,7 +149,7 @@ async def _show_client_details(client_id: int, callback: CallbackQuery) -> None:
         client_id: Client ID
         callback: Original callback query
     """
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         client = await service.get_client_by_id(client_id)
 
@@ -221,7 +219,7 @@ async def show_client_subscriptions(callback: CallbackQuery, is_admin: bool) -> 
 
     from app.services.new_subscription_service import NewSubscriptionService
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = NewSubscriptionService(session)
         subscriptions = await service.get_client_subscriptions(client_id)
 
@@ -271,7 +269,7 @@ async def start_create_subscription_for_client(callback: CallbackQuery, state: F
     from app.bot.handlers.admin.subscriptions import start_create_subscription
 
     # Reuse subscription creation flow with pre-selected client
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = XUIService(session)
         servers = await service.get_active_servers()
 
@@ -302,7 +300,7 @@ async def select_subscription(callback: CallbackQuery, is_admin: bool) -> None:
 
     from app.services.new_subscription_service import NewSubscriptionService
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription_by_id(subscription_id)
 
@@ -360,7 +358,7 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
     from app.services.new_subscription_service import NewSubscriptionService
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription_by_id(subscription_id)
 
@@ -428,7 +426,7 @@ async def start_add_inbound(callback: CallbackQuery, state: FSMContext, is_admin
     # Show server selection
     from app.services.xui_service import XUIService
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = XUIService(session)
         servers = await service.get_active_servers()
 
@@ -456,7 +454,7 @@ async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMConte
 
     from app.services.xui_service import XUIService
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = XUIService(session)
         inbounds = await service.get_server_inbounds(server_id)
 
@@ -487,7 +485,7 @@ async def confirm_add_inbound(callback: CallbackQuery, state: FSMContext) -> Non
     from app.services.xui_service import XUIService
     from app.database.models import Subscription, Inbound
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = XUIService(session)
 
         # Get subscription and inbound info
@@ -636,11 +634,9 @@ async def process_rename_client(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     client_id = data["client_id"]
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         client = await service.rename_client(client_id, message.text)
-        await session.commit()
-
     await state.clear()
     await message.answer(
         f"✅ Клиент переименован в '{client.name}'",
@@ -666,14 +662,12 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
     elif telegram_id_input == "-":
         telegram_id = None  # Remove Telegram ID
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         client = await service.update_client(
             client_id,
             telegram_id=telegram_id,
         )
-        await session.commit()
-
     await state.clear()
     if telegram_id:
         await message.answer(
@@ -714,6 +708,9 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
             await callback.answer(f"✅ Клиент включен. Активировано {toggled} подключений в XUI.")
             # Re-select to refresh view
             await _show_client_details(client_id, callback)
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await sub_service.close_all_clients()
 
@@ -744,6 +741,9 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
             await callback.answer(f"✅ Клиент отключен. Деактивировано {toggled} подключений в XUI.")
             await _show_client_details(client_id, callback)
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await sub_service.close_all_clients()
 
@@ -797,6 +797,9 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
             await state.clear()
             await callback.answer(f"✅ Клиент удален. Удалено {deleted_count} подключений из XUI.")
             await show_clients(callback, is_admin)
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await sub_service.close_all_clients()
 
@@ -810,10 +813,9 @@ async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         await service.set_client_admin(client_id, True)
-        await session.commit()
 
     await callback.answer("✅ Клиент теперь админ.")
     # Re-select to refresh view
@@ -829,10 +831,9 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         service = ClientService(session)
         await service.set_client_admin(client_id, False)
-        await session.commit()
 
     await callback.answer("✅ Клиент больше не админ.")
     # Re-select to refresh view

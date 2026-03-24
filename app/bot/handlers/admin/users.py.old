@@ -17,18 +17,11 @@ from app.services.user_service import UserService
 router = Router()
 
 
-async def check_admin(callback: CallbackQuery) -> bool:
-    """Check if user is admin."""
-    is_admin = callback.conf.get("is_admin", False)
+@router.callback_query(F.data == "admin_users")
+async def show_users(callback: CallbackQuery, is_admin: bool) -> None:
+    """Show users list."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-    return is_admin
-
-
-@router.callback_query(F.data == "admin_users")
-async def show_users(callback: CallbackQuery) -> None:
-    """Show users list."""
-    if not await check_admin(callback):
         return
 
     async with async_session_factory() as session:
@@ -50,9 +43,10 @@ async def show_users(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "user_add")
-async def start_add_user(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_add_user(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Start adding new user."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     await state.set_state(UserManagement.waiting_for_name)
@@ -106,9 +100,10 @@ async def process_user_telegram_id(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("user_select_"))
-async def select_user(callback: CallbackQuery) -> None:
+async def select_user(callback: CallbackQuery, is_admin: bool) -> None:
     """Show user details and actions."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     user_id = int(callback.data.split("_")[-1])
@@ -140,9 +135,10 @@ async def select_user(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("user_rename_"))
-async def start_rename_user(callback: CallbackQuery, state: FSMContext) -> None:
+async def start_rename_user(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Start renaming user."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     user_id = int(callback.data.split("_")[-1])
@@ -175,9 +171,10 @@ async def process_rename_user(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("user_enable_"))
-async def enable_user(callback: CallbackQuery) -> None:
+async def enable_user(callback: CallbackQuery, is_admin: bool) -> None:
     """Enable user."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     user_id = int(callback.data.split("_")[-1])
@@ -194,9 +191,10 @@ async def enable_user(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("user_disable_"))
-async def disable_user(callback: CallbackQuery) -> None:
+async def disable_user(callback: CallbackQuery, is_admin: bool) -> None:
     """Disable user."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     user_id = int(callback.data.split("_")[-1])
@@ -212,9 +210,10 @@ async def disable_user(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("user_delete_"))
-async def confirm_delete_user(callback: CallbackQuery, state: FSMContext) -> None:
+async def confirm_delete_user(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Confirm user deletion."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     user_id = int(callback.data.split("_")[-1])
@@ -230,9 +229,10 @@ async def confirm_delete_user(callback: CallbackQuery, state: FSMContext) -> Non
 
 
 @router.callback_query(F.data.startswith("confirm_user_delete_"))
-async def delete_user(callback: CallbackQuery, state: FSMContext) -> None:
+async def delete_user(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Delete user."""
-    if not await check_admin(callback):
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
     user_id = int(callback.data.split("_")[-1])

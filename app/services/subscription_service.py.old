@@ -1,10 +1,12 @@
 """Subscription service for managing VPN subscriptions."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Sequence
+from urllib.parse import urlparse
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +18,7 @@ from app.database.models import (
     SubscriptionGroup,
     User,
 )
+from app.services.xui_service import XUIService
 from app.utils import generate_email, generate_subscription_token, generate_uuid
 from app.xui_client import XUIAddClientRequest, XUIClient, XUIError
 
@@ -159,19 +162,34 @@ class SubscriptionService:
 
         Returns:
             Server subscription
+
+        Raises:
+            XUIError: If creation fails
         """
         server_sub = await self.get_server_subscription(group_id, server_id)
         if server_sub:
             return server_sub
 
         # Create new server subscription with token
-        server_sub = ServerSubscription(
-            subscription_group_id=group_id,
-            server_id=server_id,
-            subscription_token=generate_subscription_token(),
-        )
-        self.session.add(server_sub)
-        await self.session.flush()
+        # Try multiple times to generate unique token
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                server_sub = ServerSubscription(
+                    subscription_group_id=group_id,
+                    server_id=server_id,
+                    subscription_token=generate_subscription_token(),
+                )
+                self.session.add(server_sub)
+                await self.session.flush()
+                break
+            except IntegrityError:
+                logger.warning(f"Duplicate token generated, attempt {attempt + 1}/{max_attempts}")
+                await self.session.rollback()
+                if attempt == max_attempts - 1:
+                    raise XUIError("Failed to generate unique subscription token after multiple attempts")
+        else:
+            raise XUIError("Failed to create server subscription")
 
         # Load relationships
         result = await self.session.execute(
@@ -288,8 +306,6 @@ class SubscriptionService:
         # Calculate expiry time
         expiry_time = 0
         if expiry_days:
-            from datetime import timedelta
-
             expiry_dt = datetime.utcnow() + timedelta(days=expiry_days)
             expiry_time = int(expiry_dt.timestamp() * 1000)
 
@@ -403,8 +419,6 @@ class SubscriptionService:
         Returns:
             XUI client instance
         """
-        from app.services.xui_service import XUIService
-
         if server.id in self._xui_clients:
             return self._xui_clients[server.id]
 
@@ -438,8 +452,6 @@ class SubscriptionService:
             for server_sub in group.server_subscriptions:
                 server = server_sub.server
                 # Extract host from server URL
-                from urllib.parse import urlparse
-
                 host = urlparse(server.url).netloc
 
                 urls.append(

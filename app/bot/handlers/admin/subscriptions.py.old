@@ -1,0 +1,339 @@
+"""Admin subscription management handlers."""
+
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+
+from app.bot.keyboards import (
+    get_back_keyboard,
+    get_confirm_keyboard,
+    get_inbounds_keyboard,
+    get_servers_keyboard,
+    get_subscription_groups_keyboard,
+    get_users_keyboard,
+)
+from app.bot.states import SubscriptionManagement
+from app.database import async_session_factory
+from app.services.subscription_service import SubscriptionService
+from app.services.user_service import UserService
+from app.services.xui_service import XUIService
+
+router = Router()
+
+
+@router.callback_query(F.data == "admin_create_subscription")
+async def start_create_subscription(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start subscription creation flow."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    async with async_session_factory() as session:
+        service = UserService(session)
+        users = await service.get_active_users()
+
+    if not users:
+        await callback.answer("❌ Нет пользователей. Сначала создайте пользователя.", show_alert=True)
+        return
+
+    await state.set_state(SubscriptionManagement.waiting_for_user_selection)
+    await callback.message.edit_text(
+        "📝 Создание подписки\n\n"
+        "Выберите пользователя:",
+        reply_markup=get_users_keyboard(users),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.waiting_for_user_selection, F.data.startswith("user_select_"))
+async def select_user_for_subscription(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle user selection for subscription."""
+    user_id = int(callback.data.split("_")[-1])
+    await state.update_data(user_id=user_id)
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        servers = await service.get_active_servers()
+
+    if not servers:
+        await callback.answer("❌ Нет активных серверов. Сначала добавьте сервер.", show_alert=True)
+        return
+
+    await state.set_state(SubscriptionManagement.waiting_for_server_selection)
+    await callback.message.edit_text(
+        "Выберите сервер:",
+        reply_markup=get_servers_keyboard(servers, action="sub_select"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.waiting_for_server_selection, F.data.startswith("server_sub_select_"))
+async def select_server_for_subscription(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle server selection for subscription."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        inbounds = await service.get_server_inbounds(server_id)
+
+    if not inbounds:
+        await callback.answer("❌ У сервера нет активных inbounds. Сначала синхронизируйте сервер.", show_alert=True)
+        return
+
+    await state.set_state(SubscriptionManagement.waiting_for_inbound_selection)
+    await callback.message.edit_text(
+        "Выберите inbound (тип подключения):",
+        reply_markup=get_inbounds_keyboard(inbounds),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.waiting_for_inbound_selection, F.data.startswith("inbound_select_"))
+async def select_inbound_for_subscription(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle inbound selection - show group options."""
+    inbound_id = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    user_id = data["user_id"]
+
+    await state.update_data(inbound_id=inbound_id)
+
+    async with async_session_factory() as session:
+        service = SubscriptionService(session)
+        groups = await service.get_user_subscription_groups(user_id)
+
+    if groups:
+        await state.set_state(SubscriptionManagement.waiting_for_group_action)
+        await callback.message.edit_text(
+            "У пользователя есть группы подписок. Выберите существующую или создайте новую:",
+            reply_markup=get_subscription_groups_keyboard(groups),
+        )
+    else:
+        await state.set_state(SubscriptionManagement.waiting_for_new_group_name)
+        await callback.message.edit_text(
+            "У пользователя нет групп подписок.\n\n"
+            "Введите название для новой группы (например, 'Основная'):",
+            reply_markup=get_back_keyboard("admin_create_subscription"),
+        )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.waiting_for_group_action, F.data == "group_new")
+async def create_new_group(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start creating new group."""
+    await state.set_state(SubscriptionManagement.waiting_for_new_group_name)
+    await callback.message.edit_text(
+        "Введите название для новой группы подписок:",
+        reply_markup=get_back_keyboard("admin_create_subscription"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.waiting_for_group_action, F.data.startswith("group_select_"))
+async def select_existing_group(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle existing group selection."""
+    group_id = int(callback.data.split("_")[-1])
+    await state.update_data(group_id=group_id)
+
+    await ask_profile_params(callback, state)
+
+
+async def ask_profile_params(callback: CallbackQuery, state: FSMContext) -> None:
+    """Ask for profile parameters."""
+    await state.set_state(SubscriptionManagement.waiting_for_traffic_limit)
+    await callback.message.edit_text(
+        "Введите лимит трафика в GB (0 для безлимита):",
+        reply_markup=get_back_keyboard("admin_create_subscription"),
+    )
+    await callback.answer()
+
+
+@router.message(SubscriptionManagement.waiting_for_new_group_name)
+async def process_new_group_name(message: Message, state: FSMContext) -> None:
+    """Process new group name."""
+    await state.update_data(group_name=message.text)
+
+    # Create the group
+    data = await state.get_data()
+    async with async_session_factory() as session:
+        service = SubscriptionService(session)
+        group = await service.create_subscription_group(
+            user_id=data["user_id"],
+            name=message.text,
+        )
+        await session.commit()
+        await state.update_data(group_id=group.id)
+
+    await state.set_state(SubscriptionManagement.waiting_for_traffic_limit)
+    await message.answer(
+        "Группа создана!\n\n"
+        "Введите лимит трафика в GB (0 для безлимита):",
+        reply_markup=get_back_keyboard("admin_create_subscription"),
+    )
+
+
+@router.message(SubscriptionManagement.waiting_for_traffic_limit)
+async def process_traffic_limit(message: Message, state: FSMContext) -> None:
+    """Process traffic limit."""
+    try:
+        total_gb = int(message.text)
+        if total_gb < 0:
+            raise ValueError("Negative value")
+    except ValueError:
+        await message.answer("❌ Введите неотрицательное число.")
+        return
+
+    await state.update_data(total_gb=total_gb)
+
+    await state.set_state(SubscriptionManagement.waiting_for_expiry_days)
+    await message.answer(
+        "Введите срок действия в днях (0 для бессрочной):",
+        reply_markup=get_back_keyboard("admin_create_subscription"),
+    )
+
+
+@router.message(SubscriptionManagement.waiting_for_expiry_days)
+async def process_expiry_days(message: Message, state: FSMContext) -> None:
+    """Process expiry days and show confirmation."""
+    try:
+        expiry_days = int(message.text)
+        if expiry_days < 0:
+            raise ValueError("Negative value")
+    except ValueError:
+        await message.answer("❌ Введите неотрицательное число.")
+        return
+
+    data = await state.get_data()
+    expiry_days = expiry_days if expiry_days > 0 else None
+    await state.update_data(expiry_days=expiry_days)
+
+    # Get info for confirmation
+    async with async_session_factory() as session:
+        user_service = UserService(session)
+        xui_service = XUIService(session)
+        sub_service = SubscriptionService(session)
+
+        user = await user_service.get_user_by_id(data["user_id"])
+        server = await xui_service.get_server_by_id(data["server_id"])
+        inbound = await xui_service.get_inbound_by_id(data["inbound_id"])
+        group = await sub_service.get_subscription_group(data["group_id"])
+
+    traffic_str = f"{data['total_gb']} GB" if data["total_gb"] > 0 else "Безлимит"
+    expiry_str = f"{expiry_days} дней" if expiry_days else "Бессрочно"
+
+    text = (
+        "📝 Подтверждение создания профиля:\n\n"
+        f"👤 Пользователь: {user.name}\n"
+        f"📁 Группа: {group.name}\n"
+        f"🖥️ Сервер: {server.name}\n"
+        f"🔌 Inbound: {inbound.remark}\n"
+        f"📊 Трафик: {traffic_str}\n"
+        f"⏰ Срок: {expiry_str}"
+    )
+
+    await state.set_state(SubscriptionManagement.confirm_creation)
+    await message.answer(
+        text,
+        reply_markup=get_confirm_keyboard("create_profile", "admin_create_subscription"),
+    )
+
+
+@router.callback_query(SubscriptionManagement.confirm_creation, F.data == "confirm_create_profile")
+async def create_profile(callback: CallbackQuery, state: FSMContext) -> None:
+    """Create the profile."""
+    data = await state.get_data()
+
+    async with async_session_factory() as session:
+        service = SubscriptionService(session)
+        xui_service = XUIService(session)
+
+        try:
+            # Get or create server subscription
+            server_sub = await service.get_or_create_server_subscription(
+                group_id=data["group_id"],
+                server_id=data["server_id"],
+            )
+
+            # Create profile
+            profile = await service.create_profile(
+                server_subscription_id=server_sub.id,
+                inbound_id=data["inbound_id"],
+                total_gb=data["total_gb"],
+                expiry_days=data.get("expiry_days"),
+            )
+
+            await session.commit()
+
+            await callback.message.edit_text(
+                f"✅ Профиль успешно создан!\n\n"
+                f"Email: {profile.email}\n"
+                f"UUID: {profile.uuid}",
+                reply_markup=get_back_keyboard("admin_menu"),
+            )
+
+        except Exception as e:
+            await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+        finally:
+            await service.close_all_clients()
+            await xui_service.close_all_clients()
+
+    await state.clear()
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_export")
+async def export_database(callback: CallbackQuery, is_admin: bool) -> None:
+    """Export database as JSON."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    import json
+    from datetime import datetime
+
+    async with async_session_factory() as session:
+        user_service = UserService(session)
+        xui_service = XUIService(session)
+        sub_service = SubscriptionService(session)
+
+        users = await user_service.get_all_users()
+        servers = await xui_service.get_all_servers()
+
+        export_data = {
+            "export_date": datetime.utcnow().isoformat(),
+            "users": [
+                {
+                    "id": u.id,
+                    "name": u.name,
+                    "telegram_id": u.telegram_id,
+                    "is_admin": u.is_admin,
+                    "is_active": u.is_active,
+                    "created_at": u.created_at.isoformat(),
+                }
+                for u in users
+            ],
+            "servers": [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "url": s.url,
+                    "is_active": s.is_active,
+                    "last_sync": s.last_sync.isoformat() if s.last_sync else None,
+                }
+                for s in servers
+            ],
+        }
+
+    json_str = json.dumps(export_data, indent=2, ensure_ascii=False)
+
+    # Send as file
+    from io import BytesIO
+    file = BytesIO(json_str.encode("utf-8"))
+    file.name = f"vpn_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+    await callback.message.answer_document(
+        document=file,
+        caption="📊 Экспорт базы данных",
+    )
+    await callback.answer()

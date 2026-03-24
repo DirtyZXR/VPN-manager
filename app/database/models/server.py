@@ -3,17 +3,16 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.models.base import Base, TimestampMixin
+from app.database.models.base import Base, TimestampMixin, SyncMixin
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound
-    from app.database.models.server_subscription import ServerSubscription
 
 
-class Server(Base, TimestampMixin):
+class Server(Base, TimestampMixin, SyncMixin):
     """3x-ui panel server configuration."""
 
     __tablename__ = "servers"
@@ -24,16 +23,10 @@ class Server(Base, TimestampMixin):
     username: Mapped[str] = mapped_column(String(100), nullable=False)
     password_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    last_sync: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     inbounds: Mapped[list["Inbound"]] = relationship(
         "Inbound",
-        back_populates="server",
-        cascade="all, delete-orphan",
-    )
-    server_subscriptions: Mapped[list["ServerSubscription"]] = relationship(
-        "ServerSubscription",
         back_populates="server",
         cascade="all, delete-orphan",
     )

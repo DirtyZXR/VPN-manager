@@ -13,10 +13,8 @@ router = Router()
 
 
 @router.callback_query(F.data == "my_subscriptions")
-async def show_my_subscriptions(callback: CallbackQuery) -> None:
+async def show_my_subscriptions(callback: CallbackQuery, user: User | None) -> None:
     """Show user's subscriptions."""
-    user: User | None = callback.conf.get("user")
-
     if not user:
         await callback.answer(
             "❌ Вы не зарегистрированы в системе. Обратитесь к администратору.",
@@ -64,10 +62,8 @@ async def show_my_subscriptions(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "all_sub_urls")
-async def show_all_sub_urls(callback: CallbackQuery) -> None:
+async def show_all_sub_urls(callback: CallbackQuery, user: User | None) -> None:
     """Show all subscription URLs."""
-    user: User | None = callback.conf.get("user")
-
     if not user:
         await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
         return
@@ -104,10 +100,8 @@ async def show_all_sub_urls(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data == "copy_all_links")
-async def copy_all_links(callback: CallbackQuery) -> None:
+async def copy_all_links(callback: CallbackQuery, user: User | None) -> None:
     """Send all links as copyable message."""
-    user: User | None = callback.conf.get("user")
-
     if not user:
         await callback.answer("❌ Вы не зарегистрированы.", show_alert=True)
         return
@@ -131,9 +125,8 @@ async def copy_all_links(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("profile_enable_"))
-async def enable_profile(callback: CallbackQuery) -> None:
+async def enable_profile(callback: CallbackQuery, is_admin: bool) -> None:
     """Enable profile (admin only)."""
-    is_admin = callback.conf.get("is_admin", False)
     if not is_admin:
         await callback.answer("❌ Только администратор может это сделать.", show_alert=True)
         return
@@ -152,9 +145,8 @@ async def enable_profile(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("profile_disable_"))
-async def disable_profile(callback: CallbackQuery) -> None:
+async def disable_profile(callback: CallbackQuery, is_admin: bool) -> None:
     """Disable profile (admin only)."""
-    is_admin = callback.conf.get("is_admin", False)
     if not is_admin:
         await callback.answer("❌ Только администратор может это сделать.", show_alert=True)
         return
@@ -173,9 +165,8 @@ async def disable_profile(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("profile_delete_"))
-async def delete_profile(callback: CallbackQuery) -> None:
+async def delete_profile(callback: CallbackQuery, is_admin: bool) -> None:
     """Delete profile (admin only)."""
-    is_admin = callback.conf.get("is_admin", False)
     if not is_admin:
         await callback.answer("❌ Только администратор может это сделать.", show_alert=True)
         return
