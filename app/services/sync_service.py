@@ -216,20 +216,28 @@ class SyncService:
 
         # Обновить или создать inbounds
         for xui_ib in xui_inbounds:
-            xui_id = xui_ib["id"]
+            xui_id = xui_ib.id
+
+            # Parse settings JSON to get client count
+            import json
+            client_count = 0
+            if xui_ib.settings:
+                try:
+                    settings_dict = json.loads(xui_ib.settings)
+                    client_count = len(settings_dict.get("clients", []))
+                except (json.JSONDecodeError, TypeError):
+                    client_count = 0
 
             if xui_id in existing_map:
                 # Обновить существующий
                 db_ib = existing_map[xui_id]
                 if (
-                    xui_ib.get("settings") != db_ib.settings_json
-                    or xui_ib.get("remark") != db_ib.remark
+                    xui_ib.settings != db_ib.settings_json
+                    or xui_ib.remark != db_ib.remark
                 ):
-                    db_ib.settings_json = str(xui_ib.get("settings", {}))
-                    db_ib.remark = xui_ib.get("remark", "")
-                    db_ib.client_count = len(
-                        xui_ib.get("settings", {}).get("clients", [])
-                    )
+                    db_ib.settings_json = xui_ib.settings or "{}"
+                    db_ib.remark = xui_ib.remark
+                    db_ib.client_count = client_count
                     db_ib.updated_at = datetime.now(timezone.utc)
                     db_ib.sync_status = "synced"
                     db_ib.last_sync_at = datetime.now(timezone.utc)
@@ -243,11 +251,11 @@ class SyncService:
                 new_ib = Inbound(
                     server_id=server.id,
                     xui_id=xui_id,
-                    remark=xui_ib.get("remark", ""),
-                    protocol=xui_ib.get("protocol", "unknown"),
-                    port=xui_ib.get("port", 0),
-                    settings_json=str(xui_ib.get("settings", {})),
-                    client_count=len(xui_ib.get("settings", {}).get("clients", [])),
+                    remark=xui_ib.remark,
+                    protocol=xui_ib.protocol,
+                    port=xui_ib.port,
+                    settings_json=xui_ib.settings or "{}",
+                    client_count=client_count,
                     is_active=True,
                     sync_status="synced",
                     last_sync_at=datetime.now(timezone.utc),
