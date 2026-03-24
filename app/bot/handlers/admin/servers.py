@@ -211,7 +211,7 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
         return
 
     status = "✅ Активен" if server.is_active else "❌ Неактивен"
-    last_sync = server.last_sync.strftime("%d.%m.%Y %H:%M") if server.last_sync else "Никогда"
+    last_sync = server.last_sync_at.strftime("%d.%m.%Y %H:%M") if server.last_sync_at else "Никогда"
 
     text = (
         f"🖥️ Сервер: {server.name}\n\n"

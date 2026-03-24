@@ -72,7 +72,7 @@ async def main() -> None:
     router = create_router()
     dp.include_router(router)
 
-    # Start polling
+    # Start polling (без автоматической синхронизации)
     logger.info("Starting polling...")
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
