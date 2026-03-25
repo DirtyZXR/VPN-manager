@@ -1,7 +1,7 @@
 """Admin subscription management handlers."""
 
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
@@ -570,9 +570,9 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
         # Add buttons for each inbound
         if conn.is_enabled:
-            builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
-        else:
             builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+        else:
+            builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
         builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
         builder.adjust(2)
 
@@ -787,9 +787,9 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
 
                 # Add buttons for each inbound
                 if conn.is_enabled:
-                    builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
-                else:
                     builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                else:
+                    builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
                 builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
                 builder.adjust(2)
 
@@ -806,6 +806,352 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
         finally:
             await service.close_all_clients()
+
+
+@router.callback_query(F.data.startswith("inbounds_multi_select_"))
+async def enter_multi_select_mode(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Enter multi-select mode for inbounds."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    subscription_id = int(callback.data.split("_")[-1])
+    await state.update_data(subscription_id=subscription_id, selected_connections=set())
+    await state.set_state(SubscriptionManagement.inbounds_multi_select_mode)
+
+    # Get connections for this subscription
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+        service = NewSubscriptionService(session)
+        connections = await service.get_subscription_inbounds(subscription_id)
+
+    if not connections:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🔙 Назад", callback_data=f"admin_sub_inbounds_{subscription_id}")
+        builder.adjust(1)
+        await callback.message.edit_text(
+            "❌ У подписки нет подключений.",
+            reply_markup=builder.as_markup()
+        )
+        await callback.answer()
+        return
+
+    # Show multi-select keyboard
+    await callback.message.edit_text(
+        f"✅ Режим множественного выбора\n\n"
+        f"Выберите inbounds для массовых действий:\n"
+        f"(Выбрано: 0/{len(connections)})",
+        reply_markup=get_multi_select_keyboard(connections, set()),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data.startswith("multi_select_conn_"))
+async def toggle_multi_selection(callback: CallbackQuery, state: FSMContext) -> None:
+    """Toggle connection selection in multi-select mode."""
+    connection_id = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    selected_connections = data.get("selected_connections", set())
+
+    if connection_id in selected_connections:
+        selected_connections.remove(connection_id)
+    else:
+        selected_connections.add(connection_id)
+
+    await state.update_data(selected_connections=selected_connections)
+
+    # Get subscription ID and connections
+    subscription_id = data["subscription_id"]
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+        service = NewSubscriptionService(session)
+        connections = await service.get_subscription_inbounds(subscription_id)
+
+    await callback.message.edit_text(
+        f"✅ Режим множественного выбора\n\n"
+        f"Выберите inbounds для массовых действий:\n"
+        f"(Выбрано: {len(selected_connections)}/{len(connections)})",
+        reply_markup=get_multi_select_keyboard(connections, selected_connections),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_enable_all")
+async def enable_selected_connections(callback: CallbackQuery, state: FSMContext) -> None:
+    """Enable all selected connections."""
+    data = await state.get_data()
+    selected_connections = data.get("selected_connections", set())
+
+    if not selected_connections:
+        await callback.answer("❌ Выберите хотя бы один inbound.", show_alert=True)
+        return
+
+    await state.update_data(action="enable")
+    await state.set_state(SubscriptionManagement.inbounds_multi_confirm_action)
+
+    await callback.message.edit_text(
+        f"⚠️ Включить {len(selected_connections)} подключений?\n\n"
+        "Все выбранные inbounds будут включены.",
+        reply_markup=get_multi_select_confirm_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_disable_all")
+async def disable_selected_connections(callback: CallbackQuery, state: FSMContext) -> None:
+    """Disable all selected connections."""
+    data = await state.get_data()
+    selected_connections = data.get("selected_connections", set())
+
+    if not selected_connections:
+        await callback.answer("❌ Выберите хотя бы один inbound.", show_alert=True)
+        return
+
+    await state.update_data(action="disable")
+    await state.set_state(SubscriptionManagement.inbounds_multi_confirm_action)
+
+    await callback.message.edit_text(
+        f"⚠️ Отключить {len(selected_connections)} подключений?\n\n"
+        "Все выбранные inbounds будут отключены.",
+        reply_markup=get_multi_select_confirm_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.inbounds_multi_confirm_action, F.data == "multi_select_confirm")
+async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext) -> None:
+    """Confirm multi-select action."""
+    data = await state.get_data()
+    selected_connections = data.get("selected_connections", set())
+    action = data.get("action")
+    subscription_id = data["subscription_id"]
+
+    if not selected_connections or not action:
+        await callback.answer("❌ Ошибка: нет выбранных подключений или действия.", show_alert=True)
+        await state.clear()
+        return
+
+    # Now perform the action using the service
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+        from app.xui_client import XUIClient
+        from app.services.xui_service import XUIService
+        from cryptography.fernet import Fernet
+        from app.config import get_settings
+        from app.database.models import InboundConnection
+        from sqlalchemy.orm import selectinload
+        import asyncio
+
+        # Get all connections with their inbound and server info in THIS session
+        result = await session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.id.in_(list(selected_connections)))
+            .options(
+                selectinload(InboundConnection.inbound).selectinload(Inbound.server)
+            )
+        )
+        connections = result.scalars().all()
+
+        if not connections:
+            await callback.answer("❌ Подключения не найдены.", show_alert=True)
+            await state.clear()
+            return
+
+        service = NewSubscriptionService(session)
+
+        try:
+            success_count = 0
+            xui_service = XUIService(session)
+
+            # Process each connection
+            for conn in connections:
+                try:
+                    new_state = action == "enable"
+                    inbound = conn.inbound
+                    server = inbound.server
+
+                    # Get XUI client
+                    xui_client = await xui_service._get_client(server)
+
+                    # Update in XUI
+                    await xui_client.enable_client(inbound.xui_id, conn.uuid, new_state)
+
+                    # Update in database
+                    conn.is_enabled = new_state
+                    success_count += 1
+
+                except Exception as e:
+                    logger.warning(f"Failed to {action} connection {conn.id}: {e}")
+
+            await session.commit()
+
+            action_text = "включено" if action == "enable" else "отключено"
+
+            # Update interface with current data
+            await state.clear()
+
+            # Refresh inbounds list with updated statuses
+            async with async_session_factory() as session2:
+                from app.services.new_subscription_service import NewSubscriptionService
+                service2 = NewSubscriptionService(session2)
+                updated_connections = await service2.get_subscription_inbounds(subscription_id)
+
+            text = f"📢 Inbounds подписки (ID: {subscription_id}):\n\n"
+            builder = InlineKeyboardBuilder()
+
+            for conn in updated_connections:
+                status = "✅" if conn.is_enabled else "❌"
+                inbound = conn.inbound
+                server = inbound.server
+
+                text += (
+                    f"{status} {inbound.remark} ({inbound.protocol})\n"
+                    f"   Сервер: {server.name}\n"
+                    f"   Порт: {inbound.port}\n"
+                    f"   Email: {conn.email}\n"
+                    f"   UUID: {conn.uuid}\n"
+                    f"   ID подключения: {conn.id}\n\n"
+                )
+
+                # Add buttons for each inbound
+                if conn.is_enabled:
+                    builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                else:
+                    builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
+                builder.adjust(2)
+
+            # Add action buttons once at the bottom
+            builder.button(text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}")
+            builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}")
+            builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
+            builder.adjust(1)
+
+            await callback.message.edit_text(text, reply_markup=builder.as_markup())
+            await callback.answer(f"Успешно {action_text} {success_count}/{len(selected_connections)} подключений", show_alert=True)
+
+        except Exception as e:
+            logger.error(f"Error in multi-select action: {e}", exc_info=True)
+            await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+            await callback.message.edit_text(
+                f"❌ Ошибка при выполнении действия: {e}",
+                reply_markup=get_back_keyboard(f"admin_sub_inbounds_{subscription_id}"),
+            )
+        finally:
+            await service.close_all_clients()
+
+
+@router.callback_query(SubscriptionManagement.inbounds_multi_confirm_action, F.data == "multi_select_cancel")
+async def cancel_multi_select_action(callback: CallbackQuery, state: FSMContext) -> None:
+    """Cancel multi-select action and return to selection mode."""
+    data = await state.get_data()
+    subscription_id = data["subscription_id"]
+
+    # Get connections for this subscription
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+        service = NewSubscriptionService(session)
+        connections = await service.get_subscription_inbounds(subscription_id)
+
+    selected_connections = data.get("selected_connections", set())
+
+    await state.set_state(SubscriptionManagement.inbounds_multi_select_mode)
+    await callback.message.edit_text(
+        f"✅ Режим множественного выбора\n\n"
+        f"Выберите inbounds для массовых действий:\n"
+        f"(Выбрано: {len(selected_connections)}/{len(connections)})",
+        reply_markup=get_multi_select_keyboard(connections, selected_connections),
+    )
+    await callback.answer()
+
+
+@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_cancel")
+async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> None:
+    """Exit multi-select mode."""
+    data = await state.get_data()
+    subscription_id = data["subscription_id"]
+
+    await state.clear()
+    # Redirect back to inbounds list by calling the handler directly
+    # We need to create a proper callback query for the inbounds list
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+        service = NewSubscriptionService(session)
+        connections = await service.get_subscription_inbounds(subscription_id)
+
+    if not connections:
+        await callback.answer("❌ У подписки нет подключений.")
+        await callback.message.edit_text(
+            "❌ У подписки нет подключений.\n\n"
+            "Добавьте первый inbound для использования подписки.",
+            reply_markup=get_back_keyboard("admin_menu"),
+        )
+        return
+
+    text = f"📢 Inbounds подписки (ID: {subscription_id}):\n\n"
+    builder = InlineKeyboardBuilder()
+
+    for conn in connections:
+        status = "✅" if conn.is_enabled else "❌"
+        inbound = conn.inbound
+        server = inbound.server
+
+        text += (
+            f"{status} {inbound.remark} ({inbound.protocol})\n"
+            f"   Сервер: {server.name}\n"
+            f"   Порт: {inbound.port}\n"
+            f"   Email: {conn.email}\n"
+            f"   UUID: {conn.uuid}\n"
+            f"   ID подключения: {conn.id}\n\n"
+        )
+
+        # Add buttons for each inbound
+        if conn.is_enabled:
+            builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+        else:
+            builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+        builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
+        builder.adjust(2)
+
+    # Add action buttons once at the bottom
+    builder.button(text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}")
+    builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}")
+    builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
+    builder.adjust(1)
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+def get_multi_select_keyboard(connections: list, selected_ids: set) -> InlineKeyboardMarkup:
+    """Get multi-select keyboard with checkboxes."""
+    builder = InlineKeyboardBuilder()
+
+    for conn in connections:
+        selected = "✅" if conn.id in selected_ids else "⭕"
+        status = "🟢" if conn.is_enabled else "🔴"
+        inbound = conn.inbound
+        builder.button(
+            text=f"{selected} {status} {inbound.remark} ({inbound.protocol})",
+            callback_data=f"multi_select_conn_{conn.id}",
+        )
+
+    builder.adjust(1)
+    builder.button(text="✅ Включить выбранные", callback_data="multi_select_enable_all")
+    builder.button(text="❌ Отключить выбранные", callback_data="multi_select_disable_all")
+    builder.button(text="🔙 Выход", callback_data="multi_select_cancel")
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def get_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Get confirmation keyboard for multi-select action."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить", callback_data="multi_select_confirm")
+    builder.button(text="❌ Отмена", callback_data="multi_select_cancel")
+    builder.adjust(1)
+    return builder.as_markup()
 
 
 @router.callback_query(F.data.startswith("delete_conn_"))
