@@ -759,8 +759,46 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
             status = "отключено" if not connection.is_enabled else "включено"
             await callback.answer(f"✅ Подключение {status}", show_alert=True)
 
-            # Don't refresh interface after toggle
-            # await show_subscription_inbounds(callback, is_admin)
+            # Refresh only the buttons, not the whole interface
+            # Get updated connections and rebuild keyboard
+            async with async_session_factory() as session2:
+                from app.services.new_subscription_service import NewSubscriptionService
+                service2 = NewSubscriptionService(session2)
+                connections = await service2.get_subscription_inbounds(connection.subscription_id)
+
+            # Rebuild text and keyboard
+            text = f"📢 Inbounds подписки (ID: {connection.subscription_id}):\n\n"
+            builder = InlineKeyboardBuilder()
+
+            for conn in connections:
+                conn_status = "✅" if conn.is_enabled else "❌"
+                inbound = conn.inbound
+                server = inbound.server
+
+                text += (
+                    f"{conn_status} {inbound.remark} ({inbound.protocol})\n"
+                    f"   Сервер: {server.name}\n"
+                    f"   Порт: {inbound.port}\n"
+                    f"   Email: {conn.email}\n"
+                    f"   UUID: {conn.uuid}\n"
+                    f"   ID подключения: {conn.id}\n\n"
+                )
+
+                # Add buttons for each inbound
+                if conn.is_enabled:
+                    builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                else:
+                    builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
+                builder.adjust(2)
+
+            # Add action buttons once at the bottom
+            builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{connection.subscription_id}")
+            builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{connection.subscription_id}")
+            builder.adjust(1)
+
+            await callback.message.edit_text(text, reply_markup=builder.as_markup())
+            # await show_subscription_inbounds(callback, is_admin)  # Закомментировано
 
         except Exception as e:
             logger.error(f"Error toggling connection: {e}", exc_info=True)

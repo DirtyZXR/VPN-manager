@@ -246,8 +246,13 @@ async def show_client_subscriptions(callback: CallbackQuery, is_admin: bool) -> 
 
     try:
         await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to edit message in show_client_subscriptions: {e}")
+        # Try to edit reply_markup only as fallback
+        try:
+            await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
+        except Exception as e2:
+            logger.error(f"Failed to edit reply_markup: {e2}")
     await callback.answer()
 
 
@@ -312,8 +317,13 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
 
     try:
         await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to edit message in show_client_subscription_detail: {e}")
+        # Try to edit reply_markup only as fallback
+        try:
+            await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+        except Exception as e2:
+            logger.error(f"Failed to edit reply_markup: {e2}")
     await callback.answer()
 
 
