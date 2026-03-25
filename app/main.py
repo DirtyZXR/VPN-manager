@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.database import init_db
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
+from app.services.xui_service import XUIService
 
 
 def setup_logging() -> None:
@@ -55,6 +56,16 @@ async def main() -> None:
     await init_db()
     logger.info("Database initialized")
 
+    # Create global XUI service instance for client caching
+    xui_service = None
+    try:
+        from app.database import async_session_factory
+        async with async_session_factory() as session:
+            xui_service = XUIService(session)
+            logger.info("XUI service initialized")
+    except Exception as e:
+        logger.warning(f"Could not initialize XUI service: {e}")
+
     # Create bot instance
     bot = Bot(
         token=settings.bot_token,
@@ -77,6 +88,11 @@ async def main() -> None:
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        # Close XUI clients
+        if xui_service:
+            logger.info("Closing XUI clients...")
+            await xui_service.close_all_clients()
+        # Close bot session
         await bot.session.close()
 
 

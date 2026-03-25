@@ -38,25 +38,25 @@ class SyncService:
     async def start_background_sync(self) -> None:
         """Запустить фоновую синхронизацию."""
         if self._is_running:
-            logger.warning("⚠️ Фоновая синхронизация уже запущена")
+            logger.warning("[WARN] Фоновая синхронизация уже запущена")
             return
 
         self._is_running = True
-        logger.info("🔄 Запуск фоновой синхронизации данных")
+        logger.info("[SYNC] Запуск фоновой синхронизации данных")
 
         while self._is_running:
             try:
                 await self._sync_cycle()
             except Exception as e:
-                logger.error(f"❌ Ошибка цикла синхронизации: {e}", exc_info=True)
+                logger.error(f"[ERROR] Ошибка цикла синхронизации: {e}", exc_info=True)
                 await asyncio.sleep(60)  # 1 минута при ошибке
 
-        logger.info("🛑 Фоновая синхронизация остановлена")
+        logger.info("[STOP] Фоновая синхронизация остановлена")
 
     async def stop_background_sync(self) -> None:
         """Остановить фоновую синхронизацию."""
         self._is_running = False
-        logger.info("🛑 Остановка фоновой синхронизации")
+        logger.info("[STOP] Остановка фоновой синхронизации")
 
     async def _sync_cycle(self, skip_sleep: bool = False, force: bool = False) -> dict:
         """Один цикл синхронизации.
@@ -70,14 +70,14 @@ class SyncService:
         """
         # Проверить, есть ли другая активная синхронизация
         if self._sync_lock.locked():
-            logger.debug("⏸️ Пропуск цикла синхронизации - другая синхронизация уже выполняется")
+            logger.debug("[PAUSE] Пропуск цикла синхронизации - другая синхронизация уже выполняется")
             if not skip_sleep:
                 await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
             start_time = datetime.now(timezone.utc)
-            logger.info(f"🔄 Начало цикла синхронизации в {start_time} (force={force})")
+            logger.info(f"[SYNC] Начало цикла синхронизации в {start_time} (force={force})")
 
             try:
                 # 1. Синхронизировать сервера и inbounds (включая клиентов)
@@ -93,14 +93,14 @@ class SyncService:
                 # 4. Логировать результаты
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
                 logger.info(
-                    f"✅ Цикл синхронизации завершен за {duration:.2f}s. "
+                    f"[OK] Цикл синхронизации завершен за {duration:.2f}s. "
                     f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
                 )
 
                 return {"servers": servers_synced}
 
             except Exception as e:
-                logger.error(f"❌ Ошибка в цикле синхронизации: {e}", exc_info=True)
+                logger.error(f"[ERROR] Ошибка в цикле синхронизации: {e}", exc_info=True)
                 return {"servers": 0, "error": str(e)}
 
         # Подождать до следующей итерации (за пределами блокировки)
@@ -125,25 +125,25 @@ class SyncService:
         )
         servers = result.scalars().all()
 
-        logger.info(f"📝 sync_all_servers: найдено {len(servers)} активных серверов, force={force}")
+        logger.info(f"[LOG] sync_all_servers: найдено {len(servers)} активных серверов, force={force}")
 
         synced_count = 0
         for i, server in enumerate(servers, 1):
             try:
-                logger.info(f"📝 sync_all_servers: сервер {i}/{len(servers)} - {server.name} (ID: {server.id})")
+                logger.info(f"[LOG] sync_all_servers: сервер {i}/{len(servers)} - {server.name} (ID: {server.id})")
                 result = await self.sync_server(server, force=force)
                 if result:
                     synced_count += 1
-                    logger.info(f"✅ Сервер {server.name} успешно синхронизирован")
+                    logger.info(f"[OK] Сервер {server.name} успешно синхронизирован")
                 else:
-                    logger.info(f"⏭️ Сервер {server.name} пропущен (не нужна синхронизация или ошибка)")
+                    logger.info(f"[SKIP] Сервер {server.name} пропущен (не нужна синхронизация или ошибка)")
             except Exception as e:
                 logger.error(
-                    f"❌ Ошибка синхронизации сервера {server.id}: {e}",
+                    f"[ERROR] Ошибка синхронизации сервера {server.id}: {e}",
                     exc_info=True,
                 )
 
-        logger.info(f"📝 sync_all_servers завершен: {synced_count}/{len(servers)} серверов синхронизировано")
+        logger.info(f"[LOG] sync_all_servers завершен: {synced_count}/{len(servers)} серверов синхронизировано")
         return synced_count
 
     async def sync_server(self, server: Server, force: bool = False) -> bool:
@@ -163,7 +163,7 @@ class SyncService:
                 logger.debug(f"✓ Сервер {server.id} в актуальном состоянии")
                 return False
 
-            logger.info(f"🔄 Синхронизация сервера {server.id}: {server.name}")
+            logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
 
             # Получить XUI клиент
             xui_service = XUIService(self.session)
@@ -183,16 +183,16 @@ class SyncService:
             inbounds = inbounds_result.scalars().all()
 
             clients_synced = 0
-            logger.info(f"📝 sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}")
+            logger.info(f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}")
             for inbound in inbounds:
                 try:
-                    logger.info(f"📝 sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})")
+                    logger.info(f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})")
                     synced = await self._sync_inbound_clients(inbound, xui_client)
                     clients_synced += synced
-                    logger.info(f"✅ Inbound {inbound.id}: {synced} клиентов синхронизировано")
+                    logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
                 except Exception as e:
                     logger.error(
-                        f"❌ Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
                         exc_info=True,
                     )
 
@@ -202,31 +202,31 @@ class SyncService:
             server.sync_error = None
 
             await self.session.flush()
-            logger.info(f"✅ Сервер {server.id} синхронизирован (клиентов: {clients_synced})")
+            logger.info(f"[OK] Сервер {server.id} синхронизирован (клиентов: {clients_synced})")
             return True
 
         except XUIConnectionError as e:
             server.sync_status = "offline"
             server.sync_error = f"Connection failed: {str(e)}"
-            logger.warning(f"⚠️ Сервер {server.id} недоступен")
+            logger.warning(f"[WARN] Сервер {server.id} недоступен")
             return False
 
         except XUIError as e:
             server.sync_status = "error"
             server.sync_error = str(e)
-            logger.error(f"❌ Ошибка XUI сервера {server.id}: {e}")
+            logger.error(f"[ERROR] Ошибка XUI сервера {server.id}: {e}")
             return False
 
         except Exception as e:
             server.sync_status = "error"
             server.sync_error = f"Unexpected: {str(e)}"
-            logger.error(f"❌ Неожиданная ошибка сервера {server.id}: {e}", exc_info=True)
+            logger.error(f"[ERROR] Неожиданная ошибка сервера {server.id}: {e}", exc_info=True)
             return False
 
-        finally:
-            # Закрыть все aiohttp сессии
-            if xui_service:
-                await xui_service.close_all_clients()
+        # Don't close clients - keep them cached for reuse
+        # finally:
+        #     if xui_service:
+        #         await xui_service.close_all_clients()
 
     async def sync_all_clients(self) -> int:
         """Синхронизировать всех клиентов со всех активных inbounds.
@@ -261,15 +261,19 @@ class SyncService:
 
                 except Exception as e:
                     logger.error(
-                        f"❌ Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
                         exc_info=True,
                     )
 
-        finally:
-            if xui_service:
-                await xui_service.close_all_clients()
+        except Exception as e:
+            logger.error(f"[ERROR] Ошибка в sync_all_clients: {e}", exc_info=True)
 
-        logger.info(f"✅ Синхронизировано {total_synced} клиентов")
+        # Don't close clients - keep them cached for reuse
+        # finally:
+        #     if xui_service:
+        #         await xui_service.close_all_clients()
+
+        logger.info(f"Синхронизировано {total_synced} клиентов")
         return total_synced
 
     async def sync_server_clients(self, server_id: int) -> int:
@@ -309,15 +313,19 @@ class SyncService:
                     total_synced += synced
                 except Exception as e:
                     logger.error(
-                        f"❌ Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
                         exc_info=True,
                     )
 
-        finally:
-            if xui_service:
-                await xui_service.close_all_clients()
+        except Exception as e:
+            logger.error(f"[ERROR] Ошибка в sync_server_clients: {e}", exc_info=True)
 
-        logger.info(f"✅ Синхронизировано {total_synced} клиентов на сервере {server_id}")
+        # Don't close clients - keep them cached for reuse
+        # finally:
+        #     if xui_service:
+        #         await xui_service.close_all_clients()
+
+        logger.info(f"[OK] Синхронизировано {total_synced} клиентов на сервере {server_id}")
         return total_synced
 
     def _needs_sync(self, model: object) -> bool:
@@ -397,7 +405,7 @@ class SyncService:
                     db_ib.updated_at = datetime.now(timezone.utc)
                     db_ib.sync_status = "synced"
                     db_ib.last_sync_at = datetime.now(timezone.utc)
-                    logger.info(f"🔄 Inbound {db_ib.id} обновлен из XUI")
+                    logger.info(f"[SYNC] Inbound {db_ib.id} обновлен из XUI")
                 else:
                     logger.debug(f"✓ Inbound {db_ib.id} актуален")
                     db_ib.sync_status = "synced"
@@ -433,13 +441,13 @@ class SyncService:
         Returns:
             Количество синхронизированных клиентов
         """
-        logger.info(f"📝 _sync_inbound_clients: начало для inbound {inbound.id} (xui_id: {inbound.xui_id}, remark: {inbound.remark})")
+        logger.info(f"[LOG] _sync_inbound_clients: начало для inbound {inbound.id} (xui_id: {inbound.xui_id}, remark: {inbound.remark})")
 
         # Получить inbound с клиентами из settings
         xui_inbound = await xui_client.get_inbound(inbound.xui_id)
 
         if not xui_inbound:
-            logger.warning(f"⚠️ Inbound {inbound.xui_id} не найден на панели")
+            logger.warning(f"[WARN] Inbound {inbound.xui_id} не найден на панели")
             return 0
 
         if not xui_inbound or not xui_inbound.settings:
@@ -455,7 +463,7 @@ class SyncService:
             logger.error(f"Ошибка парсинга settings для inbound {inbound.id}: {e}")
             return 0
 
-        logger.info(f"📝 _sync_inbound_clients: получено {len(xui_clients)} клиентов из inbound {inbound.id} ({inbound.remark})")
+        logger.info(f"[LOG] _sync_inbound_clients: получено {len(xui_clients)} клиентов из inbound {inbound.id} ({inbound.remark})")
         if xui_clients:
             logger.debug(f"Пример данных клиента: {xui_clients[0]}")
 
@@ -470,7 +478,7 @@ class SyncService:
         existing_map = {
             conn.uuid: conn for conn in existing_connections.scalars().all()
         }
-        logger.info(f"📝 _sync_inbound_clients: в базе найдено {len(existing_map)} подключений для inbound {inbound.id}")
+        logger.info(f"[LOG] _sync_inbound_clients: в базе найдено {len(existing_map)} подключений для inbound {inbound.id}")
 
         synced_count = 0
         for xui_client_data in xui_clients:
@@ -494,7 +502,7 @@ class SyncService:
                 if conn.is_enabled != xui_enable:
                     old_status = conn.is_enabled
                     conn.is_enabled = xui_enable
-                    logger.info(f"🔄 Подключение {conn.id} ({conn.uuid}): is_enabled={old_status} → {xui_enable}")
+                    logger.info(f"[SYNC] Подключение {conn.id} ({conn.uuid}): is_enabled={old_status} → {xui_enable}")
 
                 # Обновить подписку (если есть)
                 if conn.subscription:
@@ -505,7 +513,7 @@ class SyncService:
                         old_gb = subscription.total_gb
                         subscription.total_gb = xui_total_gb
                         logger.info(
-                            f"🔄 Подписка {subscription.id}: total_gb {old_gb}GB → {xui_total_gb}GB"
+                            f"[SYNC] Подписка {subscription.id}: total_gb {old_gb}GB → {xui_total_gb}GB"
                         )
 
                     # Обновить expiry_date
@@ -517,7 +525,7 @@ class SyncService:
                         old_expiry = subscription.expiry_date
                         subscription.expiry_date = new_expiry
                         logger.info(
-                            f"🔄 Подписка {subscription.id}: expiry {old_expiry} → {new_expiry}"
+                            f"[SYNC] Подписка {subscription.id}: expiry {old_expiry} → {new_expiry}"
                         )
 
                 # Обновить статус синхронизации
@@ -525,10 +533,10 @@ class SyncService:
                 conn.last_sync_at = datetime.now(timezone.utc)
                 synced_count += 1
             else:
-                logger.info(f"🆕 Клиент {xui_uuid} найден на панели, но не в базе (создан вручную)")
+                logger.info(f"[NEW] Клиент {xui_uuid} найден на панели, но не в базе (создан вручную)")
 
         await self.session.flush()
-        logger.info(f"✅ Синхронизировано {synced_count} клиентов для inbound {inbound.id}")
+        logger.info(f"[OK] Синхронизировано {synced_count} клиентов для inbound {inbound.id}")
         return synced_count
 
     # === INTEGRITY CHECK ===
@@ -573,17 +581,18 @@ class SyncService:
                                 "Client missing in XUI (deleted manually?)"
                             )
                             logger.warning(
-                                f"⚠️ Клиент {connection.uuid} не найден в XUI"
+                                f"[WARN] Клиент {connection.uuid} не найден в XUI"
                             )
 
                 except Exception as e:
                     logger.debug(f"Не удалось проверить {connection.uuid}: {e}")
-                finally:
-                    if xui_service:
-                        await xui_service.close_all_clients()
+                # Don't close clients - keep them cached for reuse
+                # finally:
+                #     if xui_service:
+                #         await xui_service.close_all_clients()
 
         await self.session.flush()
-        logger.info(f"📊 Статистика целостности: {stats}")
+        logger.info(f"[STATS] Статистика целостности: {stats}")
         return stats["error"] == 0
 
     # === MANUAL SYNC ===
@@ -602,23 +611,23 @@ class SyncService:
         """
         results = {"synced": 0, "errors": 0, "details": []}
 
-        logger.info(f"📝 manual_sync вызван с параметрами: entity_type={entity_type}, entity_id={entity_id}")
+        logger.info(f"[LOG] manual_sync вызван с параметрами: entity_type={entity_type}, entity_id={entity_id}")
 
         # Использовать блокировку для предотвращения конфликтов с фоновой синхронизацией
-        logger.info(f"📝 Попытка получить блокировку для manual_sync")
+        logger.info(f"[LOG] Попытка получить блокировку для manual_sync")
         async with self._sync_lock:
-            logger.info(f"📝 Блокировка получена, начало обработки entity_type={entity_type}")
+            logger.info(f"[LOG] Блокировка получена, начало обработки entity_type={entity_type}")
             try:
                 if entity_type == "all":
                     # Полная синхронизация (без ожидания после завершения)
-                    logger.info("📝 Запуск _sync_cycle с skip_sleep=True, force=True")
+                    logger.info("[LOG] Запуск _sync_cycle с skip_sleep=True, force=True")
                     sync_result = await self._sync_cycle(skip_sleep=True, force=True)
                     results["synced"] = sync_result.get("servers", 0)
-                    logger.info(f"📝 _sync_cycle завершен, sync_result={sync_result}")
+                    logger.info(f"[LOG] _sync_cycle завершен, sync_result={sync_result}")
 
                 elif entity_type == "server":
                     if entity_id:
-                        logger.info(f"📝 Синхронизация сервера {entity_id} (с клиентами)")
+                        logger.info(f"[LOG] Синхронизация сервера {entity_id} (с клиентами)")
                         server = await self.session.get(Server, entity_id)
                         if server:
                             synced = await self.sync_server(server, force=True)
@@ -626,15 +635,15 @@ class SyncService:
                         else:
                             results["errors"] += 1
                     else:
-                        logger.info("📝 Синхронизация всех серверов (с клиентами)")
+                        logger.info("[LOG] Синхронизация всех серверов (с клиентами)")
                         # sync_all_servers уже синхронизирует клиентов внутри sync_server
                         synced_servers = await self.sync_all_servers(force=True)
                         results["synced"] = synced_servers
-                        logger.info(f"📝 Синхронизировано {synced_servers} серверов с клиентами")
+                        logger.info(f"[LOG] Синхронизировано {synced_servers} серверов с клиентами")
 
                 elif entity_type == "connection":
                     if entity_id:
-                        logger.info(f"📝 Синхронизация подключения {entity_id}")
+                        logger.info(f"[LOG] Синхронизация подключения {entity_id}")
                         connection = await self.session.get(InboundConnection, entity_id)
                         if connection:
                             # TODO: Реализовать двустороннюю синхронизацию подключений
@@ -645,11 +654,11 @@ class SyncService:
                             results["errors"] += 1
 
             except Exception as e:
-                logger.error(f"❌ Ошибка ручной синхронизации: {e}", exc_info=True)
+                logger.error(f"[ERROR] Ошибка ручной синхронизации: {e}", exc_info=True)
                 results["errors"] += 1
                 results["details"].append(str(e))
 
-        logger.info(f"📝 manual_sync завершен, финальные results={results}")
+        logger.info(f"[LOG] manual_sync завершен, финальные results={results}")
         return results
 
 
