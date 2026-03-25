@@ -555,14 +555,48 @@ class NewSubscriptionService:
                     server = connection.inbound.server
                     # Build subscription URL using server URL + subscription path
                     from urllib.parse import urljoin
-                    subscription_path = getattr(server, 'subscription_path', '/sub')
+                    subscription_path = getattr(server, 'subscription_path', '/sub/')
 
+                    # subscription_path already ends with /, so just append token
                     urls.append(
                         {
                             "subscription_name": sub.name,
                             "server_name": server.name,
                             "inbound_name": connection.inbound.remark,
-                            "url": urljoin(server.url, f"{subscription_path}/{sub.subscription_token}"),
+                            "url": urljoin(server.url, f"{subscription_path}{sub.subscription_token}"),
+                            "token": sub.subscription_token,
+                        }
+                    )
+
+        return urls
+
+    async def get_subscription_json_urls(self, client_id: int) -> list[dict]:
+        """Get all JSON subscription URLs for client.
+
+        Args:
+            client_id: Client ID
+
+        Returns:
+            List of JSON subscription info dicts
+        """
+        subscriptions = await self.get_client_subscriptions(client_id)
+
+        urls = []
+        for sub in subscriptions:
+            for connection in sub.inbound_connections:
+                if connection.is_enabled:
+                    server = connection.inbound.server
+                    # Build JSON subscription URL using server URL + subscription JSON path
+                    from urllib.parse import urljoin
+                    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+
+                    # subscription_json_path already ends with /, so just append token
+                    urls.append(
+                        {
+                            "subscription_name": sub.name,
+                            "server_name": server.name,
+                            "inbound_name": connection.inbound.remark,
+                            "url": urljoin(server.url, f"{subscription_json_path}{sub.subscription_token}"),
                             "token": sub.subscription_token,
                         }
                     )

@@ -186,8 +186,8 @@ class XUIService:
         password: str,
         verify_ssl: bool = True,
         panel_path: str = "/",
-        subscription_path: str = "/sub",
-        subscription_json_path: str = "/subjson",
+        subscription_path: str = "/sub/",
+        subscription_json_path: str = "/subjson/",
     ) -> Server:
         """Create a new server.
 

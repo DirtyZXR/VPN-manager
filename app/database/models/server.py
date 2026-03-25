@@ -28,8 +28,8 @@ class Server(Base, TimestampMixin, SyncMixin):
 
     # Custom paths for panel and subscriptions
     panel_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/")
-    subscription_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/sub")
-    subscription_json_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/subjson")
+    subscription_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/sub/")
+    subscription_json_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/subjson/")
 
     # Session management
     session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

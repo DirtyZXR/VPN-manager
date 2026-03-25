@@ -17,6 +17,16 @@ class ServerManagement(StatesGroup):
     waiting_for_verify_ssl = State()
     confirm_delete = State()
 
+    # Server editing states
+    waiting_for_edit_name = State()
+    waiting_for_edit_base_url = State()
+    waiting_for_edit_panel_path = State()
+    waiting_for_edit_subscription_path = State()
+    waiting_for_edit_subscription_json_path = State()
+    waiting_for_edit_username = State()
+    waiting_for_edit_password = State()
+    waiting_for_edit_verify_ssl = State()
+
 
 class UserManagement(StatesGroup):
     """User management states."""
