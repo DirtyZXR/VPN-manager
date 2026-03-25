@@ -2,6 +2,7 @@
 
 from typing import Sequence
 from loguru import logger
+import re
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -10,6 +11,42 @@ from sqlalchemy.orm import selectinload
 
 from app.database.models import Client
 from app.utils import generate_email
+
+
+def _normalize_search_query(query: str, is_email: bool = False) -> str:
+    """Normalize search query by removing extra spaces and special chars.
+
+    Args:
+        query: Raw search query
+        is_email: Whether this is an email search (preserves @ and .)
+
+    Returns:
+        Normalized query
+    """
+    # Remove extra whitespace
+    query = " ".join(query.split())
+
+    # Remove common punctuation except @ and . for emails
+    if not is_email:
+        query = re.sub(r'[,.!?:;\'"()\[\]{}<>|\\/~^$*+?@]', ' ', query)
+        # Remove extra spaces again after removing punctuation
+        query = " ".join(query.split())
+
+    return query.strip()
+
+
+def _split_query_into_words(query: str) -> list[str]:
+    """Split query into individual words for multi-word search.
+
+    Args:
+        query: Search query
+
+    Returns:
+        List of words
+    """
+    normalized = _normalize_search_query(query, is_email=False)
+    words = normalized.split()
+    return [word for word in words if len(word) > 1]  # Skip single characters
 
 
 class ClientService:
@@ -242,3 +279,146 @@ class ClientService:
             Updated client or None if not found
         """
         return await self.update_client(client_id, is_admin=is_admin)
+
+    async def search_clients(
+        self,
+        name: str | None = None,
+        email: str | None = None,
+        telegram_id: int | None = None,
+        xui_email: str | None = None,
+        search_all_fields: bool = False,
+    ) -> Sequence[Client]:
+        """Search clients by various criteria with smart text processing.
+
+        Args:
+            name: Partial name match (case-insensitive, multi-word support)
+            email: Partial email match (case-insensitive, normalized)
+            telegram_id: Exact Telegram ID match
+            xui_email: Partial XUI connection email match (case-insensitive, normalized)
+            search_all_fields: If True, searches all fields with OR logic
+
+        Returns:
+            List of matching clients
+        """
+        from sqlalchemy import or_, and_, text
+        from app.database.models import InboundConnection, Subscription
+
+        conditions = []
+
+        # Build conditions for direct client fields
+        if name:
+            normalized_name = _normalize_search_query(name, is_email=False)
+
+            # Check if query contains multiple words
+            name_words = _split_query_into_words(normalized_name)
+
+            if len(name_words) > 1:
+                # Multi-word search: match any word in the name
+                name_conditions = []
+                for word in name_words:
+                    # Use text() with explicit table name for reliable Cyrillic support
+                    name_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{word}%"))
+
+                # Match if ANY word matches (more flexible) or ALL words (stricter)
+                # Using OR for better UX - shows more results
+                conditions.append(or_(*name_conditions))
+
+                # Also try full name match for exact matches
+                conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_name}%"))
+            else:
+                # Single word search
+                conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_name}%"))
+
+        if email:
+            # Normalize email: preserve @ and ., lowercase
+            normalized_email = _normalize_search_query(email, is_email=True)
+            conditions.append(text("LOWER(clients.email) LIKE LOWER(:email)").params(email=f"%{normalized_email}%"))
+
+        if telegram_id:
+            conditions.append(Client.telegram_id == telegram_id)
+
+        # Build query
+        query = select(Client).options(selectinload(Client.subscriptions))
+
+        if xui_email:
+            # Normalize XUI email: preserve @ and ., lowercase
+            normalized_xui_email = _normalize_search_query(xui_email, is_email=True)
+
+            # Join with InboundConnection to search by XUI email
+            query = (
+                query.join(Subscription, Client.id == Subscription.client_id)
+                .join(InboundConnection, Subscription.id == InboundConnection.subscription_id)
+                .where(text("LOWER(inbound_connections.email) LIKE LOWER(:xui_email)").params(xui_email=f"%{normalized_xui_email}%"))
+            )
+
+        if conditions:
+            if xui_email:
+                # If we have xui_email and other conditions, combine them
+                query = query.where(and_(*conditions))
+            else:
+                # If no xui_email, just use or_ for direct client fields
+                query = query.where(or_(*conditions))
+
+        query = query.order_by(Client.created_at.desc())
+        query = query.distinct()  # Avoid duplicates when joining
+
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def search_clients_all_fields(self, query: str) -> Sequence[Client]:
+        """Search clients across all fields with OR logic.
+
+        Args:
+            query: Search term to match across all fields
+
+        Returns:
+            List of matching clients
+        """
+        from sqlalchemy import or_, and_, text
+        from app.database.models import InboundConnection, Subscription
+
+        # Normalize query for text fields (not for numbers)
+        normalized_query = _normalize_search_query(query, is_email=False)
+
+        # Build OR conditions for all fields
+        all_conditions = []
+
+        # Name search with multi-word support
+        name_words = _split_query_into_words(normalized_query)
+        if len(name_words) > 1:
+            for word in name_words:
+                all_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{word}%"))
+            all_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_query}%"))
+        else:
+            all_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_query}%"))
+
+        # Email search
+        normalized_email = _normalize_search_query(query, is_email=True)
+        all_conditions.append(text("LOWER(clients.email) LIKE LOWER(:email)").params(email=f"%{normalized_email}%"))
+
+        # Telegram ID search (if numeric)
+        if query.isdigit():
+            all_conditions.append(Client.telegram_id == int(query))
+
+        # XUI email search (requires JOIN)
+        xui_email_condition = text("LOWER(inbound_connections.email) LIKE LOWER(:xui_email)").params(xui_email=f"%{normalized_email}%")
+
+        # Build query
+        search_query = select(Client).options(selectinload(Client.subscriptions))
+
+        # Join for XUI email search
+        search_query = (
+            search_query.join(Subscription, Client.id == Subscription.client_id)
+            .join(InboundConnection, Subscription.id == InboundConnection.subscription_id)
+        )
+
+        # Combine all conditions with OR - client fields OR XUI email
+        direct_conditions = or_(*all_conditions)
+        final_condition = or_(direct_conditions, xui_email_condition)
+
+        search_query = search_query.where(final_condition)
+        search_query = search_query.distinct()
+        search_query = search_query.order_by(Client.created_at.desc())
+
+        result = await self.session.execute(search_query)
+        return result.scalars().all()

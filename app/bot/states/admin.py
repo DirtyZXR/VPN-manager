@@ -38,6 +38,10 @@ class ClientManagement(StatesGroup):
     waiting_for_inbound_server = State()
     waiting_for_inbound_selection = State()
 
+    # Search states
+    waiting_for_search_query = State()
+    waiting_for_search_field = State()
+
 
 class SubscriptionManagement(StatesGroup):
     """Subscription management states."""

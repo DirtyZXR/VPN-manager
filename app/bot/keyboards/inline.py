@@ -174,6 +174,24 @@ def get_clients_keyboard(clients: list) -> InlineKeyboardMarkup:
         )
 
     builder.button(text="Добавить клиента", callback_data="client_add")
+    builder.button(text="Поиск клиентов", callback_data="client_search")
     builder.button(text="Назад", callback_data="admin_menu")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_client_search_keyboard() -> InlineKeyboardMarkup:
+    """Get client search options keyboard.
+
+    Returns:
+        Inline keyboard markup with search field options
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👤 По имени", callback_data="search_field_name")
+    builder.button(text="📧 По email", callback_data="search_field_email")
+    builder.button(text="📱 По Telegram ID", callback_data="search_field_telegram_id")
+    builder.button(text="🔗 По XUI email", callback_data="search_field_xui_email")
+    builder.button(text="🔍 Комплексный поиск", callback_data="search_field_all")
+    builder.button(text="Назад", callback_data="admin_clients")
+    builder.adjust(2)
     return builder.as_markup()
