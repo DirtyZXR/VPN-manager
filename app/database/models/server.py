@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import DateTime as SADateTime
 
 from app.database.models.base import Base, TimestampMixin, SyncMixin
 
@@ -24,6 +25,10 @@ class Server(Base, TimestampMixin, SyncMixin):
     password_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Session management
+    session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    session_created_at: Mapped[datetime | None] = mapped_column(SADateTime(timezone=True), nullable=True)
 
     # Relationships
     inbounds: Mapped[list["Inbound"]] = relationship(

@@ -2,6 +2,7 @@
 
 import json
 import ssl
+from datetime import datetime
 from typing import Any
 
 import aiohttp
@@ -30,6 +31,7 @@ class XUIClient:
         password: str,
         timeout: int = 30,
         verify_ssl: bool = True,
+        saved_cookies: dict[str, Any] | None = None,
     ) -> None:
         """Initialize XUI client.
 
@@ -39,6 +41,7 @@ class XUIClient:
             password: Panel password
             timeout: Request timeout in seconds
             verify_ssl: Whether to verify SSL certificates (default: True)
+            saved_cookies: Saved session cookies to reuse (optional)
         """
         self.base_url = base_url.rstrip("/")
         self.username = username
@@ -46,7 +49,8 @@ class XUIClient:
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.verify_ssl = verify_ssl
         self._session: aiohttp.ClientSession | None = None
-        self._cookies: dict[str, Any] = {}
+        self._cookies: dict[str, Any] = saved_cookies or {}
+        self._session_created_at: datetime | None = None
 
     async def __aenter__(self) -> "XUIClient":
         """Async context manager entry."""
@@ -104,7 +108,14 @@ class XUIClient:
             trust_env=True,  # Allow environment variables
         )
 
-        logger.info(f"Attempting to connect to {self.base_url}/login")
+        logger.info(f"Attempting to connect to {self.base_url}")
+
+        # Try to use saved cookies first
+        if self._cookies and await self._test_session():
+            logger.info(f"Successfully reusing saved session for {self.base_url}")
+            return
+
+        # Fall back to login
         await self.login()
         logger.info(f"Successfully connected to {self.base_url}")
 
@@ -211,6 +222,46 @@ class XUIClient:
 
         except aiohttp.ClientError as e:
             raise XUIConnectionError(f"Connection error during login: {e}") from e
+
+    async def _test_session(self) -> bool:
+        """Test if saved cookies are still valid.
+
+        Returns:
+            True if session is valid
+        """
+        session = self._get_session()
+
+        try:
+            # Load saved cookies into session
+            for key, value in self._cookies.items():
+                session.cookie_jar.update_cookies({key: value})
+
+            # Test with a simple API call
+            async with session.get(f"{self.base_url}/panel/api/inbounds/list") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("success", False):
+                        logger.info(f"Saved session is valid for {self.base_url}")
+                        return True
+
+            # Session is invalid, clear cookies
+            self._cookies = {}
+            return False
+
+        except Exception:
+            # Any error means session is invalid
+            self._cookies = {}
+            return False
+
+    def get_session_cookies(self) -> dict[str, Any]:
+        """Get current session cookies.
+
+        Returns:
+            Dictionary of cookies
+        """
+        if self._session:
+            return {cookie.key: cookie.value for cookie in self._session.cookie_jar}
+        return self._cookies
 
     async def get_inbounds(self) -> list[XUIInbound]:
         """Get list of all inbounds.

@@ -1,5 +1,6 @@
 """XUI service for managing 3x-ui panel connections."""
 
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Sequence
 
@@ -66,16 +67,49 @@ class XUIService:
         password = self._decrypt_password(server.password_encrypted)
         # Use verify_ssl from server model, default to True for existing servers
         verify_ssl = getattr(server, 'verify_ssl', True)
+
+        # Try to load saved cookies
+        saved_cookies = None
+        if server.session_cookies_encrypted:
+            try:
+                saved_cookies = json.loads(self._decrypt_password(server.session_cookies_encrypted))
+                logger.debug(f"Loaded saved cookies for server {server.id}")
+            except Exception as e:
+                logger.warning(f"Failed to load saved cookies for server {server.id}: {e}")
+
         client = XUIClient(
             base_url=server.url,
             username=server.username,
             password=password,
             timeout=self._timeout,
             verify_ssl=verify_ssl,
+            saved_cookies=saved_cookies,
         )
         await client.connect()
+
+        # Save cookies after successful connection
+        self._save_session_cookies(server, client)
+
         self._clients[server.id] = client
         return client
+
+    def _save_session_cookies(self, server: Server, client: XUIClient) -> None:
+        """Save session cookies to server.
+
+        Args:
+            server: Server model
+            client: XUI client instance
+        """
+        try:
+            cookies = client.get_session_cookies()
+            if cookies:
+                from datetime import datetime, timezone
+                cookies_json = json.dumps(cookies)
+                server.session_cookies_encrypted = self._encrypt_password(cookies_json)
+                server.session_created_at = datetime.now(timezone.utc)
+                logger.debug(f"Saved session cookies for server {server.id}")
+        except Exception as e:
+            logger.warning(f"Failed to save session cookies for server {server.id}: {e}")
 
     async def close_client(self, server_id: int) -> None:
         """Close XUI client for server.
@@ -208,6 +242,9 @@ class XUIService:
             server.username = username
         if password is not None:
             server.password_encrypted = self._encrypt_password(password)
+            # Clear saved cookies when password changes
+            server.session_cookies_encrypted = None
+            server.session_created_at = None
         if is_active is not None:
             server.is_active = is_active
         if verify_ssl is not None:
