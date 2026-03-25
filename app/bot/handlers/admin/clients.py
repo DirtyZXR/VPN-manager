@@ -14,6 +14,7 @@ from app.bot.keyboards import (
     get_confirm_keyboard,
     get_servers_keyboard,
     get_clients_keyboard,
+    get_client_search_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
 from app.database import get_session, async_session_factory
@@ -24,27 +25,26 @@ router = Router()
 
 @router.callback_query(F.data == "admin_clients")
 async def show_clients(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show clients list."""
+    """Show clients search menu."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    async for session in get_session():
-        service = ClientService(session)
-        clients = await service.get_all_clients()
-
     try:
-        if not clients:
-            await callback.message.edit_text(
-                "👥 Список клиентов пуст.\n\n"
-                "Нажмите '➕ Добавить клиента' для добавления.",
-                reply_markup=get_clients_keyboard([]),
-            )
-        else:
-            await callback.message.edit_text(
-                f"👥 Список клиентов ({len(clients)}):",
-                reply_markup=get_clients_keyboard(clients),
-            )
+        # Create a custom keyboard for main menu
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔍 Поиск клиентов", callback_data="client_search")
+        kb.button(text="➕ Добавить клиента", callback_data="client_add")
+        kb.button(text="🔙 Назад", callback_data="admin_menu")
+        kb.adjust(1)
+
+        await callback.message.edit_text(
+            "👥 Управление клиентами\n\n"
+            "Для эффективной работы с большим количеством клиентов "
+            "используйте поиск по различным критериям.",
+            reply_markup=kb.as_markup(),
+        )
     except Exception:
         # Message hasn't changed, skip edit
         pass
@@ -618,3 +618,157 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
 
     await callback.answer("✅ Клиент больше не админ.")
     await select_client(callback, is_admin)
+
+
+# ==================== CLIENT SEARCH HANDLERS ====================
+
+
+@router.callback_query(F.data == "client_search")
+async def start_client_search(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start client search flow."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_text(
+            "🔍 Поиск клиентов\n\n"
+            "Выберите критерий поиска:",
+            reply_markup=get_client_search_keyboard(),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("search_field_"))
+async def select_search_field(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Handle search field selection."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    field = callback.data.split("_")[-1]
+    await state.update_data(search_field=field)
+    await state.set_state(ClientManagement.waiting_for_search_query)
+
+    field_messages = {
+        "name": "Введите имя клиента (частичное совпадение):",
+        "email": "Введите email клиента (частичное совпадение):",
+        "telegram_id": "Введите Telegram ID клиента (точное совпадение):",
+        "xui_email": "Введите email из XUI inbound (частичное совпадение):",
+        "all": "Введите поисковый запрос (проверит ВСЕ поля одновременно):\n"
+                "• Имя\n"
+                "• Email клиента\n"
+                "• Telegram ID\n"
+                "• Email из XUI inbound",
+    }
+
+    try:
+        await callback.message.edit_text(
+            f"🔍 {field_messages.get(field, 'Введите поисковый запрос:')}",
+            reply_markup=get_back_keyboard("client_search"),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.message(ClientManagement.waiting_for_search_query)
+async def process_search_query(message: Message, state: FSMContext) -> None:
+    """Process search query and display results."""
+    from app.services.client_service import _normalize_search_query
+
+    data = await state.get_data()
+    field = data.get("search_field", "all")
+    query = message.text.strip()
+
+    if not query:
+        await message.answer("❌ Поисковый запрос не может быть пустым.")
+        return
+
+    # Prepare search parameters
+    search_params = {}
+
+    if field == "name":
+        search_params["name"] = _normalize_search_query(query, is_email=False)
+    elif field == "email":
+        search_params["email"] = _normalize_search_query(query, is_email=True)
+    elif field == "telegram_id":
+        try:
+            telegram_id = int(query)
+            search_params["telegram_id"] = telegram_id
+        except ValueError:
+            await message.answer("❌ Telegram ID должен быть числом.")
+            return
+    elif field == "xui_email":
+        search_params["xui_email"] = _normalize_search_query(query, is_email=True)
+    elif field == "all":
+        # Search across all fields with OR logic
+        async for session in get_session():
+            service = ClientService(session)
+            clients = await service.search_clients_all_fields(query)
+
+        await state.clear()
+
+        if not clients:
+            await message.answer(
+                "🔍 Поиск не дал результатов.\n\n"
+                "Комплексный поиск проверяет все поля:\n"
+                "• Имя клиента\n"
+                "• Email клиента\n"
+                "• Telegram ID\n"
+                "• XUI email (из inbound подключений)\n\n"
+                "Попробуйте изменить поисковый запрос.",
+                reply_markup=get_back_keyboard("client_search"),
+            )
+        else:
+            text = f"🔍 Результаты поиска по всем полям ({len(clients)}):\n\n"
+            for client in clients:
+                status = "✅" if client.is_active else "❌"
+                admin_badge = "👤" if not client.is_admin else "🛡️"
+                text += f"{admin_badge} {status} <b>{client.name}</b>\n"
+                text += f"   Email: {client.email}\n"
+                if client.telegram_id:
+                    text += f"   Telegram ID: {client.telegram_id}\n"
+                text += "\n"
+
+            await message.answer(
+                text,
+                reply_markup=get_clients_keyboard(clients),
+                parse_mode="HTML",
+            )
+        return  # Exit early since we already handled search
+
+    # Perform search for specific fields
+    async for session in get_session():
+        service = ClientService(session)
+        clients = await service.search_clients(**search_params)
+
+    await state.clear()
+
+    if not clients:
+        await message.answer(
+            "🔍 Поиск не дал результатов.\n\n"
+            "Советы:\n"
+            "• Для поиска по имени можно использовать несколько слов\n"
+            "• Для поиска по email используйте символ @\n"
+            "• Для Telegram ID используйте только цифры",
+            reply_markup=get_back_keyboard("client_search"),
+        )
+    else:
+        text = f"🔍 Результаты поиска ({len(clients)}):\n\n"
+        for client in clients:
+            status = "✅" if client.is_active else "❌"
+            admin_badge = "👤" if not client.is_admin else "🛡️"
+            text += f"{admin_badge} {status} <b>{client.name}</b>\n"
+            text += f"   Email: {client.email}\n"
+            if client.telegram_id:
+                text += f"   Telegram ID: {client.telegram_id}\n"
+            text += "\n"
+
+        await message.answer(
+            text,
+            reply_markup=get_clients_keyboard(clients),
+            parse_mode="HTML",
+        )
