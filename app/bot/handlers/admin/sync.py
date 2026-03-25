@@ -22,7 +22,6 @@ async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
         return
 
     keyboard = InlineKeyboardBuilder()
-    keyboard.button(text="🔄 Синхронизировать все", callback_data="sync_all")
     keyboard.button(text="🖥️ Синхронизировать сервера", callback_data="sync_servers")
     keyboard.button(text="📊 Проверить целостность", callback_data="sync_integrity")
     keyboard.button(text="🔙 Назад", callback_data="admin_menu")
@@ -31,56 +30,17 @@ async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
     try:
         await callback.message.edit_text(
             "🔄 Управление синхронизацией данных\n\n"
-            "Выберите действие для синхронизации данных между ботом и 3x-ui панелями.",
+            "Выберите действие для синхронизации данных между ботом и 3x-ui панелями.\n\n"
+            "✅ Синхронизируются: серверы, inbounds и клиенты\n\n"
+            "📌 Что делает каждая кнопка:\n"
+            "• 🖥️ Синхронизировать сервера - Все серверы с inbounds и клиентами\n"
+            "• 📊 Проверить целостность - Только проверка, без синхронизации",
             reply_markup=keyboard.as_markup(),
         )
     except Exception:
         # Message hasn't changed, skip edit
         pass
     await callback.answer()
-
-
-@router.callback_query(F.data == "sync_all")
-async def sync_all(callback: CallbackQuery, is_admin: bool) -> None:
-    """Полная синхронизация."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    logger.info("🔄 Начало полной синхронизации через UI")
-
-    try:
-        await callback.message.edit_text(
-            "🔄 Запуск полной синхронизации...\n"
-            "⏳ Это может занять несколько минут.",
-            reply_markup=get_back_keyboard("admin_sync"),
-        )
-
-        logger.info("📝 Создание сессии базы данных")
-        async with async_session_factory() as session:
-            logger.info("📝 Создание SyncService")
-            sync_service = SyncService(session)
-            logger.info("📝 Вызов manual_sync с параметром 'all'")
-            results = await sync_service.manual_sync("all")
-            logger.info(f"📝 Результаты manual_sync: {results}")
-
-        status_emoji = "✅" if results["errors"] == 0 else "⚠️"
-        await callback.message.edit_text(
-            f"{status_emoji} Полная синхронизация завершена\n\n"
-            f"Синхронизировано: {results['synced']}\n"
-            f"Ошибок: {results['errors']}\n",
-            reply_markup=get_back_keyboard("admin_sync"),
-        )
-        await callback.answer("✅ Синхронизация завершена")
-        logger.info("✅ Полная синхронизация через UI завершена успешно")
-
-    except Exception as e:
-        logger.error(f"Ошибка полной синхронизации: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при синхронизации: {e}",
-            reply_markup=get_back_keyboard("admin_sync"),
-        )
-        await callback.answer("❌ Ошибка при синхронизации", show_alert=True)
 
 
 @router.callback_query(F.data == "sync_servers")
@@ -100,12 +60,14 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
         async with async_session_factory() as session:
             sync_service = SyncService(session)
             results = await sync_service.manual_sync("server")
+            await session.commit()  # Сохранить изменения в базу данных
 
         status_emoji = "✅" if results["errors"] == 0 else "⚠️"
         await callback.message.edit_text(
             f"{status_emoji} Синхронизация серверов завершена\n\n"
-            f"Серверов синхронизировано: {results['synced']}\n"
-            f"Ошибок: {results['errors']}\n",
+            f"Синхронизировано серверов: {results['synced']}\n"
+            f"Ошибок: {results['errors']}\n"
+            f"✅ Серверы, inbounds и клиенты синхронизированы",
             reply_markup=get_back_keyboard("admin_sync"),
         )
         await callback.answer("✅ Сервера синхронизированы")

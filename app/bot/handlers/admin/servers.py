@@ -193,14 +193,26 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
                 password=data["password"],
                 verify_ssl=verify_ssl,
             )
-            await session.commit()
+            await session.flush()
+
+            # Sync inbounds automatically
+            try:
+                synced_inbounds = await service.sync_server_inbounds(server.id)
+                await session.commit()
+                logger.info(f"✅ Автосинхронизация сервера {server.id}: {synced_inbounds} inbounds")
+            except Exception as sync_error:
+                logger.error(f"❌ Ошибка синхронизации inbounds: {sync_error}", exc_info=True)
+                await session.rollback()  # Rollback sync but keep server
+                # Re-commit just the server creation
+                await session.commit()
 
             await state.clear()
             await callback.message.edit_text(
                 f"✅ Сервер '{server.name}' успешно добавлен!\n\n"
                 f"URL: {server.url}\n"
                 f"Проверка SSL: {'Включена' if verify_ssl else 'Отключена'}\n"
-                f"Найдено inbounds: {len(inbounds)}",
+                f"Найдено inbounds: {len(inbounds)}\n"
+                f"Синхронизировано inbounds: {synced_inbounds if 'synced_inbounds' in locals() else 'Ошибка'}",
                 reply_markup=get_back_keyboard("admin_servers"),
             )
 
@@ -275,14 +287,26 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
                 password=data["password"],
                 verify_ssl=False,  # Store this setting
             )
-            await session.commit()
+            await session.flush()
+
+            # Sync inbounds automatically
+            try:
+                synced_inbounds = await service.sync_server_inbounds(server.id)
+                await session.commit()
+                logger.info(f"✅ Автосинхронизация сервера {server.id}: {synced_inbounds} inbounds")
+            except Exception as sync_error:
+                logger.error(f"❌ Ошибка синхронизации inbounds: {sync_error}", exc_info=True)
+                await session.rollback()  # Rollback sync but keep server
+                # Re-commit just the server creation
+                await session.commit()
 
             await state.clear()
             await callback.message.edit_text(
                 f"✅ Сервер '{server.name}' успешно добавлен!\n\n"
                 f"URL: {server.url}\n"
                 f"⚠️ Проверка SSL: ОТКЛЮЧЕНА\n"
-                f"Найдено inbounds: {len(inbounds)}",
+                f"Найдено inbounds: {len(inbounds)}\n"
+                f"Синхронизировано inbounds: {synced_inbounds if 'synced_inbounds' in locals() else 'Ошибка'}",
                 reply_markup=get_back_keyboard("admin_servers"),
             )
 
@@ -367,7 +391,7 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
 
 @router.callback_query(F.data.startswith("server_sync_"))
 async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
-    """Sync server inbounds."""
+    """Sync server inbounds and clients."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
@@ -375,16 +399,22 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
-        service = XUIService(session)
+        from app.services import SyncService
+        sync_service = SyncService(session)
         try:
-            count = await service.sync_server_inbounds(server_id)
-            await session.commit()
-            await callback.answer(f"✅ Синхронизация завершена! Обработано {count} inbounds", show_alert=True)
+            # Sync inbounds and clients
+            from sqlalchemy import select
+            from app.database.models import Server
+            server = await session.get(Server, server_id)
+            if server:
+                await sync_service.sync_server(server, force=True)
+                await session.commit()
+                await callback.answer(f"✅ Синхронизация завершена! Inbounds и клиенты синхронизированы", show_alert=True)
+            else:
+                await callback.answer(f"❌ Сервер не найден", show_alert=True)
         except Exception as e:
             logger.error(f"Error syncing server {server_id}: {e}", exc_info=True)
             await callback.answer(f"❌ Ошибка при синхронизации: {e}", show_alert=True)
-        finally:
-            await service.close_all_clients()
 
 
 @router.callback_query(F.data.startswith("server_test_"))
