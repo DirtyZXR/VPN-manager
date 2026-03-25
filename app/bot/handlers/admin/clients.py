@@ -6,11 +6,14 @@ from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
 from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
-    get_clients_keyboard,
     get_servers_keyboard,
+    get_clients_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
 from app.database import get_session, async_session_factory
@@ -63,7 +66,6 @@ async def start_add_client(callback: CallbackQuery, state: FSMContext, is_admin:
             reply_markup=get_back_keyboard("admin_clients"),
         )
     except Exception:
-        # Message hasn't changed, skip edit
         pass
     await callback.answer()
 
@@ -95,7 +97,6 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
     email = message.text.strip()
 
     if email != "-":
-        # Basic email validation
         if "@" not in email or "." not in email:
             await message.answer("❌ Некорректный формат email.")
             return
@@ -120,6 +121,8 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
         except ValueError:
             await message.answer("❌ Telegram ID должен быть числом или '-'.")
             return
+    elif telegram_id == "-":
+        telegram_id = None
 
     async for session in get_session():
         service = ClientService(session)
@@ -142,13 +145,15 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
             await message.answer(f"❌ Ошибка при создании клиента: {e}")
 
 
-async def _show_client_details(client_id: int, callback: CallbackQuery) -> None:
-    """Helper function to show client details.
+@router.callback_query(F.data.startswith("client_select_"))
+async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
+    """Show client details and actions."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
 
-    Args:
-        client_id: Client ID
-        callback: Original callback query
-    """
+    client_id = int(callback.data.split("_")[-1])
+
     async for session in get_session():
         service = ClientService(session)
         client = await service.get_client_by_id(client_id)
@@ -171,10 +176,9 @@ async def _show_client_details(client_id: int, callback: CallbackQuery) -> None:
         f"Создан: {client.created_at.strftime('%d.%m.%Y %H:%M')}"
     )
 
-    # Build keyboard with actions
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
-    kb.button(text="📝 Подписки", callback_data=f"client_subscriptions_{client_id}")
+    kb.button(text="📝 Подписки клиента", callback_data=f"client_subscriptions_{client_id}")
     kb.button(text="✏️ Изменить имя", callback_data=f"client_rename_name_{client_id}")
     kb.button(text="📱 Изменить Telegram ID", callback_data=f"client_rename_telegram_{client_id}")
     if client.is_admin:
@@ -192,20 +196,8 @@ async def _show_client_details(client_id: int, callback: CallbackQuery) -> None:
     try:
         await callback.message.edit_text(text, reply_markup=kb.as_markup())
     except Exception:
-        # Message hasn't changed, skip edit
         pass
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("client_select_"))
-async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show client details and actions."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    client_id = int(callback.data.split("_")[-1])
-    await _show_client_details(client_id, callback)
 
 
 @router.callback_query(F.data.startswith("client_subscriptions_"))
@@ -224,33 +216,103 @@ async def show_client_subscriptions(callback: CallbackQuery, is_admin: bool) -> 
         subscriptions = await service.get_client_subscriptions(client_id)
 
     if not subscriptions:
-        await callback.answer("❌ У клиента нет подписок.", show_alert=True)
-        return
-
-    text = "📝 Подписки клиента:\n\n"
-
-    for sub in subscriptions:
-        status = "✅" if sub.is_active else "❌"
-        expiry = sub.expiry_date.strftime("%d.%m.%Y") if sub.expiry_date else "Бессрочно"
-        traffic = "Безлимит" if sub.is_unlimited else f"{sub.total_gb} GB"
-
-        text += (
-            f"{status} {sub.name}\n"
-            f"   Трафик: {traffic}\n"
-            f"   Срок: {expiry}\n"
-            f"   Подключений: {len(sub.inbound_connections)}\n\n"
-        )
+        text = "📝 У клиента нет подписок.\n\n" \
+               "Нажмите '➕ Создать подписку' для добавления первой подписки."
+    else:
+        text = "📝 Подписки клиента:\n\n"
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
+
+    if subscriptions:
+        for sub in subscriptions:
+            status = "✅" if sub.is_active else "❌"
+            expiry = sub.expiry_date.strftime("%d.%m.%Y") if sub.expiry_date else "Бессрочно"
+            traffic = "Безлимит" if sub.is_unlimited else f"{sub.total_gb} GB"
+
+            text += (
+                f"{status} <b>{sub.name}</b>\n"
+                f"   Трафик: {traffic}\n"
+                f"   Срок: {expiry}\n"
+                f"   Подключений: {len(sub.inbound_connections)}\n\n"
+            )
+
+            # Add button for each subscription
+            kb.button(text=f"📝 {sub.name}", callback_data=f"client_sub_detail_{sub.id}")
+
     kb.button(text="➕ Создать подписку", callback_data=f"client_create_subscription_{client_id}")
     kb.button(text="🔙 Назад", callback_data=f"client_select_{client_id}")
     kb.adjust(1)
 
     try:
-        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+        await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
     except Exception:
-        # Message hasn't changed, skip edit
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("client_sub_detail_"))
+async def show_client_subscription_detail(callback: CallbackQuery, is_admin: bool) -> None:
+    """Show subscription details from client view."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    subscription_id = int(callback.data.split("_")[-1])
+
+    from app.services.new_subscription_service import NewSubscriptionService
+    from app.database.models import Subscription
+
+    async for session in get_session():
+        service = NewSubscriptionService(session)
+
+        result = await session.execute(
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .options(
+                selectinload(Subscription.client),
+                selectinload(Subscription.inbound_connections),
+            )
+        )
+        subscription = result.scalar_one_or_none()
+
+    if not subscription:
+        await callback.answer("❌ Подписка не найдена.", show_alert=True)
+        return
+
+    status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
+    expiry = subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
+    traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
+
+    text = (
+        f"📝 Подписка: <b>{subscription.name}</b>\n\n"
+        f"Клиент: {subscription.client.name}\n"
+        f"Токен: <code>{subscription.subscription_token}</code>\n"
+        f"Статус: {status}\n"
+        f"Трафик: {traffic}\n"
+        f"Срок: {expiry}\n"
+        f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+        f"Подключений: {len(subscription.inbound_connections)}"
+    )
+
+    if subscription.notes:
+        text += f"\n📝 Заметки: {subscription.notes}"
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
+    builder.button(text="✏️ Редактировать", callback_data=f"admin_sub_edit_{subscription_id}")
+    if subscription.is_active:
+        builder.button(text="❌ Отключить", callback_data=f"admin_sub_disable_{subscription_id}")
+    else:
+        builder.button(text="✅ Включить", callback_data=f"admin_sub_enable_{subscription_id}")
+    builder.button(text="🗑️ Удалить", callback_data=f"admin_sub_delete_{subscription_id}")
+    builder.button(text="🔙 Назад", callback_data=f"client_subscriptions_{subscription.client_id}")
+    builder.adjust(1)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    except Exception:
         pass
     await callback.answer()
 
@@ -266,165 +328,6 @@ async def start_create_subscription_for_client(callback: CallbackQuery, state: F
     await state.update_data(client_id=client_id)
 
     from app.services.xui_service import XUIService
-    from app.bot.handlers.admin.subscriptions import start_create_subscription
-
-    # Reuse subscription creation flow with pre-selected client
-    async for session in get_session():
-        service = XUIService(session)
-        servers = await service.get_active_servers()
-
-    if not servers:
-        await callback.answer("❌ Нет активных серверов. Сначала добавьте сервер.", show_alert=True)
-        return
-
-    await state.set_state(SubscriptionManagement.waiting_for_server_selection)
-    try:
-        await callback.message.edit_text(
-            "Выберите сервер:",
-            reply_markup=get_servers_keyboard(servers, action="sub_select"),
-        )
-    except Exception:
-        # Message hasn't changed, skip edit
-        pass
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("subscription_select_"))
-async def select_subscription(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show subscription details and actions."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    subscription_id = int(callback.data.split("_")[-1])
-
-    from app.services.new_subscription_service import NewSubscriptionService
-
-    async for session in get_session():
-        service = NewSubscriptionService(session)
-        subscription = await service.get_subscription_by_id(subscription_id)
-
-    if not subscription:
-        await callback.answer("❌ Подписка не найдена.", show_alert=True)
-        return
-
-    # Load subscription with relations
-    from app.database.models import Client
-    client = await session.get(Client, subscription.client_id)
-
-    status = "✅ Активен" if subscription.is_active else "❌ Неактивен"
-    expiry = subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
-    traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
-
-    text = (
-        f"📝 Подписка: {subscription.name}\n\n"
-        f"ID: {subscription.id}\n"
-        f"Клиент: {client.name}\n"
-        f"Токен: {subscription.subscription_token}\n"
-        f"Статус: {status}\n"
-        f"Трафик: {traffic}\n"
-        f"Срок: {expiry}\n"
-        f"Подключений: {len(subscription.inbound_connections)}"
-    )
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📢 Inbounds", callback_data=f"subscription_inbounds_{subscription_id}")
-    kb.button(text="✏️ Изменить", callback_data=f"subscription_edit_{subscription_id}")
-    if subscription.is_active:
-        kb.button(text="❌ Отключить", callback_data=f"subscription_disable_{subscription_id}")
-    else:
-        kb.button(text="✅ Включить", callback_data=f"subscription_enable_{subscription_id}")
-    kb.button(text="🗑️ Удалить", callback_data=f"subscription_delete_{subscription_id}")
-    kb.button(text="🔙 Назад", callback_data=f"client_subscriptions_{client_id}")
-    kb.adjust(1)
-
-    try:
-        await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    except Exception:
-        # Message hasn't changed, skip edit
-        pass
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("subscription_inbounds_"))
-async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show subscription inbounds."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    subscription_id = int(callback.data.split("_")[-1])
-
-    from app.services.new_subscription_service import NewSubscriptionService
-
-    async for session in get_session():
-        service = NewSubscriptionService(session)
-        subscription = await service.get_subscription_by_id(subscription_id)
-
-    if not subscription:
-        await callback.answer("❌ Подписка не найдена.", show_alert=True)
-        return
-
-    if not subscription.inbound_connections:
-        await callback.answer("❌ У подписки нет подключений.", show_alert=True)
-        return
-
-    # Load inbound connections with server and inbound info
-    from sqlalchemy.orm import selectinload
-    from app.database.models import Subscription, Inbound, Server
-
-    result = await session.execute(
-        select(Subscription)
-        .where(Subscription.id == subscription_id)
-        .options(
-            selectinload(Subscription.inbound_connections)
-            .selectinload("inbound.server")
-        )
-    )
-    subscription_with_relations = result.scalar_one_or_none()
-
-    text = f"📢 Inbounds подписки '{subscription.name}':\n\n"
-
-    for conn in subscription_with_relations.inbound_connections:
-        status = "✅" if conn.is_enabled else "❌"
-        inbound = conn.inbound
-        server = inbound.server
-
-        text += (
-            f"{status} {inbound.remark} ({inbound.protocol})\n"
-            f"   Сервер: {server.name}\n"
-            f"   Порт: {inbound.port}\n"
-            f"   Email: {conn.email}\n"
-            f"   UUID: {conn.uuid}\n\n"
-        )
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    kb = InlineKeyboardBuilder()
-    kb.button(text="➕ Добавить inbound", callback_data=f"subscription_add_inbound_{subscription_id}")
-    kb.button(text="🔙 Назад", callback_data=f"subscription_select_{subscription_id}")
-    kb.adjust(1)
-
-    try:
-        await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    except Exception:
-        # Message hasn't changed, skip edit
-        pass
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("subscription_add_inbound_"))
-async def start_add_inbound(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    """Start adding new inbound to subscription."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    subscription_id = int(callback.data.split("_")[-1])
-    await state.update_data(subscription_id=subscription_id)
-
-    # Show server selection
-    from app.services.xui_service import XUIService
 
     async for session in get_session():
         service = XUIService(session)
@@ -434,135 +337,15 @@ async def start_add_inbound(callback: CallbackQuery, state: FSMContext, is_admin
         await callback.answer("❌ Нет активных серверов.", show_alert=True)
         return
 
-    await state.set_state(ClientManagement.waiting_for_inbound_server)
+    await state.set_state(SubscriptionManagement.waiting_for_server_selection)
     try:
         await callback.message.edit_text(
             "Выберите сервер:",
-            reply_markup=get_servers_keyboard(servers, action="add_inbound"),
+            reply_markup=get_servers_keyboard(servers, action="sub_select"),
         )
     except Exception:
-        # Message hasn't changed, skip edit
         pass
     await callback.answer()
-
-
-@router.callback_query(ClientManagement.waiting_for_inbound_server, F.data.startswith("server_add_inbound_"))
-async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMContext) -> None:
-    """Handle server selection for adding inbound."""
-    server_id = int(callback.data.split("_")[-1])
-    await state.update_data(server_id=server_id)
-
-    from app.services.xui_service import XUIService
-
-    async for session in get_session():
-        service = XUIService(session)
-        inbounds = await service.get_server_inbounds(server_id)
-
-    if not inbounds:
-        await callback.answer("❌ У сервера нет активных inbounds.", show_alert=True)
-        return
-
-    await state.set_state(ClientManagement.waiting_for_inbound_selection)
-    try:
-        await callback.message.edit_text(
-            "Выберите inbound:",
-            reply_markup=await get_inbounds_keyboard(inbounds),
-        )
-    except Exception:
-        # Message hasn't changed, skip edit
-        pass
-    await callback.answer()
-
-
-@router.callback_query(ClientManagement.waiting_for_inbound_selection, F.data.startswith("add_inbound_"))
-async def confirm_add_inbound(callback: CallbackQuery, state: FSMContext) -> None:
-    """Confirm adding inbound to subscription."""
-    data = await state.get_data()
-    subscription_id = data["subscription_id"]
-    server_id = data["server_id"]
-    inbound_id = int(callback.data.split("_")[-1])
-
-    from app.services.xui_service import XUIService
-    from app.database.models import Subscription, Inbound
-
-    async for session in get_session():
-        service = XUIService(session)
-
-        # Get subscription and inbound info
-        result = await session.execute(
-            select(Subscription).where(Subscription.id == subscription_id)
-        )
-        subscription = result.scalar_one_or_none()
-
-        if not subscription:
-            await callback.answer("❌ Подписка не найдена.", show_alert=True)
-            return
-
-        result = await session.execute(
-            select(Inbound).where(Inbound.id == inbound_id)
-        )
-        inbound = result.scalar_one_or_none()
-
-        if not inbound:
-            await callback.answer("❌ Inbound не найден.", show_alert=True)
-            return
-
-        try:
-            # Check if connection already exists
-            from sqlalchemy import select as sql_select
-            from app.database.models import InboundConnection
-
-            existing = await session.execute(
-                sql_select(InboundConnection).where(
-                    (InboundConnection.subscription_id == subscription_id) &
-                    (InboundConnection.inbound_id == inbound_id)
-                )
-            )
-            if existing.scalar_one_or_none():
-                await callback.answer("❌ Этот inbound уже добавлен к подписке.", show_alert=True)
-                return
-
-            # TODO: Create client in XUI panel
-            # This requires implementing actual XUI client creation
-            # For now, just show placeholder
-
-            try:
-                await callback.message.edit_text(
-                    "⚠️ Создание клиентов в XUI в разработке.\n\n"
-                    f"Подписка: {subscription.name}\n"
-                    f"Inbound: {inbound.remark} ({inbound.protocol})\n\n"
-                    "Функционал будет реализован в следующих этапах.",
-                    reply_markup=get_back_keyboard(f"subscription_inbounds_{subscription_id}"),
-                )
-            except Exception:
-                # Message hasn't changed, skip edit
-                pass
-
-        except Exception as e:
-            logger.error(f"Error adding inbound: {e}", exc_info=True)
-            await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
-
-        finally:
-            await service.close_all_clients()
-
-    await state.clear()
-    await callback.answer()
-
-
-async def get_inbounds_keyboard(inbounds: list) -> str:
-    """Get inbounds keyboard."""
-    builder = InlineKeyboardBuilder()
-
-    for inbound in inbounds:
-        status = "✅" if inbound.is_active else "❌"
-        builder.button(
-            text=f"📦 {status} {inbound.remark} ({inbound.protocol})",
-            callback_data=f"add_inbound_{inbound.id}",
-        )
-
-    builder.adjust(1)
-    return builder.as_markup()
-
 
 
 @router.callback_query(F.data.startswith("client_rename_name_"))
@@ -583,9 +366,33 @@ async def start_rename_client_name(callback: CallbackQuery, state: FSMContext, i
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     except Exception:
-        # Message hasn't changed, skip edit
         pass
     await callback.answer()
+
+
+@router.message(ClientManagement.waiting_for_new_name)
+async def process_rename_client_name(message: Message, state: FSMContext) -> None:
+    """Process client rename."""
+    data = await state.get_data()
+    client_id = data["client_id"]
+    name = message.text.strip()
+
+    if not name:
+        await message.answer("❌ Имя не может быть пустым.")
+        return
+
+    if len(name) > 100:
+        await message.answer("❌ Имя не должно превышать 100 символов.")
+        return
+
+    async for session in get_session():
+        service = ClientService(session)
+        client = await service.rename_client(client_id, name)
+    await state.clear()
+    await message.answer(
+        f"✅ Клиент переименован в '{client.name}'",
+        reply_markup=get_back_keyboard(f"client_select_{client_id}"),
+    )
 
 
 @router.callback_query(F.data.startswith("client_rename_telegram_"))
@@ -606,42 +413,8 @@ async def start_rename_client_telegram(callback: CallbackQuery, state: FSMContex
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     except Exception:
-        # Message hasn't changed, skip edit
         pass
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("client_rename_"))
-async def start_rename_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    """Start renaming client - DEPRECATED handler, redirects to specific handlers."""
-    # This handler is kept for backward compatibility but redirects to specific handlers
-    # Extract the action from callback data
-    parts = callback.data.split("_")
-    if len(parts) >= 3:
-        action = parts[2]  # "name" or "telegram"
-        if action == "name":
-            return await start_rename_client_name(callback, state, is_admin)
-        elif action == "telegram":
-            return await start_rename_client_telegram(callback, state, is_admin)
-
-    # Default fallback to name change
-    return await start_rename_client_name(callback, state, is_admin)
-
-
-@router.message(ClientManagement.waiting_for_new_name)
-async def process_rename_client(message: Message, state: FSMContext) -> None:
-    """Process client rename."""
-    data = await state.get_data()
-    client_id = data["client_id"]
-
-    async for session in get_session():
-        service = ClientService(session)
-        client = await service.rename_client(client_id, message.text)
-    await state.clear()
-    await message.answer(
-        f"✅ Клиент переименован в '{client.name}'",
-        reply_markup=get_back_keyboard(f"client_select_{client_id}"),
-    )
 
 
 @router.message(ClientManagement.waiting_for_new_telegram_id)
@@ -660,7 +433,7 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
             await message.answer("❌ Telegram ID должен быть числом или '-'.")
             return
     elif telegram_id_input == "-":
-        telegram_id = None  # Remove Telegram ID
+        telegram_id = None
 
     async for session in get_session():
         service = ClientService(session)
@@ -690,7 +463,7 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         from app.services.new_subscription_service import NewSubscriptionService
 
         client_service = ClientService(session)
@@ -706,8 +479,7 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
             await session.commit()
 
             await callback.answer(f"✅ Клиент включен. Активировано {toggled} подключений в XUI.")
-            # Re-select to refresh view
-            await _show_client_details(client_id, callback)
+            await select_client(callback, is_admin)
         except Exception:
             await session.rollback()
             raise
@@ -724,7 +496,7 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         from app.services.new_subscription_service import NewSubscriptionService
 
         client_service = ClientService(session)
@@ -740,7 +512,7 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
             await session.commit()
 
             await callback.answer(f"✅ Клиент отключен. Деактивировано {toggled} подключений в XUI.")
-            await _show_client_details(client_id, callback)
+            await select_client(callback, is_admin)
         except Exception:
             await session.rollback()
             raise
@@ -766,7 +538,6 @@ async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_a
             reply_markup=get_confirm_keyboard(f"client_delete_{client_id}", "admin_clients"),
         )
     except Exception:
-        # Message hasn't changed, skip edit
         pass
     await callback.answer()
 
@@ -778,9 +549,10 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    client_id = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    client_id = data["client_id"]
 
-    async with async_session_factory() as session:
+    async for session in get_session():
         from app.services.new_subscription_service import NewSubscriptionService
 
         client_service = ClientService(session)
@@ -818,8 +590,7 @@ async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
         await service.set_client_admin(client_id, True)
 
     await callback.answer("✅ Клиент теперь админ.")
-    # Re-select to refresh view
-    await _show_client_details(client_id, callback)
+    await select_client(callback, is_admin)
 
 
 @router.callback_query(F.data.startswith("client_unadmin_"))
@@ -836,5 +607,4 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
         await service.set_client_admin(client_id, False)
 
     await callback.answer("✅ Клиент больше не админ.")
-    # Re-select to refresh view
-    await _show_client_details(client_id, callback)
+    await select_client(callback, is_admin)

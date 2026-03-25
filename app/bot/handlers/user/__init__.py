@@ -2,4 +2,4 @@
 
 from app.bot.handlers.user import subscriptions
 
-__all__ = ["subscriptions"]
+__all__ = ["subscriptions", "router"]

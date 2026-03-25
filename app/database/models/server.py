@@ -23,6 +23,7 @@ class Server(Base, TimestampMixin, SyncMixin):
     username: Mapped[str] = mapped_column(String(100), nullable=False)
     password_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
     inbounds: Mapped[list["Inbound"]] = relationship(

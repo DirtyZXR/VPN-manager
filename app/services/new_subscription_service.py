@@ -245,15 +245,17 @@ class NewSubscriptionService:
         if not connection:
             return False
 
-        # Get inbound info
+        # Get inbound info with server relationship
         inbound = await self.session.execute(
-            select(Inbound).where(Inbound.id == inbound_id)
+            select(Inbound)
+            .where(Inbound.id == inbound_id)
+            .options(selectinload(Inbound.server))
         )
         inbound = inbound.scalar_one_or_none()
 
         # Delete from XUI
-        if inbound:
-            xui_client = await self._get_xui_client(inbound)
+        if inbound and inbound.server:
+            xui_client = await self._get_xui_client(inbound.server)
             await xui_client.delete_client(inbound.xui_id, connection.uuid)
             inbound.client_count -= 1
 
@@ -566,3 +568,186 @@ class NewSubscriptionService:
                     )
 
         return urls
+
+    # Subscription management methods
+
+    async def get_all_subscriptions(self) -> Sequence[Subscription]:
+        """Get all subscriptions.
+
+        Returns:
+            List of all subscriptions
+        """
+        result = await self.session.execute(
+            select(Subscription)
+            .options(
+                selectinload(Subscription.client),
+                selectinload(Subscription.inbound_connections),
+            )
+            .order_by(Subscription.created_at.desc())
+        )
+        return result.scalars().all()
+
+    async def update_subscription(
+        self,
+        subscription_id: int,
+        name: str | None = None,
+        total_gb: int | None = None,
+        expiry_days: int | None = None,
+        notes: str | None = None,
+        is_active: bool | None = None,
+    ) -> Subscription:
+        """Update subscription parameters.
+
+        Args:
+            subscription_id: Subscription ID
+            name: New subscription name (optional)
+            total_gb: New traffic limit in GB (optional)
+            expiry_days: New expiry in days (optional, None = no change, 0 = never)
+            notes: New notes (optional)
+            is_active: New active status (optional)
+
+        Returns:
+            Updated subscription
+
+        Raises:
+            XUIError: If subscription not found
+        """
+        subscription = await self.session.execute(
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .options(selectinload(Subscription.client))
+        )
+        subscription = subscription.scalar_one_or_none()
+        if not subscription:
+            raise XUIError("Subscription not found")
+
+        # Update fields if provided
+        if name is not None:
+            subscription.name = name
+        if total_gb is not None:
+            subscription.total_gb = total_gb
+        if expiry_days is not None:
+            if expiry_days == 0:
+                subscription.expiry_date = None
+            else:
+                subscription.expiry_date = datetime.now(timezone.utc) + timedelta(days=expiry_days)
+        if notes is not None:
+            subscription.notes = notes
+        if is_active is not None:
+            subscription.is_active = is_active
+
+        await self.session.flush()
+
+        # Update XUI clients if parameters changed
+        if total_gb is not None or expiry_days is not None:
+            result = await self.session.execute(
+                select(InboundConnection)
+                .where(InboundConnection.subscription_id == subscription_id)
+                .options(
+                    selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                )
+            )
+            connections = result.scalars().all()
+
+            for connection in connections:
+                try:
+                    xui_client = await self._get_xui_client(connection.inbound.server)
+
+                    # Recalculate expiry time for XUI
+                    expiry_time = 0
+                    if subscription.expiry_date:
+                        expiry_time = int(subscription.expiry_date.timestamp() * 1000)
+
+                    update_request = XUIAddClientRequest(
+                        id=connection.uuid,
+                        email=connection.email,
+                        enable=connection.is_enabled,
+                        flow="xtls-rprx-vision",
+                        totalGB=subscription.total_gb * 1024 * 1024 * 1024,
+                        expiryTime=expiry_time,
+                        subId=subscription.subscription_token,
+                        tgId=int(subscription.client.telegram_id) if subscription.client.telegram_id else 0,
+                    )
+
+                    await xui_client.update_client(connection.inbound.xui_id, update_request)
+                    connection.sync_status = "synced"
+                    connection.last_sync_at = datetime.now(timezone.utc)
+                except Exception as e:
+                    logger.warning(f"Failed to update XUI client for connection {connection.id}: {e}")
+                    connection.sync_status = "error"
+
+            await self.session.flush()
+
+        # Reload with relationships
+        return await self.get_subscription(subscription_id)
+
+    async def delete_subscription(self, subscription_id: int) -> bool:
+        """Delete subscription and all its inbound connections.
+
+        Args:
+            subscription_id: Subscription ID
+
+        Returns:
+            True if deleted
+        """
+        subscription = await self.session.execute(
+            select(Subscription)
+            .where(Subscription.id == subscription_id)
+            .options(selectinload(Subscription.inbound_connections))
+        )
+        subscription = subscription.scalar_one_or_none()
+        if not subscription:
+            return False
+
+        # Delete all XUI clients
+        for connection in subscription.inbound_connections:
+            try:
+                inbound = await self.session.execute(
+                    select(Inbound)
+                    .where(Inbound.id == connection.inbound_id)
+                    .options(selectinload(Inbound.server))
+                )
+                inbound = inbound.scalar_one_or_none()
+                if inbound and inbound.server:
+                    xui_client = await self._get_xui_client(inbound.server)
+                    await xui_client.delete_client(inbound.xui_id, connection.uuid)
+                    inbound.client_count -= 1
+            except Exception as e:
+                logger.warning(f"Failed to delete XUI client for connection {connection.id}: {e}")
+
+        # Delete from database
+        await self.session.delete(subscription)
+        await self.session.flush()
+        return True
+
+    async def get_subscription_inbounds(self, subscription_id: int) -> Sequence[InboundConnection]:
+        """Get all inbound connections for subscription.
+
+        Args:
+            subscription_id: Subscription ID
+
+        Returns:
+            List of inbound connections
+        """
+        result = await self.session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.subscription_id == subscription_id)
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+            )
+            .order_by(InboundConnection.created_at.desc())
+        )
+        return result.scalars().all()
+
+    async def get_subscription_by_id(self, subscription_id: int) -> Subscription | None:
+        """Get subscription by ID with full relations.
+
+        Args:
+            subscription_id: Subscription ID
+
+        Returns:
+            Subscription or None
+        """
+        return await self.get_subscription(subscription_id)

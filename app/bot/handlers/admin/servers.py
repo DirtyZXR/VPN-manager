@@ -129,7 +129,7 @@ async def process_server_username(message: TgMessage, state: FSMContext) -> None
 
 @router.message(ServerManagement.waiting_for_password)
 async def process_server_password(message: TgMessage, state: FSMContext) -> None:
-    """Process server password input and create server."""
+    """Process server password input and ask for SSL verification."""
     data = await state.get_data()
     password = message.text
 
@@ -137,8 +137,34 @@ async def process_server_password(message: TgMessage, state: FSMContext) -> None
         await message.answer("❌ Пароль не может быть пустым.")
         return
 
+    await state.update_data(password=password)
+    await state.set_state(ServerManagement.waiting_for_verify_ssl)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Да (рекомендуется)", callback_data="verify_ssl_yes")
+    kb.button(text="❌ Нет (для самоподписанных сертификатов)", callback_data="verify_ssl_no")
+    kb.adjust(1)
+
+    await message.answer(
+        "Проверять SSL сертификат при подключении к серверу?\n\n"
+        "⚠️ Отключение проверки небезопасно и рекомендуется только для "
+        "серверов с самоподписанными или проблемными сертификатами.",
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("verify_ssl_"))
+async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContext) -> None:
+    """Process SSL verification selection and create server."""
+    data = await state.get_data()
+    verify_ssl = callback.data == "verify_ssl_yes"
+
     # Test connection before creating server
-    await message.answer("🔄 Проверка подключения к серверу...", reply_markup=None)
+    await callback.message.edit_text(
+        "🔄 Проверка подключения к серверу...",
+        reply_markup=None,
+    )
 
     async with async_session_factory() as session:
         service = XUIService(session)
@@ -150,8 +176,9 @@ async def process_server_password(message: TgMessage, state: FSMContext) -> None
             test_client = XUIClient(
                 base_url=data["url"],
                 username=data["username"],
-                password=password,
+                password=data["password"],
                 timeout=30,
+                verify_ssl=verify_ssl,
             )
 
             await test_client.connect()
@@ -163,22 +190,106 @@ async def process_server_password(message: TgMessage, state: FSMContext) -> None
                 name=data["name"],
                 url=data["url"],
                 username=data["username"],
-                password=password,
+                password=data["password"],
+                verify_ssl=verify_ssl,
             )
             await session.commit()
 
             await state.clear()
-            await message.answer(
+            await callback.message.edit_text(
                 f"✅ Сервер '{server.name}' успешно добавлен!\n\n"
                 f"URL: {server.url}\n"
+                f"Проверка SSL: {'Включена' if verify_ssl else 'Отключена'}\n"
                 f"Найдено inbounds: {len(inbounds)}",
                 reply_markup=get_back_keyboard("admin_servers"),
             )
 
         except XUIError as e:
             logger.error(f"Connection test failed: {e}", exc_info=True)
-            await message.answer(
-                f"❌ Не удалось подключиться к серверу:\n{e}\n\n"
+
+            # Check if it's an SSL error
+            if "SSL" in str(e) or "tls" in str(e).lower():
+                from aiogram.utils.keyboard import InlineKeyboardBuilder
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Нет, отменить", callback_data="cancel_ssl_bypass")
+                kb.button(text="✅ Да, попробовать без проверки", callback_data="retry_without_ssl")
+                kb.adjust(1)
+
+                await callback.message.edit_text(
+                    f"❌ Ошибка SSL сертификата:\n{e}\n\n"
+                    "Хотите попробовать подключиться без проверки SSL сертификата?",
+                    reply_markup=kb.as_markup(),
+                )
+            else:
+                await callback.message.edit_text(
+                    f"❌ Не удалось подключиться к серверу:\n{e}\n\n"
+                    "Проверьте URL, логин и пароль.",
+                    reply_markup=get_back_keyboard("admin_servers"),
+                )
+                await state.clear()
+
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            await callback.message.edit_text(
+                f"❌ Ошибка при проверке сервера:\n{e}",
+                reply_markup=get_back_keyboard("admin_servers"),
+            )
+            await state.clear()
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "retry_without_ssl")
+async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
+    """Retry connection without SSL verification."""
+    data = await state.get_data()
+
+    await callback.message.edit_text(
+        "🔄 Повторная проверка подключения к серверу (без SSL)...",
+        reply_markup=None,
+    )
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+
+        try:
+            from app.xui_client import XUIClient, XUIError
+
+            test_client = XUIClient(
+                base_url=data["url"],
+                username=data["username"],
+                password=data["password"],
+                timeout=30,
+                verify_ssl=False,  # Disable SSL verification
+            )
+
+            await test_client.connect()
+            inbounds = await test_client.get_inbounds()
+            await test_client.close()
+
+            # Connection successful, create server with SSL verification disabled
+            server = await service.create_server(
+                name=data["name"],
+                url=data["url"],
+                username=data["username"],
+                password=data["password"],
+                verify_ssl=False,  # Store this setting
+            )
+            await session.commit()
+
+            await state.clear()
+            await callback.message.edit_text(
+                f"✅ Сервер '{server.name}' успешно добавлен!\n\n"
+                f"URL: {server.url}\n"
+                f"⚠️ Проверка SSL: ОТКЛЮЧЕНА\n"
+                f"Найдено inbounds: {len(inbounds)}",
+                reply_markup=get_back_keyboard("admin_servers"),
+            )
+
+        except XUIError as e:
+            logger.error(f"Connection test failed even without SSL: {e}", exc_info=True)
+            await callback.message.edit_text(
+                f"❌ Не удалось подключиться к серверу даже без проверки SSL:\n{e}\n\n"
                 "Проверьте URL, логин и пароль.",
                 reply_markup=get_back_keyboard("admin_servers"),
             )
@@ -186,11 +297,24 @@ async def process_server_password(message: TgMessage, state: FSMContext) -> None
 
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
-            await message.answer(
+            await callback.message.edit_text(
                 f"❌ Ошибка при проверке сервера:\n{e}",
                 reply_markup=get_back_keyboard("admin_servers"),
             )
             await state.clear()
+
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cancel_ssl_bypass")
+async def cancel_ssl_bypass(callback: CallbackQuery, state: FSMContext) -> None:
+    """Cancel SSL bypass and return to server list."""
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ Добавление сервера отменено.",
+        reply_markup=get_back_keyboard("admin_servers"),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("server_select_"))

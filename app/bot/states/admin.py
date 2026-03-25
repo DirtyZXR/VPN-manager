@@ -11,6 +11,7 @@ class ServerManagement(StatesGroup):
     waiting_for_url = State()
     waiting_for_username = State()
     waiting_for_password = State()
+    waiting_for_verify_ssl = State()
     confirm_delete = State()
 
 
@@ -50,11 +51,17 @@ class SubscriptionManagement(StatesGroup):
     # Select inbound (multiple selection)
     waiting_for_inbound_selection = State()
 
-    # Subscription parameters
+    # Subscription parameters (creation flow)
     waiting_for_subscription_name = State()
     waiting_for_traffic_limit = State()
     waiting_for_expiry_days = State()
     confirm_creation = State()
+
+    # Subscription editing (separate states to avoid conflict with creation flow)
+    editing_name = State()
+    editing_traffic = State()
+    editing_expiry = State()
+    editing_notes = State()
 
 
 class ExportData(StatesGroup):
