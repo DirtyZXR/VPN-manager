@@ -289,7 +289,7 @@ class NewSubscriptionService:
 
         # Update in XUI
         inbound = connection.inbound
-        xui_client = await self._get_xui_client(inbound)
+        xui_client = await self._get_xui_client(inbound.server)
         await xui_client.enable_client(inbound.xui_id, connection.uuid, enable)
 
         # Update in database
