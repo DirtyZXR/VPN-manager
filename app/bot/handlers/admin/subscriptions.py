@@ -17,6 +17,7 @@ from app.bot.keyboards import (
 )
 from app.bot.states import SubscriptionManagement
 from app.database import async_session_factory
+from app.database.models import Inbound
 from app.services.client_service import ClientService
 from app.services.xui_service import XUIService
 
