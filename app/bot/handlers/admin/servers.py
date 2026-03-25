@@ -74,16 +74,16 @@ async def process_server_name(message: TgMessage, state: FSMContext) -> None:
         return
 
     await state.update_data(name=name)
-    await state.set_state(ServerManagement.waiting_for_url)
+    await state.set_state(ServerManagement.waiting_for_base_url)
     await message.answer(
-        "Введите URL панели 3x-ui (например, https://panel.example.com):",
+        "Введите базовый адрес сервера (например, https://example.com):",
         reply_markup=get_back_keyboard("admin_servers"),
     )
 
 
-@router.message(ServerManagement.waiting_for_url)
-async def process_server_url(message: TgMessage, state: FSMContext) -> None:
-    """Process server URL input."""
+@router.message(ServerManagement.waiting_for_base_url)
+async def process_server_base_url(message: TgMessage, state: FSMContext) -> None:
+    """Process server base URL input."""
     url = message.text.strip()
 
     if not url:
@@ -99,6 +99,90 @@ async def process_server_url(message: TgMessage, state: FSMContext) -> None:
         return
 
     await state.update_data(url=url)
+    await state.set_state(ServerManagement.waiting_for_panel_path)
+    await message.answer(
+        "Введите путь к панели управления (опционально).\n\n"
+        "Если не указать, будет использоваться / (корневой путь).\n\n"
+        "Например: /panel или /xui\n\n"
+        "Отправьте /skip чтобы использовать значение по умолчанию (/).",
+        reply_markup=get_back_keyboard("admin_servers"),
+    )
+
+
+@router.message(ServerManagement.waiting_for_panel_path)
+async def process_server_panel_path(message: TgMessage, state: FSMContext) -> None:
+    """Process panel path input."""
+    if message.text == "/skip":
+        await state.update_data(panel_path="/")
+    else:
+        panel_path = message.text.strip()
+        if panel_path:
+            if len(panel_path) > 500:
+                await message.answer("❌ Путь не должен превышать 500 символов.")
+                return
+            # Ensure path starts with /
+            if not panel_path.startswith("/"):
+                panel_path = "/" + panel_path
+        else:
+            panel_path = "/"
+        await state.update_data(panel_path=panel_path)
+
+    await state.set_state(ServerManagement.waiting_for_subscription_path)
+    await message.answer(
+        "Введите путь для подписок (опционально).\n\n"
+        "Если не указать, будет использоваться /sub\n\n"
+        "Например: /sub или /custom/path\n\n"
+        "Отправьте /skip чтобы использовать значение по умолчанию (/sub).",
+        reply_markup=get_back_keyboard("admin_servers"),
+    )
+
+
+@router.message(ServerManagement.waiting_for_subscription_path)
+async def process_server_subscription_path(message: TgMessage, state: FSMContext) -> None:
+    """Process subscription path input."""
+    if message.text == "/skip":
+        await state.update_data(subscription_path="/sub")
+    else:
+        subscription_path = message.text.strip()
+        if subscription_path:
+            if len(subscription_path) > 500:
+                await message.answer("❌ Путь не должен превышать 500 символов.")
+                return
+            # Ensure path starts with /
+            if not subscription_path.startswith("/"):
+                subscription_path = "/" + subscription_path
+        else:
+            subscription_path = "/sub"
+        await state.update_data(subscription_path=subscription_path)
+
+    await state.set_state(ServerManagement.waiting_for_subscription_json_path)
+    await message.answer(
+        "Введите путь для JSON подписок (опционально).\n\n"
+        "Если не указать, будет использоваться /subjson\n\n"
+        "Например: /subjson или /custom/json/path\n\n"
+        "Отправьте /skip чтобы использовать значение по умолчанию (/subjson).",
+        reply_markup=get_back_keyboard("admin_servers"),
+    )
+
+
+@router.message(ServerManagement.waiting_for_subscription_json_path)
+async def process_server_subscription_json_path(message: TgMessage, state: FSMContext) -> None:
+    """Process subscription JSON path input."""
+    if message.text == "/skip":
+        await state.update_data(subscription_json_path="/subjson")
+    else:
+        subscription_json_path = message.text.strip()
+        if subscription_json_path:
+            if len(subscription_json_path) > 500:
+                await message.answer("❌ Путь не должен превышать 500 символов.")
+                return
+            # Ensure path starts with /
+            if not subscription_json_path.startswith("/"):
+                subscription_json_path = "/" + subscription_json_path
+        else:
+            subscription_json_path = "/subjson"
+        await state.update_data(subscription_json_path=subscription_json_path)
+
     await state.set_state(ServerManagement.waiting_for_username)
     await message.answer(
         "Введите имя пользователя для входа в панель:",
@@ -192,6 +276,9 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
                 username=data["username"],
                 password=data["password"],
                 verify_ssl=verify_ssl,
+                panel_path=data.get("panel_path", "/"),
+                subscription_path=data.get("subscription_path", "/sub"),
+                subscription_json_path=data.get("subscription_json_path", "/subjson"),
             )
             await session.flush()
 
@@ -286,6 +373,9 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
                 username=data["username"],
                 password=data["password"],
                 verify_ssl=False,  # Store this setting
+                panel_path=data.get("panel_path", "/"),
+                subscription_path=data.get("subscription_path", "/sub"),
+                subscription_json_path=data.get("subscription_json_path", "/subjson"),
             )
             await session.flush()
 

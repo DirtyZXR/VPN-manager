@@ -68,6 +68,11 @@ class XUIService:
         # Use verify_ssl from server model, default to True for existing servers
         verify_ssl = getattr(server, 'verify_ssl', True)
 
+        # Build full URL for API requests using server URL + panel path
+        panel_path = getattr(server, 'panel_path', '/')
+        from urllib.parse import urljoin
+        base_url = urljoin(server.url, panel_path)
+
         # Try to load saved cookies
         saved_cookies = None
         if server.session_cookies_encrypted:
@@ -78,7 +83,7 @@ class XUIService:
                 logger.warning(f"Failed to load saved cookies for server {server.id}: {e}")
 
         client = XUIClient(
-            base_url=server.url,
+            base_url=base_url,
             username=server.username,
             password=password,
             timeout=self._timeout,
@@ -180,15 +185,21 @@ class XUIService:
         username: str,
         password: str,
         verify_ssl: bool = True,
+        panel_path: str = "/",
+        subscription_path: str = "/sub",
+        subscription_json_path: str = "/subjson",
     ) -> Server:
         """Create a new server.
 
         Args:
             name: Server name
-            url: Panel URL
+            url: Server base URL (e.g., https://example.com)
             username: Panel username
             password: Panel password
             verify_ssl: Whether to verify SSL certificates (default: True)
+            panel_path: Path to panel (default: "/")
+            subscription_path: Path for subscriptions (default: "/sub")
+            subscription_json_path: Path for JSON subscriptions (default: "/subjson")
 
         Returns:
             Created server
@@ -201,6 +212,9 @@ class XUIService:
             password_encrypted=encrypted_password,
             is_active=True,
             verify_ssl=verify_ssl,
+            panel_path=panel_path,
+            subscription_path=subscription_path,
+            subscription_json_path=subscription_json_path,
         )
         self.session.add(server)
         await self.session.flush()
@@ -215,6 +229,9 @@ class XUIService:
         password: str | None = None,
         is_active: bool | None = None,
         verify_ssl: bool | None = None,
+        panel_path: str | None = None,
+        subscription_path: str | None = None,
+        subscription_json_path: str | None = None,
     ) -> Server | None:
         """Update server.
 
@@ -226,6 +243,9 @@ class XUIService:
             password: New password (optional)
             is_active: New active status (optional)
             verify_ssl: New SSL verification status (optional)
+            panel_path: New panel path (optional)
+            subscription_path: New subscription path (optional)
+            subscription_json_path: New JSON subscription path (optional)
 
         Returns:
             Updated server or None if not found
@@ -249,6 +269,12 @@ class XUIService:
             server.is_active = is_active
         if verify_ssl is not None:
             server.verify_ssl = verify_ssl
+        if panel_path is not None:
+            server.panel_path = panel_path
+        if subscription_path is not None:
+            server.subscription_path = subscription_path
+        if subscription_json_path is not None:
+            server.subscription_json_path = subscription_json_path
 
         # Close existing client to force reconnection
         await self.close_client(server_id)

@@ -553,16 +553,16 @@ class NewSubscriptionService:
             for connection in sub.inbound_connections:
                 if connection.is_enabled:
                     server = connection.inbound.server
-                    # Extract host from server URL
-                    from urllib.parse import urlparse
-                    host = urlparse(server.url).netloc
+                    # Build subscription URL using server URL + subscription path
+                    from urllib.parse import urljoin
+                    subscription_path = getattr(server, 'subscription_path', '/sub')
 
                     urls.append(
                         {
                             "subscription_name": sub.name,
                             "server_name": server.name,
                             "inbound_name": connection.inbound.remark,
-                            "url": f"https://{host}/sub/{sub.subscription_token}",
+                            "url": urljoin(server.url, f"{subscription_path}/{sub.subscription_token}"),
                             "token": sub.subscription_token,
                         }
                     )

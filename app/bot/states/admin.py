@@ -8,7 +8,10 @@ class ServerManagement(StatesGroup):
     """Server management states."""
 
     waiting_for_name = State()
-    waiting_for_url = State()
+    waiting_for_base_url = State()
+    waiting_for_panel_path = State()
+    waiting_for_subscription_path = State()
+    waiting_for_subscription_json_path = State()
     waiting_for_username = State()
     waiting_for_password = State()
     waiting_for_verify_ssl = State()
