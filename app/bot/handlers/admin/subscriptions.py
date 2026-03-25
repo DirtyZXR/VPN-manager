@@ -577,6 +577,7 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
         builder.adjust(2)
 
     # Add action buttons once at the bottom
+    builder.button(text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}")
     builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}")
     builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
     builder.adjust(1)
