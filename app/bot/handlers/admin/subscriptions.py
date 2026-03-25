@@ -539,7 +539,7 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
     if not connections:
         builder = InlineKeyboardBuilder()
-        builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
+        builder.button(text="🔙 Назад", callback_data=f"admin_sub_inbounds_{subscription_id}")
         builder.adjust(1)
 
         await callback.message.edit_text(
@@ -581,7 +581,15 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
     builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
     builder.adjust(1)
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    try:
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    except Exception as e:
+        logger.warning(f"Failed to edit message in show_subscription_inbounds: {e}")
+        # Try to edit reply_markup only as fallback
+        try:
+            await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+        except Exception as e2:
+            logger.error(f"Failed to edit reply_markup: {e2}")
     await callback.answer()
 
 
@@ -748,11 +756,11 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
             await service.toggle_inbound_connection(connection_id, not connection.is_enabled)
             await session.commit()
 
-            status = "включено" if not connection.is_enabled else "отключено"
+            status = "отключено" if not connection.is_enabled else "включено"
             await callback.answer(f"✅ Подключение {status}", show_alert=True)
 
-            # Refresh subscription inbounds view
-            await show_subscription_inbounds(callback, is_admin)
+            # Don't refresh interface after toggle
+            # await show_subscription_inbounds(callback, is_admin)
 
         except Exception as e:
             logger.error(f"Error toggling connection: {e}", exc_info=True)
@@ -817,14 +825,21 @@ async def delete_inbound_connection(callback: CallbackQuery, state: FSMContext, 
 
             await state.clear()
             await callback.answer("✅ Подключение удалено", show_alert=True)
-            await show_subscription_inbounds(callback, is_admin)
+
+            # Don't refresh interface, just show alert
+            # await show_subscription_inbounds(callback, is_admin)
 
         except Exception as e:
             logger.error(f"Error deleting connection: {e}", exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+            # Show error with back button to inbounds list
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🔙 Назад", callback_data=f"admin_sub_inbounds_{subscription_id}")
             await callback.message.edit_text(
                 f"❌ Ошибка при удалении: {e}",
-                reply_markup=get_back_keyboard(f"admin_sub_inbounds_{subscription_id}"),
+                reply_markup=builder.as_markup(),
             )
             await state.clear()
         finally:
