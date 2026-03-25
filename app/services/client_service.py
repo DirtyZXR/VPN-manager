@@ -131,11 +131,28 @@ class ClientService:
         )
         return result.scalar_one_or_none()
 
+    async def get_client_by_telegram_username(self, telegram_username: str) -> Client | None:
+        """Get client by Telegram username.
+
+        Args:
+            telegram_username: Client Telegram username (@example)
+
+        Returns:
+            Client or None if not found
+        """
+        # Remove @ if present
+        username = telegram_username.lstrip('@')
+        result = await self.session.execute(
+            select(Client).where(Client.telegram_username == username)
+        )
+        return result.scalar_one_or_none()
+
     async def create_client(
         self,
         name: str,
         email: str | None = None,
         telegram_id: int | None = None,
+        telegram_username: str | None = None,
         notes: str | None = None,
         is_admin: bool = False,
     ) -> Client:
@@ -145,6 +162,7 @@ class ClientService:
             name: Client name
             email: Client email (generated if not provided)
             telegram_id: Optional Telegram ID
+            telegram_username: Optional Telegram username (@example)
             notes: Optional notes
             is_admin: Whether client is admin
 
@@ -158,6 +176,7 @@ class ClientService:
             name=name,
             email=email,
             telegram_id=telegram_id,
+            telegram_username=telegram_username.lstrip('@') if telegram_username else None,
             notes=notes,
             is_active=True,
             is_admin=is_admin,
@@ -172,6 +191,7 @@ class ClientService:
         name: str | None = None,
         email: str | None = None,
         telegram_id: int | None = None,
+        telegram_username: str | None = None,
         notes: str | None = None,
         is_active: bool | None = None,
         is_admin: bool | None = None,
@@ -205,6 +225,8 @@ class ClientService:
             client.email = email
         if telegram_id is not None:
             client.telegram_id = telegram_id
+        if telegram_username is not None:
+            client.telegram_username = telegram_username.lstrip('@')
         if notes is not None:
             client.notes = notes
         if is_active is not None:

@@ -43,6 +43,7 @@ class ClientManagement(StatesGroup):
     waiting_for_name = State()
     waiting_for_email = State()
     waiting_for_telegram_id = State()
+    waiting_for_telegram_username = State()
     waiting_for_new_name = State()
     waiting_for_new_telegram_id = State()
     confirm_delete = State()

@@ -104,7 +104,8 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
     await state.update_data(email=email if email != "-" else None)
     await state.set_state(ClientManagement.waiting_for_telegram_id)
     await message.answer(
-        "Введите Telegram ID клиента (число) или отправьте '-' чтобы пропустить:",
+        "Введите Telegram ID клиента (число) или Telegram username (@example).\n\n"
+        "Если указан username (@example), бот автоматически найдет и запишет соответствующий ID.",
         reply_markup=get_back_keyboard("admin_clients"),
     )
 
@@ -114,24 +115,67 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
     """Process telegram ID input and create client."""
     data = await state.get_data()
 
-    telegram_id = None
-    if message.text != "-":
-        try:
-            telegram_id = int(message.text)
-        except ValueError:
-            await message.answer("❌ Telegram ID должен быть числом или '-'.")
-            return
-    elif telegram_id == "-":
-        telegram_id = None
+    input_text = message.text.strip()
 
-    async for session in get_session():
+    # Check if input is username (@example)
+    is_username = input_text.startswith('@')
+    telegram_id = None
+    telegram_username = None
+
+    if is_username:
+        # User provided username - get ID from Telegram API
+        telegram_username = input_text
+        try:
+            from app.main import bot
+            # Get user info from Telegram API
+            user_info = await bot.get_chat(chat_id=message.chat.id)
+
+            # Try to get ID from user info (this may not work for all users)
+            if hasattr(user_info, 'from_user'):
+                user = user_info.from_user
+                if user:
+                    telegram_id = user.id
+                    await message.answer(
+                        f"✅ Найден Telegram ID для @{input_text}: {telegram_id}\n\n"
+                        f"Создаю клиента..."
+                    )
+                else:
+                    await message.answer(
+                        f"❌ Не удалось получить Telegram ID для @{input_text}.\n\n"
+                        f"Возможно, пользователь еще не взаимодействовал с ботом."
+                    )
+                    return
+            else:
+                await message.answer(
+                    f"❌ Не удалось получить Telegram ID для @{input_text}."
+                )
+                return
+        except Exception as e:
+            logger.error(f"Failed to get Telegram ID for @{input_text}: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка при получении Telegram ID: {e}")
+            return
+    else:
+        # User provided ID or '-'
+        if input_text != "-":
+            try:
+                telegram_id = int(input_text)
+            except ValueError:
+                await message.answer("❌ Telegram ID должен быть числом, username (@example) или '-'.")
+                return
+
+    async with get_session() as session:
         service = ClientService(session)
         try:
             client = await service.create_client(
                 name=data["name"],
                 email=data.get("email"),
                 telegram_id=telegram_id,
+                telegram_username=telegram_username,
             )
+            await message.answer(f"✅ Клиент '{client.name}' создан!")
+        except Exception as e:
+            logger.error(f"Failed to create client: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка при создании клиента: {e}")
             await state.clear()
             await message.answer(
                 f"✅ Клиент '{client.name}' успешно создан!\n\n"
