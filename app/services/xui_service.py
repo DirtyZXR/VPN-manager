@@ -64,11 +64,14 @@ class XUIService:
             return self._clients[server.id]
 
         password = self._decrypt_password(server.password_encrypted)
+        # Use verify_ssl from server model, default to True for existing servers
+        verify_ssl = getattr(server, 'verify_ssl', True)
         client = XUIClient(
             base_url=server.url,
             username=server.username,
             password=password,
             timeout=self._timeout,
+            verify_ssl=verify_ssl,
         )
         await client.connect()
         self._clients[server.id] = client
@@ -142,6 +145,7 @@ class XUIService:
         url: str,
         username: str,
         password: str,
+        verify_ssl: bool = True,
     ) -> Server:
         """Create a new server.
 
@@ -150,6 +154,7 @@ class XUIService:
             url: Panel URL
             username: Panel username
             password: Panel password
+            verify_ssl: Whether to verify SSL certificates (default: True)
 
         Returns:
             Created server
@@ -161,6 +166,7 @@ class XUIService:
             username=username,
             password_encrypted=encrypted_password,
             is_active=True,
+            verify_ssl=verify_ssl,
         )
         self.session.add(server)
         await self.session.flush()
@@ -174,6 +180,7 @@ class XUIService:
         username: str | None = None,
         password: str | None = None,
         is_active: bool | None = None,
+        verify_ssl: bool | None = None,
     ) -> Server | None:
         """Update server.
 
@@ -184,6 +191,7 @@ class XUIService:
             username: New username (optional)
             password: New password (optional)
             is_active: New active status (optional)
+            verify_ssl: New SSL verification status (optional)
 
         Returns:
             Updated server or None if not found
@@ -202,6 +210,8 @@ class XUIService:
             server.password_encrypted = self._encrypt_password(password)
         if is_active is not None:
             server.is_active = is_active
+        if verify_ssl is not None:
+            server.verify_ssl = verify_ssl
 
         # Close existing client to force reconnection
         await self.close_client(server_id)

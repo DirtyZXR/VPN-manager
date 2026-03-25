@@ -58,6 +58,16 @@ async def show_admin_menu(callback: CallbackQuery, is_admin: bool) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin_export")
+async def admin_export(callback: CallbackQuery, is_admin: bool) -> None:
+    """Handle admin export button."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    await callback.answer("📊 Экспорт БД в разработке", show_alert=True)
+
+
 @router.callback_query(F.data == "back")
 async def go_back(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Handle back button."""

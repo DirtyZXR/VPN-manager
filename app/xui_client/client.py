@@ -1,6 +1,7 @@
 """HTTP client for 3x-ui API."""
 
 import json
+import ssl
 from typing import Any
 
 import aiohttp
@@ -28,6 +29,7 @@ class XUIClient:
         username: str,
         password: str,
         timeout: int = 30,
+        verify_ssl: bool = True,
     ) -> None:
         """Initialize XUI client.
 
@@ -36,11 +38,13 @@ class XUIClient:
             username: Panel username
             password: Panel password
             timeout: Request timeout in seconds
+            verify_ssl: Whether to verify SSL certificates (default: True)
         """
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.timeout = aiohttp.ClientTimeout(total=timeout)
+        self.verify_ssl = verify_ssl
         self._session: aiohttp.ClientSession | None = None
         self._cookies: dict[str, Any] = {}
 
@@ -55,8 +59,54 @@ class XUIClient:
 
     async def connect(self) -> None:
         """Create session and login to panel."""
-        self._session = aiohttp.ClientSession(timeout=self.timeout)
+        # Configure SSL context
+        connector_args = {}
+        if not self.verify_ssl:
+            # Disable SSL verification (not recommended for production)
+            # Create a custom SSL context that ignores all verification
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
+            # For OpenSSL 3.0 compatibility
+            try:
+                ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+                ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
+            except:
+                pass
+
+            # Try to set legacy cipher suites for OpenSSL 3.0
+            try:
+                # More permissive cipher suites
+                ssl_context.set_ciphers('DEFAULT:@SECLEVEL=1')
+            except:
+                # Fallback to even more permissive settings
+                try:
+                    ssl_context.set_ciphers('ALL:!aNULL:!eNULL')
+                except:
+                    pass
+
+            connector_args['ssl'] = ssl_context
+            logger.warning(f"SSL verification disabled for {self.base_url}")
+            logger.info(f"Connecting to {self.base_url}/login with SSL verification disabled")
+        else:
+            # Use default SSL settings
+            connector_args['ssl'] = True
+
+        # Additional connection options for problematic servers
+        connector_args['force_close'] = True
+        connector_args['enable_cleanup_closed'] = True
+
+        connector = aiohttp.TCPConnector(**connector_args)
+        self._session = aiohttp.ClientSession(
+            timeout=self.timeout,
+            connector=connector,
+            trust_env=True,  # Allow environment variables
+        )
+
+        logger.info(f"Attempting to connect to {self.base_url}/login")
         await self.login()
+        logger.info(f"Successfully connected to {self.base_url}")
 
     async def close(self) -> None:
         """Close session properly.
@@ -138,6 +188,9 @@ class XUIClient:
         """
         session = self._get_session()
         url = f"{self.base_url}/login"
+
+        logger.info(f"Login attempt to: {url}")
+        logger.info(f"Username: {self.username}, SSL verify: {self.verify_ssl}")
 
         try:
             async with session.post(

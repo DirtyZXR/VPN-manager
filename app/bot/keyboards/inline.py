@@ -21,7 +21,6 @@ def get_main_menu_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
     if is_admin:
         builder.button(text="Управление серверами", callback_data="admin_servers")
         builder.button(text="Управление клиентами", callback_data="admin_clients")
-        builder.button(text="Создать подписку", callback_data="admin_create_subscription")
         builder.button(text="🔄 Синхронизация", callback_data="admin_sync")
         builder.button(text="Экспорт БД", callback_data="admin_export")
 
