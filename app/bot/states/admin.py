@@ -50,6 +50,8 @@ class SubscriptionManagement(StatesGroup):
 
     # Select inbound (multiple selection)
     waiting_for_inbound_selection = State()
+    inbounds_multi_select_mode = State()  # Multi-selection mode
+    inbounds_multi_confirm_action = State()  # Confirm multi-selection action
 
     # Subscription parameters (creation flow)
     waiting_for_subscription_name = State()
