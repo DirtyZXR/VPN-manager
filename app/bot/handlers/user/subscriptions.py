@@ -3,8 +3,9 @@
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from collections import defaultdict
 from loguru import logger
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 from app.bot.keyboards import get_back_keyboard
 from app.bot.states import UserSubscription
@@ -41,15 +42,16 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
     builder = InlineKeyboardBuilder()
 
     for sub in subscriptions:
-        status = "✅" if sub.is_active else "❌"
-        expiry = sub.expiry_date.strftime("%d.%m.%Y") if sub.expiry_date else "Бессрочно"
-        traffic = "Безлимит" if sub.is_unlimited else f"{sub.total_gb} GB"
+        # Problem 1: Check if subscription has any active connections
+        active_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
+        has_active = len(active_connections) > 0
+
+        # Status is active only if subscription is active AND has active connections
+        status = "✅" if (sub.is_active and has_active) else "❌"
 
         text += (
             f"{status} <b>{sub.name}</b>\n"
-            f"   Трафик: {traffic}\n"
-            f"   Срок: {expiry}\n"
-            f"   Подключений: {len(sub.inbound_connections)}\n\n"
+            f"   Подключений: {len(active_connections)}/{len(sub.inbound_connections)}\n\n"
         )
 
         # Add button for each subscription
@@ -80,7 +82,6 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
         return
 
     # Group URLs by subscription token (should be one token per subscription)
-    from collections import defaultdict
     grouped_urls = defaultdict(list)
     for url_info in urls:
         grouped_urls[url_info["token"]].append(url_info)
@@ -123,7 +124,6 @@ async def show_all_json_urls(callback: CallbackQuery, client) -> None:
         return
 
     # Group URLs by subscription token (should be one token per subscription)
-    from collections import defaultdict
     grouped_urls = defaultdict(list)
     for url_info in urls:
         grouped_urls[url_info["token"]].append(url_info)
@@ -232,34 +232,65 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         await callback.answer("❌ Подписка не найдена.", show_alert=True)
         return
 
-    status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
-    expiry = subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
-    traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
+    # Problem 1: Check if subscription has any active connections
+    active_connections = [conn for conn in subscription.inbound_connections if conn.is_enabled]
+    has_active = len(active_connections) > 0
+    status = "✅ Активна" if (subscription.is_active and has_active) else "❌ Неактивна"
 
     text = (
         f"📝 Подписка: <b>{subscription.name}</b>\n\n"
         f"Статус: {status}\n"
-        f"Трафик: {traffic}\n"
-        f"Срок: {expiry}\n"
         f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"Подключений: {len(subscription.inbound_connections)}\n"
+        f"Подключений: {len(active_connections)}/{len(subscription.inbound_connections)}\n"
         f"Токен: <code>{subscription.subscription_token}</code>\n\n"
     )
 
-    if subscription.inbound_connections:
+    # Problem 3: Group URLs by server to avoid duplicates
+    server_urls = defaultdict(list)
+    for conn in active_connections:
+        server = conn.inbound.server
+        subscription_path = getattr(server, 'subscription_path', '/sub/')
+        subscription_url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
+        server_urls[subscription_url].append({
+            'server_name': server.name,
+            'inbound': conn.inbound,
+            'connection': conn,
+        })
+
+    if server_urls:
         text += "📢 Активные подключения:\n\n"
-        for conn in subscription.inbound_connections:
-            if conn.is_enabled:
-                server = conn.inbound.server
-                from urllib.parse import urljoin
-                # Use custom subscription path from server
-                subscription_path = getattr(server, 'subscription_path', '/sub/')
-                subscription_url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
-                text += (
-                    f"  • {conn.inbound.remark} ({conn.inbound.protocol})\n"
-                    f"    Сервер: {server.name}\n"
-                    f"    URL: {subscription_url}\n\n"
-                )
+        for url, conn_list in server_urls.items():
+            # Show URL once per group
+            text += f"  • URL: {url}\n"
+
+            # Problem 2: Show per-inbound traffic and expiry
+            for i, conn_data in enumerate(conn_list):
+                conn = conn_data['connection']
+                inbound = conn_data['inbound']
+
+                # Per-inbound traffic
+                traffic = "Безлимит" if conn.is_unlimited else f"{conn.total_gb} GB"
+
+                # Per-inbound expiry
+                if conn.expiry_date:
+                    expiry = conn.expiry_date.strftime("%d.%m.%Y")
+                    remaining_days = conn.remaining_days
+                    if remaining_days is not None:
+                        expiry_info = f"{expiry} (осталось {remaining_days} дней)"
+                    else:
+                        expiry_info = expiry
+                else:
+                    expiry_info = "Бессрочно"
+
+                # Add empty line before each inbound for better readability (except first)
+                if i > 0:
+                    text += "\n"
+
+                text += f"    └ {inbound.remark} ({inbound.protocol})\n"
+                text += f"      Трафик: {traffic}\n"
+                text += f"      Срок: {expiry_info}\n"
+
+            text += "\n"
 
     builder = InlineKeyboardBuilder()
     builder.button(text="🔙 Назад к подпискам", callback_data="my_subscriptions")

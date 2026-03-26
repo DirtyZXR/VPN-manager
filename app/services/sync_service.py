@@ -504,11 +504,31 @@ class SyncService:
                     conn.is_enabled = xui_enable
                     logger.info(f"[SYNC] Подключение {conn.id} ({conn.uuid}): is_enabled={old_status} → {xui_enable}")
 
-                # Обновить подписку (если есть)
+                # Обновить per-connection total_gb и expiry_date
+                if conn.total_gb != xui_total_gb:
+                    old_gb = conn.total_gb
+                    conn.total_gb = xui_total_gb
+                    logger.info(
+                        f"[SYNC] Подключение {conn.id} ({conn.uuid}): total_gb {old_gb}GB → {xui_total_gb}GB"
+                    )
+
+                # Обновить per-connection expiry_date
+                new_expiry = None
+                if xui_expiry_time > 0:
+                    new_expiry = datetime.fromtimestamp(xui_expiry_time / 1000, tz=timezone.utc)
+
+                if conn.expiry_date != new_expiry:
+                    old_expiry = conn.expiry_date
+                    conn.expiry_date = new_expiry
+                    logger.info(
+                        f"[SYNC] Подключение {conn.id} ({conn.uuid}): expiry {old_expiry} → {new_expiry}"
+                    )
+
+                # Обновить подписку (если есть) - для обратной совместимости
                 if conn.subscription:
                     subscription = conn.subscription
 
-                    # Обновить total_gb
+                    # Обновить total_gb (для старых подключений без per-connection данных)
                     if subscription.total_gb != xui_total_gb:
                         old_gb = subscription.total_gb
                         subscription.total_gb = xui_total_gb
@@ -516,11 +536,7 @@ class SyncService:
                             f"[SYNC] Подписка {subscription.id}: total_gb {old_gb}GB → {xui_total_gb}GB"
                         )
 
-                    # Обновить expiry_date
-                    new_expiry = None
-                    if xui_expiry_time > 0:
-                        new_expiry = datetime.fromtimestamp(xui_expiry_time / 1000, tz=timezone.utc)
-
+                    # Обновить expiry_date (для старых подключений без per-connection данных)
                     if subscription.expiry_date != new_expiry:
                         old_expiry = subscription.expiry_date
                         subscription.expiry_date = new_expiry
