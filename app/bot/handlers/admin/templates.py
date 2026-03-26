@@ -9,12 +9,12 @@ from app.bot.states.admin import TemplateManagement
 from app.bot.keyboards import (
     get_templates_keyboard,
     get_template_actions_keyboard,
+    get_template_edit_menu_keyboard,
     get_template_inbounds_keyboard,
     get_inbound_selection_for_template,
     get_back_keyboard,
     get_confirm_keyboard,
 )
-from app.bot.filters import is_admin_user
 from app.database import async_session_factory
 from app.services.subscription_template_service import SubscriptionTemplateService
 from app.services.client_service import ClientService
@@ -222,13 +222,17 @@ async def handle_template_notes(message: Message, state: FSMContext):
 
         await message.answer(text, reply_markup=keyboard)
 
+    except XUIError as e:
+        await state.clear()
+        logger.info(f"Template creation failed: {str(e)}")
+        await message.answer(f"❌ {str(e)}")
     except Exception as e:
         await state.clear()
         logger.error(f"Error creating template: {e}", exc_info=True)
         await message.answer(f"❌ Произошла ошибка при создании шаблона: {str(e)}")
 
 
-@router.callback_query(F.data.startswith("template_select_"))
+@router.callback_query(F.data.startswith("template_select_") & ~F.data.startswith("template_select_inbound_"))
 async def show_template_details(callback: CallbackQuery, is_admin: bool):
     """Show template details."""
     if not is_admin:
@@ -566,10 +570,10 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
             await callback.answer("⚠️ Шаблон не найден", show_alert=True)
             return
 
-        async with async_session_factory() as session2:
-            from app.services.xui_service import XUIService
-            xui_service = XUIService(session2)
-            inbounds = await xui_service.get_all_inbounds()
+        # Get all inbounds using same session
+        from app.services.xui_service import XUIService
+        xui_service = XUIService(session)
+        inbounds = await xui_service.get_all_inbounds()
 
         # Filter out inbounds already in template
         template_inbounds = await template_service.get_template_inbounds(template_id)
@@ -690,7 +694,7 @@ async def start_delete_template(callback: CallbackQuery, state: FSMContext, is_a
     await callback.answer()
 
 
-@router.callback_query(F.data == "confirm_delete_template")
+@router.callback_query(F.data == "confirm_confirm_delete_template")
 async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Confirm and delete template."""
     if not is_admin:
@@ -733,7 +737,7 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
         await callback.answer()
 
 
-@router.callback_query(F.data.startswith("template_edit_"))
+@router.callback_query(F.data.startswith("template_edit_") & ~F.data.startswith("template_edit_menu_"))
 async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Start editing template."""
     if not is_admin:
@@ -741,8 +745,19 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
         return
 
     parts = callback.data.split("_")
+
+    # Validate callback data format
+    if len(parts) < 4:
+        await callback.answer("⚠️ Неверный формат данных", show_alert=True)
+        return
+
     edit_field = parts[2]
-    template_id = int(parts[3])
+
+    try:
+        template_id = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Неверный ID шаблона", show_alert=True)
+        return
 
     async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
@@ -767,6 +782,28 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
         await callback.answer("⚠️ Неизвестное поле для редактирования", show_alert=True)
         return
 
+    if edit_field == "menu":
+        # Show edit menu directly
+        async with async_session_factory() as session:
+            template_service = SubscriptionTemplateService(session)
+            template = await template_service.get_template(template_id)
+
+            if not template:
+                await callback.answer("⚠️ Шаблон не найден", show_alert=True)
+                return
+
+        text = (
+            f"✏️ <b>Редактирование шаблона</b>\n\n"
+            f"📋 <b>{template.name}</b>\n\n"
+            f"Выберите поле для редактирования:"
+        )
+
+        keyboard = get_template_edit_menu_keyboard(template_id)
+
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.answer()
+        return
+
     await state.set_state(state_mapping[edit_field])
 
     # Get current value message
@@ -774,7 +811,7 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
         "name": f"Текущее название: <b>{template.name}</b>",
         "description": f"Текущее описание: <b>{template.description or 'Нет описания'}</b>",
         "traffic": f"Текущий лимит трафика: <b>{template.default_total_gb} ГБ {'(безлимитный)' if template.default_total_gb == 0 else ''}</b>",
-        "expiry": f"Текущий срок действия: <b>{template.default_expiry_days} дн." if template.default_expiry_days else f"<b>Бессрочный</b>",
+        "expiry": f"Текущий срок действия: <b>{template.default_expiry_days} дн.</b>" if template.default_expiry_days else f"<b>Бессрочный</b>",
         "notes": f"Текущие заметки: <b>{template.notes or 'Нет заметок'}</b>",
     }
 
@@ -787,12 +824,54 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
     }
 
     text = (
-        f"✏️ <b>Редактирование шаблона</b>\n\n"
-        f"{current_value_messages[edit_field]}\n\n"
+        f"✏️ <b>Редактирование: {current_value_messages[edit_field]}</b>\n\n"
         f"{prompt_messages[edit_field]}"
     )
 
-    keyboard = get_back_keyboard(f"template_select_{template_id}")
+    keyboard = get_back_keyboard(f"template_edit_menu_{template_id}")
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("template_edit_menu_"))
+async def show_template_edit_menu(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Show template edit menu with field options."""
+    if not is_admin:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+
+    parts = callback.data.split("_")
+
+    # Validate callback data format
+    if len(parts) < 4:
+        await callback.answer("⚠️ Неверный формат данных", show_alert=True)
+        return
+
+    try:
+        template_id = int(parts[3])
+    except (ValueError, IndexError):
+        await callback.answer("⚠️ Неверный ID шаблона", show_alert=True)
+        return
+
+    # Clear any existing editing state
+    await state.clear()
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(template_id)
+
+        if not template:
+            await callback.answer("⚠️ Шаблон не найден", show_alert=True)
+            return
+
+    text = (
+        f"✏️ <b>Редактирование шаблона</b>\n\n"
+        f"📋 <b>{template.name}</b>\n\n"
+        f"Выберите поле для редактирования:"
+    )
+
+    keyboard = get_template_edit_menu_keyboard(template_id)
 
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
@@ -998,9 +1077,13 @@ async def process_edit_template_notes(message: Message, state: FSMContext):
 
 
 async def show_template_details_edit_menu(message: Message, state: FSMContext):
-    """Show template details with edit menu after editing."""
+    """Show template edit menu after editing a field."""
     data = await state.get_data()
     template_id = data["template_id"]
+
+    # Clear editing state
+    await state.clear()
+    await state.update_data(template_id=template_id)
 
     async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
@@ -1010,22 +1093,13 @@ async def show_template_details_edit_menu(message: Message, state: FSMContext):
             await message.answer("⚠️ Шаблон не найден")
             return
 
-        traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
-        expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
-        inbounds_count = len(template.template_inbounds)
+    text = (
+        f"✏️ <b>Редактирование шаблона</b>\n\n"
+        f"📋 <b>{template.name}</b>\n\n"
+        f"Выберите поле для редактирования:"
+    )
 
-        text = (
-            f"📋 <b>{template.name}</b>\n\n"
-            f"📝 {template.description or 'Нет описания'}\n"
-            f"📊 <b>Лимит трафика:</b> {traffic_limit}\n"
-            f"📅 <b>Срок действия:</b> {expiry_text}\n"
-            f"🔌 <b>Подключений:</b> {inbounds_count}\n"
-        )
-
-        if template.notes:
-            text += f"\n📌 <b>Заметки:</b> {template.notes}"
-
-        keyboard = get_template_actions_keyboard(template.id)
+    keyboard = get_template_edit_menu_keyboard(template_id)
 
     await message.answer(text, reply_markup=keyboard)
 
@@ -1065,7 +1139,7 @@ async def start_remove_inbound_from_template(callback: CallbackQuery, state: FSM
     await callback.answer()
 
 
-@router.callback_query(F.data == "confirm_remove_inbound")
+@router.callback_query(F.data == "confirm_confirm_remove_inbound")
 async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Confirm and remove inbound from template."""
     if not is_admin:
@@ -1219,3 +1293,13 @@ async def process_template_client_search(message: Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error processing client search: {e}", exc_info=True)
         await message.answer("❌ Произошла ошибка при поиске клиентов")
+
+
+@router.callback_query(F.data == "template_no_inbounds")
+async def handle_template_no_inbounds(callback: CallbackQuery, is_admin: bool):
+    """Handle template no inbounds button click."""
+    if not is_admin:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+
+    await callback.answer("⚠️ В шаблоне нет подключений. Добавьте подключения.", show_alert=True)

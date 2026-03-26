@@ -86,7 +86,17 @@ class SubscriptionTemplateService:
 
         Returns:
             Created template
+
+        Raises:
+            XUIError: If template with this name already exists
         """
+        # Check if template with this name already exists
+        result = await self.session.execute(
+            select(SubscriptionTemplate).where(SubscriptionTemplate.name == name)
+        )
+        if result.scalar_one_or_none():
+            raise XUIError(f"Шаблон с названием '{name}' уже существует")
+
         template = SubscriptionTemplate(
             name=name,
             description=description,

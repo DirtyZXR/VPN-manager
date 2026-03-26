@@ -247,18 +247,33 @@ def get_template_actions_keyboard(template_id: int) -> InlineKeyboardMarkup:
         template_id: Template ID
 
     Returns:
-        Inline keyboard markup
+        Inline keyboard markup with 4 buttons: Edit, Add Inbound, Delete, Back
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Название", callback_data=f"template_edit_name_{template_id}")
+    builder.button(text="✏️ Изменить", callback_data=f"template_edit_menu_{template_id}")
+    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
+    builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
+    builder.button(text="🔙 Назад", callback_data="admin_templates")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_template_edit_menu_keyboard(template_id: int) -> InlineKeyboardMarkup:
+    """Get template edit menu keyboard with field selection options.
+
+    Args:
+        template_id: Template ID
+
+    Returns:
+        Inline keyboard markup with edit field options
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📝 Название", callback_data=f"template_edit_name_{template_id}")
     builder.button(text="📝 Описание", callback_data=f"template_edit_description_{template_id}")
     builder.button(text="📊 Трафик", callback_data=f"template_edit_traffic_{template_id}")
     builder.button(text="📅 Срок действия", callback_data=f"template_edit_expiry_{template_id}")
     builder.button(text="📌 Заметки", callback_data=f"template_edit_notes_{template_id}")
-    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
-    builder.button(text="🔄 Создать подписку", callback_data=f"template_create_subscription_{template_id}")
-    builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
-    builder.button(text="Назад", callback_data="admin_templates")
+    builder.button(text="🔙 Назад", callback_data=f"template_select_{template_id}")
     builder.adjust(2)
     return builder.as_markup()
 

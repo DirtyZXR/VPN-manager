@@ -106,6 +106,7 @@ class TemplateManagement(StatesGroup):
     editing_default_traffic = State()
     editing_default_expiry = State()
     editing_template_notes = State()
+    editing_template_menu = State()  # For showing edit menu
 
     # Template inbound management states
     waiting_for_inbound_selection = State()

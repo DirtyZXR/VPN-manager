@@ -10,6 +10,7 @@ from app.bot.keyboards.inline import (
     get_registration_keyboard,
     get_servers_keyboard,
     get_template_actions_keyboard,
+    get_template_edit_menu_keyboard,
     get_template_inbounds_keyboard,
     get_templates_keyboard,
     get_inbound_selection_for_template,
@@ -30,6 +31,7 @@ __all__ = [
     "get_registration_keyboard",
     "get_templates_keyboard",
     "get_template_actions_keyboard",
+    "get_template_edit_menu_keyboard",
     "get_template_inbounds_keyboard",
     "get_inbound_selection_for_template",
 ]
