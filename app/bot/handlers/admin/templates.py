@@ -11,7 +11,6 @@ from app.bot.keyboards import (
     get_template_actions_keyboard,
     get_template_edit_menu_keyboard,
     get_template_inbounds_keyboard,
-    get_template_inbounds_multi_select_keyboard,
     get_inbound_selection_for_template,
     get_back_keyboard,
     get_confirm_keyboard,
@@ -651,17 +650,14 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
             await callback.answer()
             return
 
-    # Show inbounds with multi-select mode
-    await state.update_data(template_id=template_id, selected_inbound_ids=set())
-    await state.set_state(TemplateManagement.inbounds_multi_select_mode)
-
-    keyboard = get_template_inbounds_multi_select_keyboard(template_id, template_inbounds, set())
+    # Show inbounds with remove buttons (simple toggle, no multi-select)
+    keyboard = get_template_inbounds_keyboard(template_id, template_inbounds, available_inbounds=None)
 
     await callback.message.edit_text(
         f"🔄 <b>Управление подключениями шаблона</b>\n\n"
         f"📋 <b>{template.name}</b>\n"
         f"🔌 Подключений: {len(template_inbounds)}\n\n"
-        f"Выберите подключение для удаления:",
+        f"Для управления подключениями используйте кнопки ниже:",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -732,165 +728,6 @@ async def select_inbound_for_template(callback: CallbackQuery, state: FSMContext
         logger.error(f"Error adding inbound to template: {e}", exc_info=True)
         await callback.message.edit_text("❌ Произошла ошибка при добавлении подключения")
         await callback.answer()
-
-
-@router.callback_query(TemplateManagement.inbounds_multi_select_mode, F.data.startswith("template_multi_select_conn_"))
-async def toggle_template_inbound_selection(callback: CallbackQuery, state: FSMContext) -> None:
-    """Toggle inbound selection in multi-select mode."""
-    parts = callback.data.split("_")
-    template_id = int(parts[3])
-    inbound_id = int(parts[4])
-
-    data = await state.get_data()
-    selected_inbound_ids = data.get("selected_inbound_ids", set())
-
-    if inbound_id in selected_inbound_ids:
-        selected_inbound_ids.remove(inbound_id)
-    else:
-        selected_inbound_ids.add(inbound_id)
-
-    await state.update_data(selected_inbound_ids=selected_inbound_ids)
-
-    # Get updated keyboard
-    async with async_session_factory() as session:
-        template_service = SubscriptionTemplateService(session)
-        template = await template_service.get_template(template_id)
-        template_inbounds = await template_service.get_template_inbounds(template_id)
-
-    keyboard = get_template_inbounds_multi_select_keyboard(template_id, template_inbounds, selected_inbound_ids)
-
-    try:
-        await callback.message.edit_reply_markup(reply_markup=keyboard)
-    except Exception:
-        pass  # Message may not have changed
-    await callback.answer()
-
-
-@router.callback_query(TemplateManagement.inbounds_multi_select_mode, F.data.startswith("template_confirm_remove_inbounds_"))
-async def confirm_remove_template_inbounds(callback: CallbackQuery, state: FSMContext) -> None:
-    """Confirm removal of selected inbounds."""
-    template_id = int(callback.data.split("_")[3])
-    data = await state.get_data()
-    selected_inbound_ids = data.get("selected_inbound_ids", set())
-
-    if not selected_inbound_ids:
-        await callback.answer("⚠️ Выберите хотя бы одно подключение для удаления.", show_alert=True)
-        return
-
-    await state.set_state(TemplateManagement.confirm_remove_inbounds)
-
-    async with async_session_factory() as session:
-        template_service = SubscriptionTemplateService(session)
-        template = await template_service.get_template(template_id)
-
-    inbound_names = []
-    for inbound_id in selected_inbound_ids:
-        template_inbound = await template_service.get_template_inbound(template_id, inbound_id)
-        if template_inbound:
-            inbound_names.append(template_inbound.inbound.remark)
-
-    text = (
-        f"❌ <b>Удаление подключений из шаблона</b>\n\n"
-        f"📋 <b>Шаблон:</b> {template.name}\n\n"
-        f"Выбранные подключения для удаления:\n"
-    )
-    for name in inbound_names:
-        text += f"  • {name}\n"
-
-    text += f"\n<b>Внимание!</b> Это действие необратимо."
-
-    keyboard = get_confirm_keyboard("confirm_remove_inbounds_execute", "template_inbounds_multi_select")
-
-    await callback.message.edit_text(text, reply_markup=keyboard)
-    await callback.answer()
-
-
-@router.callback_query(F.data == "confirm_remove_inbounds_execute")
-async def execute_remove_template_inbounds(callback: CallbackQuery, state: FSMContext) -> None:
-    """Execute removal of selected inbounds."""
-    data = await state.get_data()
-    template_id = data["template_id"]
-    selected_inbound_ids = data.get("selected_inbound_ids", set())
-
-    try:
-        async with async_session_factory() as session:
-            template_service = SubscriptionTemplateService(session)
-
-            removed_count = 0
-            for inbound_id in list(selected_inbound_ids):
-                removed = await template_service.remove_inbound_from_template(template_id, inbound_id)
-                if removed:
-                    removed_count += 1
-                    selected_inbound_ids.remove(inbound_id)
-
-            await session.commit()
-
-        logger.info(f"✅ Removed {removed_count} inbounds from template {template_id}")
-
-        await state.clear()
-
-        # Show updated inbounds list
-        async with async_session_factory() as session:
-            template_service = SubscriptionTemplateService(session)
-            template = await template_service.get_template(template_id)
-            template_inbounds = await template_service.get_template_inbounds(template_id)
-
-        if not template_inbounds:
-            text = f"🔄 <b>Управление подключениями шаблона</b>\n\n📋 <b>{template.name}</b>\n\nНет подключений"
-            keyboard = get_template_actions_keyboard(template.id)
-        else:
-            await state.update_data(template_id=template_id, selected_inbound_ids=set())
-            await state.set_state(TemplateManagement.inbounds_multi_select_mode)
-            keyboard = get_template_inbounds_multi_select_keyboard(template_id, template_inbounds, set())
-            text = (
-                f"🔄 <b>Управление подключениями шаблона</b>\n\n"
-                f"📋 <b>{template.name}</b>\n"
-                f"🔌 Подключений: {len(template_inbounds)}\n\n"
-                f"Выберите подключение для удаления:"
-            )
-
-        try:
-            await callback.message.edit_text(text, reply_markup=keyboard)
-        except Exception:
-            pass
-        await callback.answer()
-
-    except Exception as e:
-        await state.clear()
-        logger.error(f"Error removing inbounds from template: {e}", exc_info=True)
-        await callback.message.edit_text("❌ Произошла ошибка при удалении подключений")
-        await callback.answer()
-
-
-@router.callback_query(TemplateManagement.inbounds_multi_select_mode, F.data.startswith("template_cancel_multi_select_"))
-async def cancel_template_multi_select(callback: CallbackQuery, state: FSMContext) -> None:
-    """Cancel multi-select mode and return to template actions."""
-    template_id = int(callback.data.split("_")[3])
-
-    async with async_session_factory() as session:
-        template_service = SubscriptionTemplateService(session)
-        template = await template_service.get_template(template_id)
-        template_inbounds = await template_service.get_template_inbounds(template_id)
-
-    await state.clear()
-
-    if not template_inbounds:
-        text = f"🔄 <b>Управление подключениями шаблона</b>\n\n📋 <b>{template.name}</b>\n\nНет подключений"
-        keyboard = get_template_actions_keyboard(template.id)
-    else:
-        keyboard = get_template_inbounds_multi_select_keyboard(template_id, template_inbounds, set())
-        text = (
-            f"🔄 <b>Управление подключениями шаблона</b>\n\n"
-            f"📋 <b>{template.name}</b>\n"
-            f"🔌 Подключений: {len(template_inbounds)}\n\n"
-            f"Выберите подключение для удаления:"
-        )
-
-    try:
-        await callback.message.edit_text(text, reply_markup=keyboard)
-    except Exception:
-        pass
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("template_delete_"))

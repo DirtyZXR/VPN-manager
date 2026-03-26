@@ -110,9 +110,6 @@ class TemplateManagement(StatesGroup):
 
     # Template inbound management states
     waiting_for_inbound_selection = State()
-    inbounds_multi_select_mode = State()  # Multi-select mode for template inbounds
-    confirm_remove_inbounds = State()  # Confirm removing selected inbounds
-    waiting_for_inbound_order = State()
     confirm_remove_inbound = State()
 
     # Template subscription creation states
