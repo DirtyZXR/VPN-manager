@@ -36,7 +36,13 @@ async def show_templates(callback: CallbackQuery, is_admin: bool):
 
         if not templates:
             text = "📋 <b>Шаблоны подписок</b>\n\nШаблонов пока нет. Создайте первый шаблон!"
-            keyboard = get_back_keyboard("admin_menu")
+            # Create keyboard with create template button
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            builder = InlineKeyboardBuilder()
+            builder.button(text="➕ Создать шаблон", callback_data="template_add")
+            builder.button(text="Назад", callback_data="admin_menu")
+            builder.adjust(1)
+            keyboard = builder.as_markup()
         else:
             text = f"📋 <b>Шаблоны подписок</b>\n\nВсего шаблонов: {len(templates)}"
             keyboard = get_templates_keyboard(templates)
