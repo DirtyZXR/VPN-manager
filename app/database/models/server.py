@@ -26,6 +26,11 @@ class Server(Base, TimestampMixin, SyncMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+    # Custom paths for panel and subscriptions
+    panel_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/")
+    subscription_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/sub/")
+    subscription_json_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/subjson/")
+
     # Session management
     session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_created_at: Mapped[datetime | None] = mapped_column(SADateTime(timezone=True), nullable=True)

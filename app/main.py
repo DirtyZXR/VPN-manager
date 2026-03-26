@@ -56,6 +56,11 @@ async def main() -> None:
     await init_db()
     logger.info("Database initialized")
 
+    # Ensure data directory exists for Telethon
+    data_path = Path("data")
+    data_path.mkdir(exist_ok=True)
+    logger.info("Data directory created/verified")
+
     # Create global XUI service instance for client caching
     xui_service = None
     try:

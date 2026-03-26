@@ -237,23 +237,23 @@ async def test_client_service_unique_email(test_session):
 
 
 @pytest.mark.asyncio
-async def test_client_service_unique_telegram_id(test_session):
-    """Test client telegram_id uniqueness."""
+async def test_client_service_unique_telegram_username(test_session):
+    """Test client telegram_username uniqueness."""
     service = ClientService(test_session)
 
     # First client should succeed
     await service.create_client(
         name="Client 1",
         email="client1@example.com",
-        telegram_id=123456,
+        telegram_username="@user1",
     )
     await test_session.flush()
 
-    # Second client with same telegram_id should fail
+    # Second client with same telegram_username should fail
     with pytest.raises(IntegrityError):
         await service.create_client(
             name="Client 2",
             email="client2@example.com",
-            telegram_id=123456,
+            telegram_username="@user1",
         )
         await test_session.flush()

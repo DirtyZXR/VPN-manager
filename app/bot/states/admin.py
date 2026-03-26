@@ -8,11 +8,24 @@ class ServerManagement(StatesGroup):
     """Server management states."""
 
     waiting_for_name = State()
-    waiting_for_url = State()
+    waiting_for_base_url = State()
+    waiting_for_panel_path = State()
+    waiting_for_subscription_path = State()
+    waiting_for_subscription_json_path = State()
     waiting_for_username = State()
     waiting_for_password = State()
     waiting_for_verify_ssl = State()
     confirm_delete = State()
+
+    # Server editing states
+    waiting_for_edit_name = State()
+    waiting_for_edit_base_url = State()
+    waiting_for_edit_panel_path = State()
+    waiting_for_edit_subscription_path = State()
+    waiting_for_edit_subscription_json_path = State()
+    waiting_for_edit_username = State()
+    waiting_for_edit_password = State()
+    waiting_for_edit_verify_ssl = State()
 
 
 class UserManagement(StatesGroup):
@@ -30,6 +43,7 @@ class ClientManagement(StatesGroup):
     waiting_for_name = State()
     waiting_for_email = State()
     waiting_for_telegram_id = State()
+    waiting_for_telegram_username = State()
     waiting_for_new_name = State()
     waiting_for_new_telegram_id = State()
     confirm_delete = State()
