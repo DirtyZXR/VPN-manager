@@ -88,18 +88,32 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
 
     text = "🔗 Subscription URLs:\n\n"
 
+    # Show subscription info and create URL buttons
+    builder = InlineKeyboardBuilder()
+
     for token, url_list in grouped_urls.items():
         sub_name = url_list[0]["subscription_name"]
         text += f"<b>{sub_name}</b>\n"
         text += f"Token: <code>{token}</code>\n"
-        text += f"URLs ({len(url_list)}):\n"
+        text += f"Серверов: {len(url_list)}\n"
 
+        # Get unique URLs (same URL can be on multiple servers)
+        unique_urls = {}
         for url_info in url_list:
-            text += f"  • {url_info['server_name']} - {url_info['inbound_name']}\n"
+            url = url_info['url']
+            if url not in unique_urls:
+                unique_urls[url] = {
+                    'url': url,
+                    'server_name': url_info['server_name']
+                }
+
+        # Add URL buttons for this subscription
+        for url, url_data in unique_urls.items():
+            server_name = url_data['server_name']
+            builder.button(text=f"📡 {server_name}", url=url)
 
         text += "\n"
 
-    builder = InlineKeyboardBuilder()
     builder.button(text="📋 Скопировать все URL", callback_data="copy_all_urls")
     builder.button(text="🔙 Назад", callback_data="my_subscriptions")
     builder.adjust(1)
@@ -298,3 +312,97 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_export")
+async def export_database(callback: CallbackQuery, client) -> None:
+    """Export database to file and send to user (admin only)."""
+    if not client or not client.is_admin:
+        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        return
+
+    # Get database file path from config
+    from app.config import get_settings
+    import os
+
+    settings = get_settings()
+
+    # Extract database path from connection URL
+    # sqlite+aiosqlite:///./data/vpn_manager.db -> ./data/vpn_manager.db
+    db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
+
+    # Check if database file exists
+    if not os.path.exists(db_path):
+        await callback.answer("❌ Файл базы данных не найден.", show_alert=True)
+        return
+
+    # Check file size
+    file_size = os.path.getsize(db_path)
+    if file_size > 50 * 1024 * 1024:  # 50 MB limit for Telegram files
+        await callback.answer(
+            f"❌ Файл базы данных слишком большой ({file_size / (1024*1024):.1f} MB).",
+            show_alert=True
+        )
+        return
+
+    # Create keyboard with format options
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📄 Как есть (SQLite)", callback_data="export_sqlite")
+    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.adjust(1)
+
+    await callback.message.edit_text(
+        f"📤 Экспорт базы данных\n\n"
+        f"Размер: {file_size / (1024*1024):.2f} MB\n\n"
+        f"Выберите формат экспорта:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "export_sqlite")
+async def export_sqlite(callback: CallbackQuery, client) -> None:
+    """Export SQLite database file to user (admin only)."""
+    if not client or not client.is_admin:
+        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        return
+
+    try:
+        from app.config import get_settings
+        import os
+        settings = get_settings()
+        db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
+
+        if not os.path.exists(db_path):
+            await callback.answer("❌ Файл базы данных не найден.", show_alert=True)
+            return
+
+        # Check file size
+        file_size = os.path.getsize(db_path)
+        if file_size > 50 * 1024 * 1024:
+            await callback.answer(
+                f"❌ Файл базы данных слишком большой ({file_size / (1024*1024):.1f} MB).",
+                show_alert=True
+            )
+            return
+
+        # Send database file
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        with open(db_path, "rb") as f:
+            await callback.message.answer_document(
+                document=f,
+                filename=f"vpn_manager_{timestamp}.db",
+                caption=f"📄 Экспорт базы данных VPN Manager\n"
+                f"Размер: {file_size / (1024*1024):.2f} MB\n"
+                f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+            )
+
+        await callback.answer("✅ База данных отправлена!")
+        logger.info(f"Database exported by user {client.id}: {db_path}")
+
+    except Exception as e:
+        logger.error(f"Error exporting database for user {client.id}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при экспорте базы данных.", show_alert=True)
+
