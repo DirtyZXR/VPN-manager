@@ -196,7 +196,7 @@ class NewSubscriptionService:
             xui_client = await self._get_xui_client(inbound.server)
             await xui_client.add_client(inbound.xui_id, client_request)
 
-            # Create inbound connection
+            # Create inbound connection with per-connection traffic and expiry
             connection = InboundConnection(
                 subscription_id=subscription_id,
                 inbound_id=inbound_id,
@@ -204,6 +204,8 @@ class NewSubscriptionService:
                 email=client_email,
                 uuid=client_uuid,
                 is_enabled=True,
+                total_gb=subscription.total_gb,  # Store per-connection traffic
+                expiry_date=subscription.expiry_date,  # Store per-connection expiry
                 sync_status="synced",
                 last_sync_at=datetime.now(timezone.utc),
             )
@@ -705,6 +707,9 @@ class NewSubscriptionService:
                     )
 
                     await xui_client.update_client(connection.inbound.xui_id, update_request)
+                    # Update per-connection settings
+                    connection.total_gb = subscription.total_gb
+                    connection.expiry_date = subscription.expiry_date
                     connection.sync_status = "synced"
                     connection.last_sync_at = datetime.now(timezone.utc)
                 except Exception as e:
