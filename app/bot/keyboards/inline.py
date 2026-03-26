@@ -23,6 +23,7 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
         if is_admin:
             builder.button(text="Управление серверами", callback_data="admin_servers")
             builder.button(text="Управление клиентами", callback_data="admin_clients")
+            builder.button(text="📋 Шаблоны подписок", callback_data="admin_templates")
             builder.button(text="🔄 Синхронизация", callback_data="admin_sync")
             builder.button(text="Экспорт БД", callback_data="admin_export")
     else:
@@ -212,5 +213,117 @@ def get_registration_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="📱 Использовать Telegram", callback_data="reg_use_telegram")
     builder.button(text="❌ Отмена", callback_data="cancel")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_templates_keyboard(templates: list) -> InlineKeyboardMarkup:
+    """Get templates list keyboard.
+
+    Args:
+        templates: List of SubscriptionTemplate objects
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    for template in templates:
+        status = "Активен" if template.is_active else "Неактивен"
+        builder.button(
+            text=f"{status} {template.name}",
+            callback_data=f"template_select_{template.id}",
+        )
+
+    builder.button(text="➕ Создать шаблон", callback_data="template_add")
+    builder.button(text="Назад", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_template_actions_keyboard(template_id: int) -> InlineKeyboardMarkup:
+    """Get template actions keyboard.
+
+    Args:
+        template_id: Template ID
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Редактировать", callback_data=f"template_edit_{template_id}")
+    builder.button(text="➕ Добавить inbound", callback_data=f"template_add_inbound_{template_id}")
+    builder.button(text="🔄 Создать подписку", callback_data=f"template_create_subscription_{template_id}")
+    builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
+    builder.button(text="Назад", callback_data="admin_templates")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_template_inbounds_keyboard(
+    template_id: int,
+    template_inbounds: list,
+    available_inbounds: list
+) -> InlineKeyboardMarkup:
+    """Get template inbounds management keyboard.
+
+    Args:
+        template_id: Template ID
+        template_inbounds: List of current template inbounds
+        available_inbounds: List of available inbounds to add
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Current inbounds
+    if template_inbounds:
+        for ti in template_inbounds:
+            status = "✅" if ti.inbound.is_active else "❌"
+            builder.button(
+                text=f"{status} {ti.inbound.remark} ({ti.inbound.server.name})",
+                callback_data=f"template_inbound_remove_{template_id}_{ti.inbound_id}",
+            )
+    else:
+        builder.button(text="Нет подключений", callback_data="template_no_inbounds")
+
+    # Add inbound button
+    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
+    builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_inbound_selection_for_template(
+    template_id: int,
+    inbounds: list
+) -> InlineKeyboardMarkup:
+    """Get inbound selection keyboard for template.
+
+    Args:
+        template_id: Template ID
+        inbounds: List of available inbounds
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Group inbounds by server
+    from collections import defaultdict
+    inbounds_by_server = defaultdict(list)
+    for inbound in inbounds:
+        inbounds_by_server[inbound.server.name].append(inbound)
+
+    for server_name, server_inbounds in sorted(inbounds_by_server.items()):
+        for inbound in server_inbounds:
+            status = "✅" if inbound.is_active else "❌"
+            builder.button(
+                text=f"{status} {inbound.remark} ({server_name})",
+                callback_data=f"template_select_inbound_{template_id}_{inbound.id}",
+            )
+
+    builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.adjust(1)
     return builder.as_markup()
 

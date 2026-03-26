@@ -88,3 +88,37 @@ class ExportData(StatesGroup):
     """Export data states."""
 
     waiting_for_format = State()
+
+
+class TemplateManagement(StatesGroup):
+    """Template management states."""
+
+    # Template creation states
+    waiting_for_template_name = State()
+    waiting_for_template_description = State()
+    waiting_for_default_traffic = State()
+    waiting_for_default_expiry = State()
+    waiting_for_template_notes = State()
+
+    # Template editing states
+    editing_template_name = State()
+    editing_template_description = State()
+    editing_default_traffic = State()
+    editing_default_expiry = State()
+    editing_template_notes = State()
+
+    # Template inbound management states
+    waiting_for_inbound_selection = State()
+    waiting_for_inbound_order = State()
+    confirm_remove_inbound = State()
+
+    # Template subscription creation states
+    waiting_for_client_selection = State()
+    waiting_for_subscription_name = State()
+    waiting_for_custom_traffic = State()
+    waiting_for_custom_expiry = State()
+    waiting_for_custom_notes = State()
+    confirm_template_creation = State()
+
+    # Template deletion
+    confirm_delete_template = State()
