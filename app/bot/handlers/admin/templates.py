@@ -11,6 +11,7 @@ from app.bot.keyboards import (
     get_template_actions_keyboard,
     get_template_edit_menu_keyboard,
     get_template_inbounds_keyboard,
+    get_template_inbounds_multi_select_keyboard,
     get_inbound_selection_for_template,
     get_back_keyboard,
     get_confirm_keyboard,
