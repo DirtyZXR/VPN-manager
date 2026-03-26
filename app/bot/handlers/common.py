@@ -20,12 +20,18 @@ async def cmd_start(message: Message, state: FSMContext, client: Client | None, 
     text = (
         f"👋 Добро пожаловать в VPN Manager!\n\n"
         f"Этот бот помогает управлять VPN подписками.\n\n"
-        f"{'Вы администратор 👑' if is_admin else 'Выберите действие в меню:'}"
     )
+
+    if client is None:
+        text += "Для начала работы, пожалуйста, зарегистрируйтесь:"
+    elif is_admin:
+        text += "Вы администратор 👑"
+    else:
+        text += "Выберите действие в меню:"
 
     await message.answer(
         text,
-        reply_markup=get_main_menu_keyboard(is_admin),
+        reply_markup=get_main_menu_keyboard(is_admin, is_registered=client is not None),
     )
 
 
@@ -66,7 +72,7 @@ async def show_admin_menu(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data == "back")
-async def go_back(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def go_back(callback: CallbackQuery, state: FSMContext, is_admin: bool, client) -> None:
     """Handle back button."""
     current_state = await state.get_state()
 
@@ -75,6 +81,6 @@ async def go_back(callback: CallbackQuery, state: FSMContext, is_admin: bool) ->
 
     await callback.message.edit_text(
         "Главное меню",
-        reply_markup=get_main_menu_keyboard(is_admin),
+        reply_markup=get_main_menu_keyboard(is_admin, is_registered=client is not None),
     )
     await callback.answer()

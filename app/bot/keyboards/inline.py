@@ -4,25 +4,29 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def get_main_menu_keyboard(is_admin: bool) -> InlineKeyboardMarkup:
+def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> InlineKeyboardMarkup:
     """Get main menu keyboard.
 
     Args:
         is_admin: Whether client is admin
+        is_registered: Whether client is registered (default: True)
 
     Returns:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="Мои подписки", callback_data="my_subscriptions")
-    builder.button(text="Все subscription URLs", callback_data="all_sub_urls")
+    if is_registered:
+        builder.button(text="Мои подписки", callback_data="my_subscriptions")
+        builder.button(text="Все subscription URLs", callback_data="all_sub_urls")
 
-    if is_admin:
-        builder.button(text="Управление серверами", callback_data="admin_servers")
-        builder.button(text="Управление клиентами", callback_data="admin_clients")
-        builder.button(text="🔄 Синхронизация", callback_data="admin_sync")
-        builder.button(text="Экспорт БД", callback_data="admin_export")
+        if is_admin:
+            builder.button(text="Управление серверами", callback_data="admin_servers")
+            builder.button(text="Управление клиентами", callback_data="admin_clients")
+            builder.button(text="🔄 Синхронизация", callback_data="admin_sync")
+            builder.button(text="Экспорт БД", callback_data="admin_export")
+    else:
+        builder.button(text="📝 Регистрация", callback_data="start_registration")
 
     builder.adjust(2)
     return builder.as_markup()
@@ -195,3 +199,18 @@ def get_client_search_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="Назад", callback_data="admin_clients")
     builder.adjust(2)
     return builder.as_markup()
+
+
+def get_registration_keyboard() -> InlineKeyboardMarkup:
+    """Get registration method selection keyboard.
+
+    Returns:
+        Inline keyboard markup with registration options
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✏️ Ввести имя", callback_data="reg_enter_name")
+    builder.button(text="📱 Использовать Telegram", callback_data="reg_use_telegram")
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.adjust(2)
+    return builder.as_markup()
+
