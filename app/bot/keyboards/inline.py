@@ -281,33 +281,46 @@ def get_template_edit_menu_keyboard(template_id: int) -> InlineKeyboardMarkup:
 def get_template_inbounds_keyboard(
     template_id: int,
     template_inbounds: list,
-    available_inbounds: list
+    selected_inbound_ids: set = None,
 ) -> InlineKeyboardMarkup:
-    """Get template inbounds management keyboard.
+    """Get template inbounds management keyboard with multi-select toggle.
 
     Args:
         template_id: Template ID
         template_inbounds: List of current template inbounds
-        available_inbounds: List of available inbounds to add
+        selected_inbound_ids: Set of selected inbound IDs (for multi-select mode)
 
     Returns:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
 
-    # Current inbounds
+    # Current inbounds with toggle selection
     if template_inbounds:
         for ti in template_inbounds:
             status = "✅" if ti.inbound.is_active else "❌"
-            builder.button(
-                text=f"{status} {ti.inbound.remark} ({ti.inbound.server.name})",
-                callback_data=f"template_inbound_remove_{template_id}_{ti.inbound_id}",
-            )
+            if selected_inbound_ids:
+                selected = "🔘" if ti.inbound_id in selected_inbound_ids else "🔳"
+                builder.button(
+                    text=f"{selected} {status} {ti.inbound.remark} ({ti.inbound.server.name})",
+                    callback_data=f"template_toggle_inbound_{template_id}_{ti.inbound_id}",
+                )
+            else:
+                builder.button(
+                    text=f"✅ {status} {ti.inbound.remark} ({ti.inbound.server.name})",
+                    callback_data=f"template_inbound_remove_{template_id}_{ti.inbound_id}",
+                )
     else:
         builder.button(text="Нет подключений", callback_data="template_no_inbounds")
 
-    # Add inbound button
-    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
+    # Multi-select mode button (only if inbounds exist)
+    if template_inbounds and not selected_inbound_ids:
+        builder.button(text="🔄 Управление подключениями", callback_data=f"template_inbounds_multi_select_{template_id}")
+
+    # Add inbound button (not in multi-select mode)
+    if not selected_inbound_ids:
+        builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
+
     builder.button(text="Назад", callback_data=f"template_select_{template_id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -343,6 +356,40 @@ def get_inbound_selection_for_template(
             )
 
     builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_template_inbounds_multi_select_keyboard(
+    template_id: int,
+    template_inbounds: list,
+    selected_inbound_ids: set,
+) -> InlineKeyboardMarkup:
+    """Get template inbounds multi-select keyboard with toggle.
+
+    Args:
+        template_id: Template ID
+        template_inbounds: List of current template inbounds
+        selected_inbound_ids: Set of selected inbound IDs
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Inbounds with toggle selection
+    for ti in template_inbounds:
+        status = "✅" if ti.inbound.is_active else "❌"
+        selected = "🔘" if ti.inbound_id in selected_inbound_ids else "🔳"
+        builder.button(
+            text=f"{selected} {status} {ti.inbound.remark} ({ti.inbound.server.name})",
+            callback_data=f"template_multi_select_conn_{template_id}_{ti.inbound_id}",
+        )
+
+    # Multi-select action buttons
+    builder.button(text="❌ Удалить выбранные", callback_data=f"template_confirm_remove_inbounds_{template_id}")
+    builder.button(text="✅ Сохранить", callback_data=f"template_cancel_multi_select_{template_id}")
+    builder.button(text="🔙 Назад", callback_data=f"template_select_{template_id}")
     builder.adjust(1)
     return builder.as_markup()
 

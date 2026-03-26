@@ -12,6 +12,7 @@ from app.bot.keyboards.inline import (
     get_template_actions_keyboard,
     get_template_edit_menu_keyboard,
     get_template_inbounds_keyboard,
+    get_template_inbounds_multi_select_keyboard,
     get_templates_keyboard,
     get_inbound_selection_for_template,
     get_user_actions_keyboard,
@@ -33,5 +34,6 @@ __all__ = [
     "get_template_actions_keyboard",
     "get_template_edit_menu_keyboard",
     "get_template_inbounds_keyboard",
+    "get_template_inbounds_multi_select_keyboard",
     "get_inbound_selection_for_template",
 ]
