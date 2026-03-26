@@ -119,6 +119,7 @@ class TemplateManagement(StatesGroup):
     waiting_for_custom_expiry = State()
     waiting_for_custom_notes = State()
     confirm_template_creation = State()
+    waiting_for_search_query = State()  # For client search
 
     # Template deletion
     confirm_delete_template = State()
