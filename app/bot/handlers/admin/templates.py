@@ -246,8 +246,8 @@ async def show_template_details(callback: CallbackQuery, is_admin: bool):
 
 
 @router.callback_query(F.data.startswith("template_edit_"))
-async def start_template_editing(callback: CallbackQuery, state: FSMContext, is_admin: bool):
-    """Start template editing."""
+async def edit_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Show template edit menu."""
     if not is_admin:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
@@ -263,15 +263,26 @@ async def start_template_editing(callback: CallbackQuery, state: FSMContext, is_
             return
 
     await state.update_data(template_id=template_id)
-    await state.set_state(TemplateManagement.editing_template_name)
 
-    text = (
-        f"✏️ <b>Редактирование шаблона: {template.name}</b>\n\n"
-        f"Текущее название: {template.name}\n"
-        f"Введите новое название:"
+    # Create edit menu with separate buttons for each field
+    builder = []
+    builder.append({"text": "✏️ Название", "callback_data": "edit_template_name"})
+    builder.append({"text": "📝 Описание", "callback_data": "edit_template_description"})
+    builder.append({"text": "📊 Трафик", "callback_data": "edit_template_traffic"})
+    builder.append({"text": "📅 Срок", "callback_data": "edit_template_expiry"})
+    builder.append({"text": "📌 Заметки", "callback_data": "edit_template_notes"})
+    builder.append({"text": "🔙 Назад", "callback_data": f"template_select_{template_id}"})
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    kb = InlineKeyboardBuilder()
+    for btn in builder:
+        kb.button(**btn)
+    kb.adjust(2)
+
+    await callback.message.edit_text(
+        f"✏️ <b>Редактирование шаблона: {template.name}</b>",
+        reply_markup=kb.as_markup()
     )
-
-    await callback.message.edit_text(text, reply_markup=get_back_keyboard("admin_templates"))
     await callback.answer()
 
 
@@ -798,8 +809,9 @@ async def select_inbound_for_template(callback: CallbackQuery, state: FSMContext
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
 
-    template_id = int(callback.data.split("_")[3])
-    inbound_id = int(callback.data.split("_")[4])
+    parts = callback.data.split("_")
+    template_id = int(parts[3])
+    inbound_id = int(parts[4])
 
     try:
         async with async_session_factory() as session:
