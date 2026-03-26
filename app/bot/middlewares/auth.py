@@ -63,6 +63,7 @@ class AuthMiddleware(BaseMiddleware):
                 is_admin = client.is_admin
 
             # Update data dict with middleware results
+            # Note: client can be None for non-registered non-admin users
             data.update({
                 "client": client,
                 "is_admin": is_admin,

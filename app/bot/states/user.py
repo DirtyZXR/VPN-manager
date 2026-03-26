@@ -9,3 +9,10 @@ class UserSubscription(StatesGroup):
     viewing_groups = State()
     viewing_group_details = State()
     viewing_profile = State()
+
+
+class UserRegistration(StatesGroup):
+    """User self-registration states."""
+
+    choosing_name_source = State()
+    entering_custom_name = State()
