@@ -115,6 +115,7 @@ class TemplateManagement(StatesGroup):
 
     # Template subscription creation states
     waiting_for_client_selection = State()
+    waiting_for_template_selection = State()  # For creating subscription from template for specific client
     waiting_for_subscription_name = State()
     waiting_for_custom_traffic = State()
     waiting_for_custom_expiry = State()
