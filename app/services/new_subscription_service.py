@@ -49,7 +49,7 @@ class NewSubscriptionService:
                 selectinload(Subscription.client),
                 selectinload(Subscription.inbound_connections).selectinload(
                     InboundConnection.inbound
-                ),
+                ).selectinload(Inbound.server),
             )
             .order_by(Subscription.created_at.desc())
         )
@@ -562,6 +562,7 @@ class NewSubscriptionService:
                     # subscription_path already ends with /, so just append token
                     urls.append(
                         {
+                            "subscription_id": sub.id,
                             "subscription_name": sub.name,
                             "server_name": server.name,
                             "inbound_name": connection.inbound.remark,
@@ -595,6 +596,7 @@ class NewSubscriptionService:
                     # subscription_json_path already ends with /, so just append token
                     urls.append(
                         {
+                            "subscription_id": sub.id,
                             "subscription_name": sub.name,
                             "server_name": server.name,
                             "inbound_name": connection.inbound.remark,
