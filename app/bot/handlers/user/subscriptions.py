@@ -314,38 +314,6 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin_export")
-async def export_database(callback: CallbackQuery, client) -> None:
-    """Export database to file and send to user (admin only)."""
-    if not client or not client.is_admin:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
-        return
-
-    # Get database file path from config
-    from app.config import get_settings
-    import os
-
-    settings = get_settings()
-
-    # Extract database path from connection URL
-    # sqlite+aiosqlite:///./data/vpn_manager.db -> ./data/vpn_manager.db
-    db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
-
-    # Check if database file exists
-    if not os.path.exists(db_path):
-        await callback.answer("❌ Файл базы данных не найден.", show_alert=True)
-        return
-
-    # Check file size
-    file_size = os.path.getsize(db_path)
-    if file_size > 50 * 1024 * 1024:  # 50 MB limit for Telegram files
-        await callback.answer(
-            f"❌ Файл базы данных слишком большой ({file_size / (1024*1024):.1f} MB).",
-            show_alert=True
-        )
-        return
-
-    # Create keyboard with format options
     builder = InlineKeyboardBuilder()
     builder.button(text="📄 Как есть (SQLite)", callback_data="export_sqlite")
     builder.button(text="🔙 Назад", callback_data="admin_menu")
@@ -406,3 +374,78 @@ async def export_sqlite(callback: CallbackQuery, client) -> None:
         logger.error(f"Error exporting database for user {client.id}: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при экспорте базы данных.", show_alert=True)
 
+
+@router.callback_query(F.data == "admin_export")
+async def export_database(callback: CallbackQuery, client) -> None:
+    """Export database to file and send to user (admin only)."""
+    if not client or not client.is_admin:
+        await callback.answer("❌ Эта функция доступна только администраторам.", show_alert=True)
+        return
+
+    try:
+        # Get database file path from config
+        from app.config import get_settings
+        from pathlib import Path
+        import os
+        import shutil
+
+        settings = get_settings()
+
+        # Extract database path from connection URL
+        db_path = Path(settings.database_url.replace("sqlite+aiosqlite:///", ""))
+
+        # Check if database file exists
+        if not db_path.exists():
+            await callback.answer("❌ Файл базы данных не найден.", show_alert=True)
+            return
+
+        # Check file size
+        file_size = db_path.stat().st_size
+        if file_size > 50 * 1024 * 1024:
+            await callback.answer(
+                f"❌ Файл базы данных слишком большой ({file_size / (1024*1024):.1f} MB).",
+                show_alert=True
+            )
+            return
+
+        # Create temporary copy to avoid file locking issues
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_db_path = Path(temp_dir) / f"vpn_manager_export_{client.id}.db"
+
+        try:
+            # Show preparation message
+            await callback.answer("⏳ Подготовка файла базы данных...")
+
+            # Copy database file to avoid locking issues
+            shutil.copy2(db_path, temp_db_path)
+            logger.info(f"Database copied to {temp_db_path} for export")
+
+            # Send database file
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            with open(temp_db_path, "rb") as f:
+                await callback.message.answer_document(
+                    document=f,
+                    filename=f"vpn_manager_{timestamp}.db",
+                    caption=f"📄 Экспорт базы данных VPN Manager\n"
+                    f"Размер: {file_size / (1024*1024):.2f} MB\n"
+                    f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                )
+
+            await callback.answer("✅ База данных отправлена!")
+            logger.info(f"Database exported by admin {client.id}: {db_path}")
+
+        finally:
+            # Clean up temporary file
+            if temp_db_path.exists():
+                try:
+                    temp_db_path.unlink()
+                    logger.debug(f"Temporary database file removed: {temp_db_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary file {temp_db_path}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error exporting database for admin {client.id}: {e}", exc_info=True)
+        await callback.answer("❌ Ошибка при экспорте базы данных.", show_alert=True)
