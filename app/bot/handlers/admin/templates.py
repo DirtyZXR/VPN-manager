@@ -245,6 +245,219 @@ async def show_template_details(callback: CallbackQuery, is_admin: bool):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("template_edit_"))
+async def start_template_editing(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+    """Start template editing."""
+    if not is_admin:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+
+    template_id = int(callback.data.split("_")[2])
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(template_id)
+
+        if not template:
+            await callback.answer("⚠️ Шаблон не найден", show_alert=True)
+            return
+
+    await state.update_data(template_id=template_id)
+    await state.set_state(TemplateManagement.editing_template_name)
+
+    text = (
+        f"✏️ <b>Редактирование шаблона: {template.name}</b>\n\n"
+        f"Текущее название: {template.name}\n"
+        f"Введите новое название:"
+    )
+
+    await callback.message.edit_text(text, reply_markup=get_back_keyboard("admin_templates"))
+    await callback.answer()
+
+
+@router.message(TemplateManagement.editing_template_name)
+async def handle_edit_template_name(message: Message, state: FSMContext):
+    """Handle template name editing."""
+    name = message.text.strip()
+
+    if not name:
+        await message.answer("⚠️ Название не может быть пустым. Введите название:")
+        return
+
+    if len(name) > 100:
+        await message.answer("⚠️ Название слишком длинное. Максимум 100 символов. Введите название:")
+        return
+
+    await state.update_data(new_name=name)
+    await state.set_state(TemplateManagement.editing_template_description)
+
+    text = (
+        f"✅ <b>Новое название:</b> {name}\n\n"
+        f"Текущее описание: {message.text or 'Нет описания'}\n\n"
+        f"Введите новое описание (необязательно, отправьте /skip для пропуска):"
+    )
+
+    await message.answer(text)
+
+
+@router.message(TemplateManagement.editing_template_description)
+async def handle_edit_template_description(message: Message, state: FSMContext):
+    """Handle template description editing."""
+    if message.text == "/skip":
+        description = None
+    else:
+        description = message.text.strip()
+        if len(description) > 500:
+            await message.answer("⚠️ Описание слишком длинное. Максимум 500 символов. Введите описание:")
+            return
+
+    await state.update_data(new_description=description)
+    await state.set_state(TemplateManagement.editing_default_traffic)
+
+    data = await state.get_data()
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(data["template_id"])
+
+        current_traffic = template.default_total_gb
+        traffic_text = f"{current_traffic} ГБ {'(безлимитный)' if current_traffic == 0 else ''}"
+
+        text = (
+            f"📝 <b>Новое описание:</b> {description or 'Нет описания'}\n\n"
+            f"📊 <b>Текущий лимит трафика:</b> {traffic_text}\n\n"
+            f"Введите новый лимит трафика в ГБ (0 = безлимитный):"
+        )
+
+        await message.answer(text)
+
+
+@router.message(TemplateManagement.editing_default_traffic)
+async def handle_edit_default_traffic(message: Message, state: FSMContext):
+    """Handle default traffic limit editing."""
+    try:
+        traffic = int(message.text.strip())
+        if traffic < 0:
+            await message.answer("⚠️ Лимит трафика не может быть отрицательным. Введите число:")
+            return
+    except ValueError:
+        await message.answer("⚠️ Введите корректное число (0 = безлимитный):")
+        return
+
+    await state.update_data(new_traffic=traffic)
+    await state.set_state(TemplateManagement.editing_default_expiry)
+
+    data = await state.get_data()
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(data["template_id"])
+
+        current_expiry = template.default_expiry_days
+        expiry_text = f"{current_expiry} дн." if current_expiry else "Бессрочный"
+
+        text = (
+            f"📊 <b>Новый лимит трафика:</b> {traffic} ГБ {'(безлимитный)' if traffic == 0 else ''}\n\n"
+            f"📅 <b>Текущий срок действия:</b> {expiry_text}\n\n"
+            f"Введите новый срок действия в днях (0 = бессрочный, отправьте /skip для пропуска):"
+        )
+
+        await message.answer(text)
+
+
+@router.message(TemplateManagement.editing_default_expiry)
+async def handle_edit_default_expiry(message: Message, state: FSMContext):
+    """Handle default expiry days editing."""
+    if message.text == "/skip":
+        expiry = None
+    else:
+        try:
+            expiry = int(message.text.strip())
+            if expiry < 0:
+                await message.answer("⚠️ Срок действия не может быть отрицательным. Введите число:")
+                return
+        except ValueError:
+            await message.answer("⚠️ Введите корректное число (0 = бессрочный, /skip = использовать шаблон):")
+            return
+
+        if expiry == 0:
+            expiry = None
+
+    await state.update_data(new_expiry=expiry)
+    await state.set_state(TemplateManagement.editing_template_notes)
+
+    data = await state.get_data()
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(data["template_id"])
+
+        expiry_text = f"{expiry} дн." if expiry else "Бессрочный"
+        text = (
+            f"📅 <b>Новый срок действия:</b> {expiry_text}\n\n"
+            f"Текущие заметки: {template.notes or 'Нет заметок'}\n\n"
+            f"Введите новые заметки (необязательно, отправьте /skip для пропуска):"
+        )
+
+        await message.answer(text)
+
+
+@router.message(TemplateManagement.editing_template_notes)
+async def handle_edit_template_notes(message: Message, state: FSMContext):
+    """Handle template notes editing."""
+    if message.text == "/skip":
+        notes = None
+    else:
+        notes = message.text.strip()
+        if len(notes) > 500:
+            await message.answer("⚠️ Заметки слишком длинные. Максимум 500 символов. Введите заметки:")
+            return
+
+    data = await state.get_data()
+
+    try:
+        async with async_session_factory() as session:
+            template_service = SubscriptionTemplateService(session)
+            template = await template_service.update_template(
+                template_id=data["template_id"],
+                name=data.get("new_name"),
+                description=data.get("new_description"),
+                default_total_gb=data.get("new_traffic"),
+                default_expiry_days=data.get("new_expiry"),
+                notes=notes,
+            )
+            await session.commit()
+
+            logger.info(f"✅ Template updated: {template.name} (ID: {template.id})")
+
+        await state.clear()
+
+        traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
+        expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+        inbounds_count = len(template.template_inbounds)
+
+        text = (
+            f"✅ <b>Шаблон обновлен!</b>\n\n"
+            f"📋 <b>{template.name}</b>\n"
+            f"📝 {template.description or 'Нет описания'}\n"
+            f"📊 <b>Лимит трафика:</b> {traffic_limit}\n"
+            f"📅 <b>Срок действия:</b> {expiry_text}\n"
+            f"🔌 <b>Подключений:</b> {inbounds_count}\n"
+        )
+
+        if template.notes:
+            text += f"\n📌 <b>Заметки:</b> {template.notes}"
+
+        keyboard = get_template_actions_keyboard(template.id)
+
+        await message.answer(text, reply_markup=keyboard)
+
+    except Exception as e:
+        await state.clear()
+        logger.error(f"Error updating template: {e}", exc_info=True)
+        await message.answer(f"❌ Произошла ошибка при обновлении шаблона: {str(e)}")
+
+
 @router.callback_query(F.data.startswith("template_create_subscription_"))
 async def start_subscription_from_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Start subscription creation from template."""
@@ -265,7 +478,7 @@ async def start_subscription_from_template(callback: CallbackQuery, state: FSMCo
 
         # Get clients
         client_service = ClientService(session)
-        clients = await client_service.get_all_clients()
+        clients = await client_service.get_active_clients()
 
     if not clients:
         await callback.answer("⚠️ Нет клиентов. Сначала создайте клиента.", show_alert=True)
