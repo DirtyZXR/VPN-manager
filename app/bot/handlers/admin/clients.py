@@ -424,12 +424,19 @@ async def select_template_for_client(callback: CallbackQuery, state: FSMContext)
         client_service = ClientService(session)
         client = await client_service.get_client_by_id(client_id)
 
+    # Get template defaults for info
+    traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
+    expiry_limit = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+
     text = (
         f"📋 <b>Создание подписки из шаблона</b>\n\n"
         f"📋 <b>Шаблон:</b> {template.name}\n"
         f"👤 <b>Клиент:</b> {client.name}\n"
         f"🔌 <b>Подключений:</b> {len(template.template_inbounds)}\n\n"
-        f"Введите название подписки:"
+        f"📊 <b>Трафик:</b> {traffic_limit}\n"
+        f"📅 <b>Срок:</b> {expiry_limit}\n\n"
+        f"Все параметры будут взяты из шаблона автоматически.\n"
+        f"Введите только название подписки:"
     )
 
     await callback.message.edit_text(text)
