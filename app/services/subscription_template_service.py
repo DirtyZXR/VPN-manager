@@ -350,6 +350,33 @@ class SubscriptionTemplateService:
 
     # Helper methods
 
+    async def get_template_inbound(
+        self,
+        template_id: int,
+        inbound_id: int,
+    ) -> SubscriptionTemplateInbound | None:
+        """Get specific template-inbound relationship.
+
+        Args:
+            template_id: Template ID
+            inbound_id: Inbound ID
+
+        Returns:
+            Template inbound relationship or None if not found
+        """
+        result = await self.session.execute(
+            select(SubscriptionTemplateInbound)
+            .where(
+                SubscriptionTemplateInbound.template_id == template_id,
+                SubscriptionTemplateInbound.inbound_id == inbound_id,
+            )
+            .options(
+                selectinload(SubscriptionTemplateInbound.inbound)
+                .selectinload(Inbound.server)
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_template_inbounds(self, template_id: int) -> Sequence[SubscriptionTemplateInbound]:
         """Get all inbounds for template.
 

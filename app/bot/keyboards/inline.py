@@ -250,8 +250,12 @@ def get_template_actions_keyboard(template_id: int) -> InlineKeyboardMarkup:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Редактировать", callback_data=f"template_edit_{template_id}")
-    builder.button(text="➕ Добавить inbound", callback_data=f"template_add_inbound_{template_id}")
+    builder.button(text="✏️ Название", callback_data=f"template_edit_name_{template_id}")
+    builder.button(text="📝 Описание", callback_data=f"template_edit_description_{template_id}")
+    builder.button(text="📊 Трафик", callback_data=f"template_edit_traffic_{template_id}")
+    builder.button(text="📅 Срок действия", callback_data=f"template_edit_expiry_{template_id}")
+    builder.button(text="📌 Заметки", callback_data=f"template_edit_notes_{template_id}")
+    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
     builder.button(text="🔄 Создать подписку", callback_data=f"template_create_subscription_{template_id}")
     builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
     builder.button(text="Назад", callback_data="admin_templates")
