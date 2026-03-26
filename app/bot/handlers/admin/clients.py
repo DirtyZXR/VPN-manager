@@ -16,7 +16,8 @@ from app.bot.keyboards import (
     get_clients_keyboard,
     get_client_search_keyboard,
 )
-from app.bot.states import ClientManagement, SubscriptionManagement, TemplateManagement
+from app.bot.states import ClientManagement, SubscriptionManagement
+from app.bot.states.admin import TemplateManagement
 from app.database import async_session_factory
 from app.services.client_service import ClientService
 from app.services.subscription_template_service import SubscriptionTemplateService
