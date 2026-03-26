@@ -17,7 +17,7 @@ from app.bot.keyboards import (
     get_client_search_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
-from app.database import get_session, async_session_factory
+from app.database import async_session_factory
 from app.services.client_service import ClientService
 
 router = Router()
@@ -104,8 +104,8 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
     await state.update_data(email=email if email != "-" else None)
     await state.set_state(ClientManagement.waiting_for_telegram_id)
     await message.answer(
-        "Введите Telegram ID клиента (число) или Telegram username (@example).\n\n"
-        "Если указан username (@example), бот автоматически найдет и запишет соответствующий ID.",
+        "Введите Telegram ID клиента (число) или отправьте '-' для пропуска.\n\n"
+        "Примечание: Telegram ID будет использоваться для синхронизации с XUI панелями.",
         reply_markup=get_back_keyboard("admin_clients"),
     )
 
@@ -117,65 +117,24 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
 
     input_text = message.text.strip()
 
-    # Check if input is username (@example)
-    is_username = input_text.startswith('@')
+    # Process input
     telegram_id = None
-    telegram_username = None
-
-    if is_username:
-        # User provided username - get ID from Telegram API
-        telegram_username = input_text
+    if input_text != "-":
         try:
-            from app.main import bot
-            # Get user info from Telegram API
-            user_info = await bot.get_chat(chat_id=message.chat.id)
-
-            # Try to get ID from user info (this may not work for all users)
-            if hasattr(user_info, 'from_user'):
-                user = user_info.from_user
-                if user:
-                    telegram_id = user.id
-                    await message.answer(
-                        f"✅ Найден Telegram ID для @{input_text}: {telegram_id}\n\n"
-                        f"Создаю клиента..."
-                    )
-                else:
-                    await message.answer(
-                        f"❌ Не удалось получить Telegram ID для @{input_text}.\n\n"
-                        f"Возможно, пользователь еще не взаимодействовал с ботом."
-                    )
-                    return
-            else:
-                await message.answer(
-                    f"❌ Не удалось получить Telegram ID для @{input_text}."
-                )
-                return
-        except Exception as e:
-            logger.error(f"Failed to get Telegram ID for @{input_text}: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка при получении Telegram ID: {e}")
+            telegram_id = int(input_text)
+        except ValueError:
+            await message.answer("❌ Telegram ID должен быть числом или '-'.")
             return
-    else:
-        # User provided ID or '-'
-        if input_text != "-":
-            try:
-                telegram_id = int(input_text)
-            except ValueError:
-                await message.answer("❌ Telegram ID должен быть числом, username (@example) или '-'.")
-                return
 
-    async with get_session() as session:
+    async with async_session_factory() as session:
         service = ClientService(session)
         try:
             client = await service.create_client(
                 name=data["name"],
                 email=data.get("email"),
                 telegram_id=telegram_id,
-                telegram_username=telegram_username,
             )
-            await message.answer(f"✅ Клиент '{client.name}' создан!")
-        except Exception as e:
-            logger.error(f"Failed to create client: {e}", exc_info=True)
-            await message.answer(f"❌ Ошибка при создании клиента: {e}")
+            await session.commit()
             await state.clear()
             await message.answer(
                 f"✅ Клиент '{client.name}' успешно создан!\n\n"
@@ -185,8 +144,10 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
                 reply_markup=get_back_keyboard("admin_clients"),
             )
         except Exception as e:
-            logger.error(f"Error creating client: {e}", exc_info=True)
+            logger.error(f"Failed to create client: {e}", exc_info=True)
+            await session.rollback()
             await message.answer(f"❌ Ошибка при создании клиента: {e}")
+            await state.clear()
 
 
 @router.callback_query(F.data.startswith("client_select_"))
@@ -198,7 +159,7 @@ async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = ClientService(session)
         client = await service.get_client_by_id(client_id)
 
@@ -255,7 +216,7 @@ async def show_client_subscriptions(callback: CallbackQuery, is_admin: bool) -> 
 
     from app.services.new_subscription_service import NewSubscriptionService
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = NewSubscriptionService(session)
         subscriptions = await service.get_client_subscriptions(client_id)
 
@@ -312,7 +273,7 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
     from app.services.new_subscription_service import NewSubscriptionService
     from app.database.models import Subscription
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = NewSubscriptionService(session)
 
         result = await session.execute(
@@ -383,7 +344,7 @@ async def start_create_subscription_for_client(callback: CallbackQuery, state: F
 
     from app.services.xui_service import XUIService
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = XUIService(session)
         servers = await service.get_active_servers()
 
@@ -439,9 +400,10 @@ async def process_rename_client_name(message: Message, state: FSMContext) -> Non
         await message.answer("❌ Имя не должно превышать 100 символов.")
         return
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = ClientService(session)
         client = await service.rename_client(client_id, name)
+        await session.commit()
     await state.clear()
     await message.answer(
         f"✅ Клиент переименован в '{client.name}'",
@@ -489,12 +451,13 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
     elif telegram_id_input == "-":
         telegram_id = None
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = ClientService(session)
         client = await service.update_client(
             client_id,
             telegram_id=telegram_id,
         )
+        await session.commit()
     await state.clear()
     if telegram_id:
         await message.answer(
@@ -517,7 +480,7 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
 
         client_service = ClientService(session)
@@ -550,7 +513,7 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
 
         client_service = ClientService(session)
@@ -606,7 +569,7 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
     data = await state.get_data()
     client_id = data["client_id"]
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
 
         client_service = ClientService(session)
@@ -639,9 +602,10 @@ async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = ClientService(session)
         await service.set_client_admin(client_id, True)
+        await session.commit()
 
     await callback.answer("✅ Клиент теперь админ.")
     await select_client(callback, is_admin)
@@ -656,9 +620,10 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
 
     client_id = int(callback.data.split("_")[-1])
 
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = ClientService(session)
         await service.set_client_admin(client_id, False)
+        await session.commit()
 
     await callback.answer("✅ Клиент больше не админ.")
     await select_client(callback, is_admin)
@@ -749,7 +714,7 @@ async def process_search_query(message: Message, state: FSMContext) -> None:
         search_params["xui_email"] = _normalize_search_query(query, is_email=True)
     elif field == "all":
         # Search across all fields with OR logic
-        async for session in get_session():
+        async with async_session_factory() as session:
             service = ClientService(session)
             clients = await service.search_clients_all_fields(query)
 
@@ -785,7 +750,7 @@ async def process_search_query(message: Message, state: FSMContext) -> None:
         return  # Exit early since we already handled search
 
     # Perform search for specific fields
-    async for session in get_session():
+    async with async_session_factory() as session:
         service = ClientService(session)
         clients = await service.search_clients(**search_params)
 

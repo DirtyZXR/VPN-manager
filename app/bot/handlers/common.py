@@ -46,9 +46,14 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "admin_menu")
 async def show_admin_menu(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show admin menu."""
+    """Show admin menu or redirect to main menu for non-admins."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        # Redirect non-admin users to main menu
+        await callback.message.edit_text(
+            "Главное меню",
+            reply_markup=get_main_menu_keyboard(is_admin),
+        )
+        await callback.answer()
         return
 
     await callback.message.edit_text(
@@ -62,7 +67,12 @@ async def show_admin_menu(callback: CallbackQuery, is_admin: bool) -> None:
 async def admin_export(callback: CallbackQuery, is_admin: bool) -> None:
     """Handle admin export button."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        # Redirect non-admin users to main menu
+        await callback.message.edit_text(
+            "Главное меню",
+            reply_markup=get_main_menu_keyboard(is_admin),
+        )
+        await callback.answer()
         return
 
     await callback.answer("📊 Экспорт БД в разработке", show_alert=True)
