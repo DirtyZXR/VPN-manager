@@ -18,6 +18,10 @@ from app.services.xui_service import XUIService
 from app.xui_client import XUIConnectionError, XUIError
 
 
+# Глобальная блокировка для предотвращения конфликтов между всеми экземплярами SyncService
+_global_sync_lock = asyncio.Lock()
+
+
 class SyncService:
     """Service for synchronizing data between database and XUI panels."""
 
@@ -31,7 +35,8 @@ class SyncService:
         """
         self.session = session
         self._is_running = False
-        self._sync_lock = asyncio.Lock()  # Блокировка для предотвращения параллельных синхронизаций
+        # Используем глобальную блокировку вместо локальной
+        self._sync_lock = _global_sync_lock
 
     # === CORE METHODS ===
 
@@ -46,7 +51,10 @@ class SyncService:
 
         while self._is_running:
             try:
-                await self._sync_cycle()
+                await self._sync_cycle(force=False)
+                # Wait for SYNC_INTERVAL (5 minutes) between cycles
+                logger.debug("Waiting for next sync cycle...")
+                await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             except Exception as e:
                 logger.error(f"[ERROR] Ошибка цикла синхронизации: {e}", exc_info=True)
                 await asyncio.sleep(60)  # 1 минута при ошибке
@@ -58,11 +66,17 @@ class SyncService:
         self._is_running = False
         logger.info("[STOP] Остановка фоновой синхронизации")
 
-    async def _sync_cycle(self, skip_sleep: bool = False, force: bool = False) -> dict:
+    async def close_xui_clients(self) -> None:
+        """Закрыть все XUI клиенты для предотвращения утечек ресурсов."""
+        from app.services import XUIService
+        xui_service = XUIService(self.session)
+        await xui_service.close_all_clients()
+        logger.debug("XUI clients closed")
+
+    async def _sync_cycle(self, force: bool = False) -> dict:
         """Один цикл синхронизации.
 
         Args:
-            skip_sleep: Пропустить ожидание после завершения (для ручной синхронизации)
             force: Принудительная синхронизация (для ручной синхронизации)
 
         Returns:
@@ -71,8 +85,6 @@ class SyncService:
         # Проверить, есть ли другая активная синхронизация
         if self._sync_lock.locked():
             logger.debug("[PAUSE] Пропуск цикла синхронизации - другая синхронизация уже выполняется")
-            if not skip_sleep:
-                await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
@@ -102,10 +114,6 @@ class SyncService:
             except Exception as e:
                 logger.error(f"[ERROR] Ошибка в цикле синхронизации: {e}", exc_info=True)
                 return {"servers": 0, "error": str(e)}
-
-        # Подождать до следующей итерации (за пределами блокировки)
-        if not skip_sleep:
-            await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
 
     # === SERVER SYNC ===
 
@@ -346,13 +354,17 @@ class SyncService:
         if hasattr(model, "last_sync_at") and model.last_sync_at is None:
             return True  # Никогда не синхронизировали
 
-        # Если прошло больше интервала
-        if (
-            hasattr(model, "last_sync_at")
-            and model.last_sync_at is not None
-            and datetime.now(timezone.utc) - model.last_sync_at > self.SYNC_INTERVAL
-        ):
-            return True
+        # Если прошло больше интервала (с учетом timezone-aware и timezone-naive)
+        if hasattr(model, "last_sync_at") and model.last_sync_at is not None:
+            now = datetime.now(timezone.utc)
+            last_sync = model.last_sync_at
+
+            # Если last_sync не имеет timezone, добавим ему UTC timezone
+            if last_sync.tzinfo is None:
+                last_sync = last_sync.replace(tzinfo=timezone.utc)
+
+            if now - last_sync > self.SYNC_INTERVAL:
+                return True
 
         return False
 
@@ -635,9 +647,9 @@ class SyncService:
             logger.info(f"[LOG] Блокировка получена, начало обработки entity_type={entity_type}")
             try:
                 if entity_type == "all":
-                    # Полная синхронизация (без ожидания после завершения)
-                    logger.info("[LOG] Запуск _sync_cycle с skip_sleep=True, force=True")
-                    sync_result = await self._sync_cycle(skip_sleep=True, force=True)
+                    # Полная синхронизация
+                    logger.info("[LOG] Запуск _sync_cycle с force=True")
+                    sync_result = await self._sync_cycle(force=True)
                     results["synced"] = sync_result.get("servers", 0)
                     logger.info(f"[LOG] _sync_cycle завершен, sync_result={sync_result}")
 

@@ -10,10 +10,91 @@ from aiogram.enums import ParseMode
 from loguru import logger
 
 from app.config import get_settings
-from app.database import init_db
+from app.database import init_db, async_session_factory
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
-from app.services.xui_service import XUIService
+from app.services import SyncService
+from app.services.notification_checker import NotificationChecker
+
+
+# Flags to control background tasks
+_background_sync_running = False
+_background_notification_running = False
+
+# Global lock to prevent concurrent database access between sync and notification tasks
+_global_db_lock = asyncio.Lock()
+
+
+async def background_sync_wrapper() -> None:
+    """Wrapper for background sync that creates new sessions per cycle."""
+    global _background_sync_running
+    _background_sync_running = True
+
+    try:
+        logger.info("Starting background sync wrapper...")
+        while _background_sync_running:
+            try:
+                # Use global lock to prevent concurrent database access
+                async with _global_db_lock:
+                    async with async_session_factory() as session:
+                        sync_service = SyncService(session)
+                        # Run one sync cycle with force=True to sync immediately
+                        await sync_service._sync_cycle(force=True)
+                        # Commit changes to make them persistent
+                        await session.commit()
+                        # Close XUI clients to prevent resource leaks
+                        await sync_service.close_xui_clients()
+
+                # Wait for SYNC_INTERVAL (5 minutes) between cycles
+                logger.debug("Waiting for next sync cycle...")
+                await asyncio.sleep(300)  # 5 minutes = 300 seconds
+            except Exception as e:
+                logger.error(f"Error in background sync cycle: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait 1 minute on error
+
+    except asyncio.CancelledError:
+        logger.info("Background sync cancelled")
+    except Exception as e:
+        logger.error(f"Fatal error in background sync wrapper: {e}", exc_info=True)
+    finally:
+        _background_sync_running = False
+        logger.info("Background sync wrapper stopped")
+
+
+async def background_notification_wrapper() -> None:
+    """Wrapper for background notifications that creates new sessions per cycle."""
+    global _background_notification_running
+    _background_notification_running = True
+
+    notification_checker = None
+
+    try:
+        logger.info("Starting background notification wrapper...")
+        while _background_notification_running:
+            try:
+                # Use global lock to prevent concurrent database access
+                async with _global_db_lock:
+                    async with async_session_factory() as session:
+                        notification_checker = NotificationChecker(session)
+                        await notification_checker.check_and_notify()
+
+                # Wait 10 minutes between checks
+                logger.debug("Waiting for next notification check...")
+                await asyncio.sleep(600)  # 10 minutes = 600 seconds
+            except Exception as e:
+                logger.error(f"Error in background notification cycle: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait 1 minute on error
+
+    except asyncio.CancelledError:
+        logger.info("Background notifications cancelled")
+    except Exception as e:
+        logger.error(f"Fatal error in background notification wrapper: {e}", exc_info=True)
+    finally:
+        _background_notification_running = False
+        # Close XUI clients only at the end
+        if notification_checker:
+            await notification_checker.close()
+        logger.info("Background notification wrapper stopped")
 
 
 def setup_logging() -> None:
@@ -61,16 +142,6 @@ async def main() -> None:
     data_path.mkdir(exist_ok=True)
     logger.info("Data directory created/verified")
 
-    # Create global XUI service instance for client caching
-    xui_service = None
-    try:
-        from app.database import async_session_factory
-        async with async_session_factory() as session:
-            xui_service = XUIService(session)
-            logger.info("XUI service initialized")
-    except Exception as e:
-        logger.warning(f"Could not initialize XUI service: {e}")
-
     # Create bot instance
     bot = Bot(
         token=settings.bot_token,
@@ -88,15 +159,32 @@ async def main() -> None:
     router = create_router()
     dp.include_router(router)
 
-    # Start polling (без автоматической синхронизации)
-    logger.info("Starting polling...")
+    # Start tasks
+    logger.info("Starting polling, background sync and notifications...")
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        # Create async tasks
+        sync_task = asyncio.create_task(background_sync_wrapper())
+        notification_task = asyncio.create_task(background_notification_wrapper())
+        polling_task = asyncio.create_task(dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()))
+
+        # Wait for either task to complete (usually polling will run forever)
+        done, pending = await asyncio.wait(
+            [sync_task, notification_task, polling_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        # Cancel remaining tasks
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     finally:
-        # Close XUI clients
-        if xui_service:
-            logger.info("Closing XUI clients...")
-            await xui_service.close_all_clients()
+        # Stop background tasks
+        _background_sync_running = False
+        _background_notification_running = False
+        logger.info("Stopping background tasks...")
         # Close bot session
         await bot.session.close()
 
