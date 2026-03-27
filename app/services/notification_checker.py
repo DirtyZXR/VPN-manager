@@ -101,9 +101,6 @@ class NotificationChecker:
                     # Check traffic notifications
                     await self._check_traffic_notifications(user, subs_with_conns)
 
-                    # Commit after processing this user to minimize transaction time
-                    await self.session.commit()
-
                 except Exception as e:
                     logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
                     # Rollback on error to avoid leaving pending transaction
@@ -611,6 +608,9 @@ class NotificationChecker:
                 group_key,
             )
 
+            # Commit immediately to ensure duplicate prevention works
+            await self.session.commit()
+
             logger.info(
                 f"✅ Sent expiry notification to user {user.id} "
                 f"(Telegram ID: {user.telegram_id}) "
@@ -659,6 +659,9 @@ class NotificationChecker:
                 level,
                 group_key,
             )
+
+            # Commit immediately to ensure duplicate prevention works
+            await self.session.commit()
 
             logger.info(
                 f"✅ Sent traffic notification to user {user.id} "
