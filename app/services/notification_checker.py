@@ -198,6 +198,7 @@ class NotificationChecker:
                 notification_type,
                 group["subscriptions"],
                 group["level"],
+                subs_with_conns,
             )
 
     async def _check_traffic_notifications(
@@ -610,9 +611,6 @@ class NotificationChecker:
                 group_key,
             )
 
-            # Commit after logging to avoid transaction conflicts
-            await self.session.commit()
-
             logger.info(
                 f"✅ Sent expiry notification to user {user.id} "
                 f"(Telegram ID: {user.telegram_id}) "
@@ -624,11 +622,7 @@ class NotificationChecker:
                 f"❌ Failed to send expiry notification to user {user.id}: {e}",
                 exc_info=True
             )
-            # Rollback to avoid leaving pending transaction
-            try:
-                await self.session.rollback()
-            except Exception:
-                pass
+            raise
 
     async def _send_traffic_notification(
         self,
@@ -666,9 +660,6 @@ class NotificationChecker:
                 group_key,
             )
 
-            # Commit after logging to avoid transaction conflicts
-            await self.session.commit()
-
             logger.info(
                 f"✅ Sent traffic notification to user {user.id} "
                 f"(Telegram ID: {user.telegram_id}) "
@@ -680,11 +671,7 @@ class NotificationChecker:
                 f"❌ Failed to send traffic notification to user {user.id}: {e}",
                 exc_info=True
             )
-            # Rollback to avoid leaving pending transaction
-            try:
-                await self.session.rollback()
-            except Exception:
-                pass
+            raise
 
     def _build_expiry_message(
         self,
