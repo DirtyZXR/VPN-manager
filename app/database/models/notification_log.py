@@ -1,6 +1,7 @@
 """NotificationLog model for tracking sent notifications."""
 
 from datetime import datetime, timezone
+from enum import Enum
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -8,23 +9,29 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database.models.base import Base, TimestampMixin
 
 
-class NotificationType:
+class NotificationType(str, Enum):
     """Notification type constants."""
     EXPIRY_24H = "expiry_24h"
     EXPIRY_12H = "expiry_12h"
     EXPIRY_1H = "expiry_1h"
     TRAFFIC_5GB = "traffic_5gb"
 
-    ALL = [EXPIRY_24H, EXPIRY_12H, EXPIRY_1H, TRAFFIC_5GB]
+    @classmethod
+    def all(cls) -> list["NotificationType"]:
+        """Get all notification types."""
+        return list(cls)
 
 
-class NotificationLevel:
+class NotificationLevel(str, Enum):
     """Notification level constants."""
     PROFILE = "profile"
     SUBSCRIPTION = "subscription"
     USER = "user"
 
-    ALL = [PROFILE, SUBSCRIPTION, USER]
+    @classmethod
+    def all(cls) -> list["NotificationLevel"]:
+        """Get all notification levels."""
+        return list(cls)
 
 
 class NotificationLog(Base, TimestampMixin):
