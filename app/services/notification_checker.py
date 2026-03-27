@@ -546,15 +546,21 @@ class NotificationChecker:
 
         # Define expiry notification types (as strings)
         expiry_types = {
-            NotificationType.EXPIRY_24H,
-            NotificationType.EXPIRY_12H,
-            NotificationType.EXPIRY_1H,
+            NotificationType.EXPIRY_24H.value,
+            NotificationType.EXPIRY_12H.value,
+            NotificationType.EXPIRY_1H.value,
         }
 
         if notification_type in expiry_types:
-            # For expiry notifications (24h, 12h, 1h), don't use cooldown
-            # These are one-time events that should always be sent when the condition is met
-            return False
+            # For expiry notifications (24h, 12h, 1h), use significant cooldown to prevent spam
+            # These are one-time events, but we don't want to send multiple times
+            # Use 23 hours for 24h, 11 hours for 12h, 30 minutes for 1h
+            if notification_type == NotificationType.EXPIRY_24H.value:
+                cutoff = now - timedelta(hours=23)  # Allow resend every 23 hours
+            elif notification_type == NotificationType.EXPIRY_12H.value:
+                cutoff = now - timedelta(hours=11)  # Allow resend every 11 hours
+            else:  # EXPIRY_1H
+                cutoff = now - timedelta(minutes=30)  # Allow resend every 30 minutes
         else:
             # For traffic notifications, use cooldown to avoid spam
             # Traffic can change frequently, so limit to 12 hours between notifications
