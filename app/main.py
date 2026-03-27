@@ -21,6 +21,9 @@ from app.services.notification_checker import NotificationChecker
 _background_sync_running = False
 _background_notification_running = False
 
+# Global lock to prevent concurrent database access between sync and notification tasks
+_global_db_lock = asyncio.Lock()
+
 
 async def background_sync_wrapper() -> None:
     """Wrapper for background sync that creates new sessions per cycle."""
@@ -31,14 +34,16 @@ async def background_sync_wrapper() -> None:
         logger.info("Starting background sync wrapper...")
         while _background_sync_running:
             try:
-                async with async_session_factory() as session:
-                    sync_service = SyncService(session)
-                    # Run one sync cycle with force=True to sync immediately
-                    await sync_service._sync_cycle(force=True)
-                    # Commit changes to make them persistent
-                    await session.commit()
-                    # Close XUI clients to prevent resource leaks
-                    await sync_service.close_xui_clients()
+                # Use global lock to prevent concurrent database access
+                async with _global_db_lock:
+                    async with async_session_factory() as session:
+                        sync_service = SyncService(session)
+                        # Run one sync cycle with force=True to sync immediately
+                        await sync_service._sync_cycle(force=True)
+                        # Commit changes to make them persistent
+                        await session.commit()
+                        # Close XUI clients to prevent resource leaks
+                        await sync_service.close_xui_clients()
 
                 # Wait for SYNC_INTERVAL (5 minutes) between cycles
                 logger.debug("Waiting for next sync cycle...")
@@ -67,9 +72,11 @@ async def background_notification_wrapper() -> None:
         logger.info("Starting background notification wrapper...")
         while _background_notification_running:
             try:
-                async with async_session_factory() as session:
-                    notification_checker = NotificationChecker(session)
-                    await notification_checker.check_and_notify()
+                # Use global lock to prevent concurrent database access
+                async with _global_db_lock:
+                    async with async_session_factory() as session:
+                        notification_checker = NotificationChecker(session)
+                        await notification_checker.check_and_notify()
 
                 # Wait 10 minutes between checks
                 logger.debug("Waiting for next notification check...")
