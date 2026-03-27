@@ -1,5 +1,6 @@
 """User subscription management handlers."""
 
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -59,6 +60,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
 
     builder.button(text="🔗 Subscription URLs", callback_data="all_sub_urls")
     builder.button(text="📋 JSON URLs", callback_data="all_json_urls")
+    builder.button(text="📊 Сроки и остатки", callback_data="show_subscription_status")
     builder.button(text="🔙 Назад", callback_data="admin_menu")
     builder.adjust(1)
 
@@ -438,3 +440,121 @@ async def export_database(callback: CallbackQuery, client) -> None:
     except Exception as e:
         logger.error(f"Error exporting database for admin {client.id}: {e}", exc_info=True)
         await callback.answer("❌ Ошибка при экспорте базы данных.", show_alert=True)
+
+
+@router.callback_query(F.data == "show_subscription_status")
+async def show_subscription_status(callback: CallbackQuery, client) -> None:
+    """Show subscription status including expiry and traffic information."""
+    if not client:
+        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        return
+
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        service = NewSubscriptionService(session)
+        subscriptions = await service.get_client_subscriptions(client.id)
+
+    if not subscriptions:
+        await callback.answer("❌ Нет активных подписок.", show_alert=True)
+        return
+
+    text = "📊 <b>Сроки и остатки подписок</b>\n\n"
+
+    # Get XUI service for traffic data
+    from app.services import XUIService
+    xui_service = None
+    xui_clients = {}
+
+    for sub in subscriptions:
+        # Get active connections
+        active_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
+
+        if not active_connections:
+            text += f"❌ <b>{sub.name}</b>\n"
+            text += f"   Нет активных подключений\n\n"
+            continue
+
+        # Subscription-level expiry (from subscription or from connections)
+        expiry_text = "Бессрочно"
+        if sub.expiry_date:
+            expiry_text = sub.expiry_date.strftime('%d.%m.%Y %H:%M')
+            remaining_days = (sub.expiry_date - datetime.now()).days if sub.expiry_date else None
+            if remaining_days is not None:
+                if remaining_days <= 1:
+                    expiry_text += " (истекает сегодня)"
+                elif remaining_days <= 7:
+                    expiry_text += f" (осталось {remaining_days} дн.)"
+
+        text += f"📦 <b>{sub.name}</b>\n"
+        text += f"   📅 Срок: {expiry_text}\n"
+        text += f"   🔌 Подключений: {len(active_connections)}\n\n"
+
+        # Show per-connection details
+        text += "   <b>Подключения:</b>\n"
+
+        for conn in active_connections:
+            inbound = conn.inbound
+            server = inbound.server
+
+            # Connection expiry
+            conn_expiry = "Бессрочно"
+            if conn.expiry_date:
+                conn_expiry = conn.expiry_date.strftime('%d.%m.%Y %H:%M')
+                conn_remaining = (conn.expiry_date - datetime.now()).days if conn.expiry_date else None
+                if conn_remaining is not None and conn_remaining <= 7:
+                    conn_expiry += f" ({conn_remaining} дн.)"
+
+            # Connection traffic
+            if conn.is_unlimited:
+                traffic_text = "Безлимит"
+            else:
+                traffic_text = f"{conn.total_gb} ГБ"
+
+                # Get actual traffic from XUI
+                try:
+                    if xui_service is None:
+                        xui_service = XUIService(session)
+
+                    if server.id not in xui_clients:
+                        xui_clients[server.id] = await xui_service._get_client(server)
+
+                    xui_client = xui_clients[server.id]
+                    clients = await xui_client.get_clients(inbound.xui_id)
+
+                    for xui_conn in clients:
+                        if xui_conn.get("id") == conn.uuid:
+                            used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (1024**3)
+                            remaining_gb = conn.total_gb - used_gb
+
+                            if remaining_gb <= 5:
+                                traffic_text += f" (⚠️ осталось {remaining_gb:.2f} ГБ)"
+                            else:
+                                traffic_text += f" (осталось {remaining_gb:.2f} ГБ)"
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
+                    traffic_text += " (ошибка получения данных)"
+
+            text += f"      • {inbound.remark} ({server.name})\n"
+            text += f"        📅 Срок: {conn_expiry}\n"
+            text += f"        📊 Трафик: {traffic_text}\n"
+
+        text += "\n"
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 Назад к подпискам", callback_data="my_subscriptions")
+    builder.adjust(1)
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+    # Close XUI clients
+    for client in xui_clients.values():
+        try:
+            await client.close()
+        except Exception as e:
+            logger.warning(f"Error closing XUI client: {e}")
+

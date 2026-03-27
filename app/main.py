@@ -13,11 +13,12 @@ from app.config import get_settings
 from app.database import init_db, async_session_factory
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
-from app.services import SyncService
+from app.services import SyncService, NotificationChecker
 
 
-# Flag to control background sync
+# Flags to control background tasks
 _background_sync_running = False
+_background_notification_running = False
 
 
 async def background_sync_wrapper() -> None:
@@ -48,6 +49,36 @@ async def background_sync_wrapper() -> None:
     finally:
         _background_sync_running = False
         logger.info("Background sync wrapper stopped")
+
+
+async def background_notification_wrapper() -> None:
+    """Wrapper for background notifications that creates new sessions per cycle."""
+    global _background_notification_running
+    _background_notification_running = True
+
+    try:
+        logger.info("Starting background notification wrapper...")
+        while _background_notification_running:
+            try:
+                async with async_session_factory() as session:
+                    notification_checker = NotificationChecker(session)
+                    await notification_checker.check_and_notify()
+                    await notification_checker.close()
+
+                # Wait 10 minutes between checks
+                logger.debug("Waiting for next notification check...")
+                await asyncio.sleep(600)  # 10 minutes = 600 seconds
+            except Exception as e:
+                logger.error(f"Error in background notification cycle: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait 1 minute on error
+
+    except asyncio.CancelledError:
+        logger.info("Background notifications cancelled")
+    except Exception as e:
+        logger.error(f"Fatal error in background notification wrapper: {e}", exc_info=True)
+    finally:
+        _background_notification_running = False
+        logger.info("Background notification wrapper stopped")
 
 
 def setup_logging() -> None:
@@ -113,15 +144,16 @@ async def main() -> None:
     dp.include_router(router)
 
     # Start tasks
-    logger.info("Starting polling and background sync...")
+    logger.info("Starting polling, background sync and notifications...")
     try:
         # Create async tasks
         sync_task = asyncio.create_task(background_sync_wrapper())
+        notification_task = asyncio.create_task(background_notification_wrapper())
         polling_task = asyncio.create_task(dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()))
 
         # Wait for either task to complete (usually polling will run forever)
         done, pending = await asyncio.wait(
-            [sync_task, polling_task],
+            [sync_task, notification_task, polling_task],
             return_when=asyncio.FIRST_COMPLETED
         )
 
@@ -133,9 +165,10 @@ async def main() -> None:
             except asyncio.CancelledError:
                 pass
     finally:
-        # Stop background sync
+        # Stop background tasks
         _background_sync_running = False
-        logger.info("Stopping background sync...")
+        _background_notification_running = False
+        logger.info("Stopping background tasks...")
         # Close bot session
         await bot.session.close()
 

@@ -350,3 +350,90 @@ class NotificationService:
                 exc_info=True
             )
             return False
+
+    async def notify_expiry_warning(
+        self,
+        client: Client,
+        notification_type: str,
+        message: str,
+    ) -> bool:
+        """Send expiry warning notification.
+
+        Args:
+            client: Client to notify
+            notification_type: Type of expiry warning (24h, 12h, 1h)
+            message: Formatted message
+
+        Returns:
+            True if notification sent, False if not (no telegram_id)
+        """
+        if not client.telegram_id:
+            return False
+
+        try:
+            bot = await self._get_bot()
+
+            await bot.send_message(
+                chat_id=client.telegram_id,
+                text=message,
+                parse_mode="HTML",
+            )
+
+            logger.info(
+                f"✅ Expiry warning sent to client {client.name} "
+                f"(Telegram ID: {client.telegram_id}) "
+                f"type: {notification_type}"
+            )
+
+            await bot.session.close()
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"❌ Failed to send expiry warning to client {client.name} "
+                f"(Telegram ID: {client.telegram_id}): {e}",
+                exc_info=True
+            )
+            return False
+
+    async def notify_traffic_warning(
+        self,
+        client: Client,
+        message: str,
+    ) -> bool:
+        """Send traffic warning notification.
+
+        Args:
+            client: Client to notify
+            message: Formatted message
+
+        Returns:
+            True if notification sent, False if not (no telegram_id)
+        """
+        if not client.telegram_id:
+            return False
+
+        try:
+            bot = await self._get_bot()
+
+            await bot.send_message(
+                chat_id=client.telegram_id,
+                text=message,
+                parse_mode="HTML",
+            )
+
+            logger.info(
+                f"✅ Traffic warning sent to client {client.name} "
+                f"(Telegram ID: {client.telegram_id})"
+            )
+
+            await bot.session.close()
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"❌ Failed to send traffic warning to client {client.name} "
+                f"(Telegram ID: {client.telegram_id}): {e}",
+                exc_info=True
+            )
+            return False
