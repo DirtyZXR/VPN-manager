@@ -67,11 +67,17 @@ class SyncService:
         logger.info("[STOP] Остановка фоновой синхронизации")
 
     async def close_xui_clients(self) -> None:
-        """Закрыть все XUI клиенты для предотвращения утечек ресурсов."""
+        """Закрыть все XUI клиенты для предотвращения утечек ресурсов.
+
+        Note: This method creates a new XUIService instance to trigger cleanup,
+        which will close any clients in that instance's cache. For proper cleanup,
+        the XUIService TTL mechanism handles automatic cleanup of idle clients.
+        """
         from app.services import XUIService
-        xui_service = XUIService(self.session)
-        await xui_service.close_all_clients()
-        logger.debug("XUI clients closed")
+        temp_service = XUIService(self.session)
+        # Trigger cleanup of any idle clients (if any exist)
+        await temp_service._cleanup_old_clients()
+        logger.debug("XUI clients cleanup completed")
 
     async def _sync_cycle(self, force: bool = False) -> dict:
         """Один цикл синхронизации.

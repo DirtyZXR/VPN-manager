@@ -18,6 +18,9 @@ from app.xui_client import XUIClient, XUIError
 class XUIService:
     """Service for managing 3x-ui panel connections."""
 
+    # Time-to-live for cached XUI clients (auto-close after inactivity)
+    CLIENT_TTL = timedelta(minutes=30)
+
     def __init__(self, session: AsyncSession) -> None:
         """Initialize service with database session.
 
@@ -29,6 +32,7 @@ class XUIService:
         self._cipher = Fernet(settings.encryption_key.encode())
         self._timeout = settings.xui_timeout
         self._clients: dict[int, XUIClient] = {}
+        self._client_last_used: dict[int, datetime] = {}
 
     def _encrypt_password(self, password: str) -> str:
         """Encrypt password for storage.
@@ -61,7 +65,12 @@ class XUIService:
         Returns:
             XUI client instance
         """
+        # Cleanup old clients periodically to prevent resource leaks
+        await self._cleanup_old_clients()
+
         if server.id in self._clients:
+            # Update last used time
+            self._client_last_used[server.id] = datetime.now(timezone.utc)
             return self._clients[server.id]
 
         password = self._decrypt_password(server.password_encrypted)
@@ -95,7 +104,9 @@ class XUIService:
         # Save cookies after successful connection
         self._save_session_cookies(server, client)
 
+        # Save client and track last used time
         self._clients[server.id] = client
+        self._client_last_used[server.id] = datetime.now(timezone.utc)
         return client
 
     def _save_session_cookies(self, server: Server, client: XUIClient) -> None:
@@ -131,6 +142,23 @@ class XUIService:
                 logger.warning(f"Error closing XUI client for server {server_id}: {e}")
             finally:
                 self._clients.pop(server_id, None)
+                self._client_last_used.pop(server_id, None)
+
+    async def _cleanup_old_clients(self) -> None:
+        """Close clients that haven't been used for longer than CLIENT_TTL.
+
+        This prevents resource leaks while maintaining performance by keeping
+        frequently used clients cached.
+        """
+        now = datetime.now(timezone.utc)
+        to_close = [
+            server_id for server_id, last_used in self._client_last_used.items()
+            if now - last_used > self.CLIENT_TTL
+        ]
+
+        for server_id in to_close:
+            logger.info(f"Closing idle XUI client for server {server_id} (TTL expired)")
+            await self.close_client(server_id)
 
     async def close_all_clients(self) -> None:
         """Close all XUI clients properly."""
@@ -139,6 +167,8 @@ class XUIService:
                 await self.close_client(server_id)
             except Exception as e:
                 logger.warning(f"Error closing client for server {server_id}: {e}")
+        # Clear all tracking data
+        self._client_last_used.clear()
 
     # Server management
 

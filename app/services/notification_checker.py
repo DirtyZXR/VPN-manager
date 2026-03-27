@@ -52,6 +52,8 @@ class NotificationChecker:
         self.session = session
         self._notification_service = NotificationService(session)
         self._xui_clients: dict[int, "XUIClient"] = {}
+        self._xui_client_last_used: dict[int, datetime] = {}
+        self._xui_client_ttl = timedelta(minutes=30)  # Same as XUIService.CLIENT_TTL
 
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
@@ -445,11 +447,18 @@ class NotificationChecker:
         server = inbound.server
 
         try:
+            # Cleanup old clients periodically
+            await self._cleanup_xui_clients()
+
             # Get or create XUI client using the cache
             if server.id not in self._xui_clients:
                 from app.services.xui_service import XUIService
                 xui_service = XUIService(self.session)
                 self._xui_clients[server.id] = await xui_service._get_client(server)
+                self._xui_client_last_used[server.id] = datetime.now(timezone.utc)
+            else:
+                # Update last used time
+                self._xui_client_last_used[server.id] = datetime.now(timezone.utc)
 
             client = self._xui_clients[server.id]
 
@@ -873,3 +882,26 @@ class NotificationChecker:
             except Exception as e:
                 logger.error(f"Error closing XUI client: {e}", exc_info=True)
         self._xui_clients.clear()
+        self._xui_client_last_used.clear()
+
+    async def _cleanup_xui_clients(self) -> None:
+        """Close XUI clients that haven't been used for longer than TTL.
+
+        This prevents resource leaks in the notification checker while maintaining
+        performance by keeping frequently used clients cached.
+        """
+        now = datetime.now(timezone.utc)
+        to_close = [
+            server_id for server_id, last_used in self._xui_client_last_used.items()
+            if now - last_used > self._xui_client_ttl
+        ]
+
+        for server_id in to_close:
+            logger.info(f"Closing idle XUI client for server {server_id} in notification checker (TTL expired)")
+            try:
+                if server_id in self._xui_clients:
+                    await self._xui_clients[server_id].close()
+                    self._xui_clients.pop(server_id, None)
+                    self._xui_client_last_used.pop(server_id, None)
+            except Exception as e:
+                logger.warning(f"Error closing XUI client for server {server_id} in notification checker: {e}")
