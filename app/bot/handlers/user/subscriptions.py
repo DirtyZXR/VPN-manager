@@ -1,6 +1,6 @@
 """User subscription management handlers."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -24,6 +24,9 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         return
 
     async with async_session_factory() as session:
+        from sqlalchemy.orm import selectinload
+        from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscriptions = await service.get_client_subscriptions(client.id)
 
@@ -43,7 +46,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
     builder = InlineKeyboardBuilder()
 
     for sub in subscriptions:
-        # Problem 1: Check if subscription has any active connections
+        # Check if subscription has any active connections (data is already eager loaded)
         active_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
         has_active = len(active_connections) > 0
 
@@ -299,7 +302,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         await callback.answer("❌ Подписка не найдена.", show_alert=True)
         return
 
-    # Problem 1: Check if subscription has any active connections
+    # Check if subscription has any active connections (data is already eager loaded)
     active_connections = [conn for conn in subscription.inbound_connections if conn.is_enabled]
     has_active = len(active_connections) > 0
     status = "✅ Активна" if (subscription.is_active and has_active) else "❌ Неактивна"
@@ -312,7 +315,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         f"Токен: <code>{subscription.subscription_token}</code>\n\n"
     )
 
-    # Problem 3: Group URLs by server to avoid duplicates
+    # Group URLs by server to avoid duplicates
     server_urls = defaultdict(list)
     for conn in active_connections:
         server = conn.inbound.server
@@ -330,7 +333,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
             # Show URL once per group
             text += f"  • URL: {url}\n"
 
-            # Problem 2: Show per-inbound traffic and expiry
+            # Show per-inbound traffic and expiry
             for i, conn_data in enumerate(conn_list):
                 conn = conn_data['connection']
                 inbound = conn_data['inbound']
@@ -451,8 +454,6 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
-        from sqlalchemy import select
-        from sqlalchemy.orm import selectinload
 
         service = NewSubscriptionService(session)
         subscriptions = await service.get_client_subscriptions(client.id)
@@ -469,7 +470,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
     xui_clients = {}
 
     for sub in subscriptions:
-        # Get active connections
+        # Get active connections (data is already eager loaded)
         active_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
 
         if not active_connections:
@@ -481,7 +482,14 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
         expiry_text = "Бессрочно"
         if sub.expiry_date:
             expiry_text = sub.expiry_date.strftime('%d.%m.%Y %H:%M')
-            remaining_days = (sub.expiry_date - datetime.now()).days if sub.expiry_date else None
+
+            # Handle timezone-aware vs naive datetimes
+            sub_expiry = sub.expiry_date
+            now = datetime.now(timezone.utc)
+            if sub_expiry.tzinfo is None:
+                sub_expiry = sub_expiry.replace(tzinfo=timezone.utc)
+
+            remaining_days = (sub_expiry - now).days if sub.expiry_date else None
             if remaining_days is not None:
                 if remaining_days <= 1:
                     expiry_text += " (истекает сегодня)"
@@ -503,7 +511,14 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             conn_expiry = "Бессрочно"
             if conn.expiry_date:
                 conn_expiry = conn.expiry_date.strftime('%d.%m.%Y %H:%M')
-                conn_remaining = (conn.expiry_date - datetime.now()).days if conn.expiry_date else None
+
+                # Handle timezone-aware vs naive datetimes
+                conn_expiry_date = conn.expiry_date
+                now = datetime.now(timezone.utc)
+                if conn_expiry_date.tzinfo is None:
+                    conn_expiry_date = conn_expiry_date.replace(tzinfo=timezone.utc)
+
+                conn_remaining = (conn_expiry_date - now).days if conn.expiry_date else None
                 if conn_remaining is not None and conn_remaining <= 7:
                     conn_expiry += f" ({conn_remaining} дн.)"
 
@@ -515,25 +530,24 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
                 # Get actual traffic from XUI
                 try:
-                    if xui_service is None:
-                        xui_service = XUIService(session)
+                    async with async_session_factory() as traffic_session:
+                        xui_service = XUIService(traffic_session)
+                        if server.id not in xui_clients:
+                            xui_clients[server.id] = await xui_service._get_client(server)
 
-                    if server.id not in xui_clients:
-                        xui_clients[server.id] = await xui_service._get_client(server)
+                        xui_client = xui_clients[server.id]
+                        clients = await xui_client.get_clients(inbound.xui_id)
 
-                    xui_client = xui_clients[server.id]
-                    clients = await xui_client.get_clients(inbound.xui_id)
+                        for xui_conn in clients:
+                            if xui_conn.get("id") == conn.uuid:
+                                used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (1024**3)
+                                remaining_gb = conn.total_gb - used_gb
 
-                    for xui_conn in clients:
-                        if xui_conn.get("id") == conn.uuid:
-                            used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (1024**3)
-                            remaining_gb = conn.total_gb - used_gb
-
-                            if remaining_gb <= 5:
-                                traffic_text += f" (⚠️ осталось {remaining_gb:.2f} ГБ)"
-                            else:
-                                traffic_text += f" (осталось {remaining_gb:.2f} ГБ)"
-                            break
+                                if remaining_gb <= 5:
+                                    traffic_text += f" (⚠️ осталось {remaining_gb:.2f} ГБ)"
+                                else:
+                                    traffic_text += f" (осталось {remaining_gb:.2f} ГБ)"
+                                break
                 except Exception as e:
                     logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
                     traffic_text += " (ошибка получения данных)"
@@ -552,9 +566,9 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
     await callback.answer()
 
     # Close XUI clients
-    for client in xui_clients.values():
+    for client_obj in xui_clients.values():
         try:
-            await client.close()
+            await client_obj.close()
         except Exception as e:
             logger.warning(f"Error closing XUI client: {e}")
 

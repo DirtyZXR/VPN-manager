@@ -13,7 +13,8 @@ from app.config import get_settings
 from app.database import init_db, async_session_factory
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
-from app.services import SyncService, NotificationChecker
+from app.services import SyncService
+from app.services.notification_checker import NotificationChecker
 
 
 # Flags to control background tasks
@@ -32,8 +33,12 @@ async def background_sync_wrapper() -> None:
             try:
                 async with async_session_factory() as session:
                     sync_service = SyncService(session)
-                    # Run one sync cycle
-                    await sync_service._sync_cycle(force=False)
+                    # Run one sync cycle with force=True to sync immediately
+                    await sync_service._sync_cycle(force=True)
+                    # Commit changes to make them persistent
+                    await session.commit()
+                    # Close XUI clients to prevent resource leaks
+                    await sync_service.close_xui_clients()
 
                 # Wait for SYNC_INTERVAL (5 minutes) between cycles
                 logger.debug("Waiting for next sync cycle...")
@@ -56,6 +61,8 @@ async def background_notification_wrapper() -> None:
     global _background_notification_running
     _background_notification_running = True
 
+    notification_checker = None
+
     try:
         logger.info("Starting background notification wrapper...")
         while _background_notification_running:
@@ -63,7 +70,6 @@ async def background_notification_wrapper() -> None:
                 async with async_session_factory() as session:
                     notification_checker = NotificationChecker(session)
                     await notification_checker.check_and_notify()
-                    await notification_checker.close()
 
                 # Wait 10 minutes between checks
                 logger.debug("Waiting for next notification check...")
@@ -78,6 +84,9 @@ async def background_notification_wrapper() -> None:
         logger.error(f"Fatal error in background notification wrapper: {e}", exc_info=True)
     finally:
         _background_notification_running = False
+        # Close XUI clients only at the end
+        if notification_checker:
+            await notification_checker.close()
         logger.info("Background notification wrapper stopped")
 
 

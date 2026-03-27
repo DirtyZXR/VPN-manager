@@ -66,6 +66,13 @@ class SyncService:
         self._is_running = False
         logger.info("[STOP] Остановка фоновой синхронизации")
 
+    async def close_xui_clients(self) -> None:
+        """Закрыть все XUI клиенты для предотвращения утечек ресурсов."""
+        from app.services import XUIService
+        xui_service = XUIService(self.session)
+        await xui_service.close_all_clients()
+        logger.debug("XUI clients closed")
+
     async def _sync_cycle(self, force: bool = False) -> dict:
         """Один цикл синхронизации.
 
