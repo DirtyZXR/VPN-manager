@@ -49,17 +49,8 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         # Use new subscription status property
         status = sub.subscription_status
 
-        # Collect server names for this subscription
-        server_names = []
-        for conn in sub.inbound_connections:
-            if conn.is_enabled and hasattr(conn, 'inbound') and conn.inbound and hasattr(conn.inbound, 'server') and conn.inbound.server:
-                server_names.append(conn.inbound.server.name)
-
-        # Build text with server names on the right
-        server_info = f" | {', '.join(server_names)}" if server_names else ""
-
         text += (
-            f"{status} <b>{sub.name}</b>{server_info}\n"
+            f"{status} <b>{sub.name}</b>\n"
             f"   Активных подключений: {sub.active_connections_count}/{len(sub.inbound_connections)}\n\n"
         )
 
@@ -365,9 +356,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 if i > 0:
                     text += "\n"
 
-                # Add connection status indicator
+                # Add connection status indicator with server name
                 conn_status = "✅" if conn.is_connection_active else "❌"
-                text += f"    └ {conn_status} {inbound.remark} ({inbound.protocol})\n"
+                server_name = conn_data.get('server_name', 'Unknown')
+                text += f"    └ {conn_status} {inbound.remark} ({inbound.protocol}) | {server_name}\n"
                 text += f"      Трафик: {traffic}\n"
                 text += f"      Срок: {expiry_info}\n"
 
