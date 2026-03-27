@@ -74,3 +74,16 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
             return None
         delta = self.expiry_date - datetime.now()
         return max(0, delta.days)
+
+    @property
+    def is_connection_active(self) -> bool:
+        """Check if connection is active (enabled and not expired)."""
+        return self.is_enabled and not self.is_expired
+
+    @property
+    def remaining_days_with_sign(self) -> int | None:
+        """Calculate remaining days until expiry (can be negative)."""
+        if self.expiry_date is None:
+            return None
+        delta = self.expiry_date - datetime.now()
+        return delta.days

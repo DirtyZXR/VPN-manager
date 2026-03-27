@@ -65,3 +65,31 @@ class Subscription(Base, TimestampMixin):
             return None
         delta = self.expiry_date - datetime.now(timezone.utc)
         return max(0, delta.days)
+
+    @property
+    def active_connections_count(self) -> int:
+        """Count active connections (enabled and not expired)."""
+        return sum(1 for conn in self.inbound_connections if conn.is_connection_active)
+
+    @property
+    def expired_connections_count(self) -> int:
+        """Count expired connections."""
+        return sum(1 for conn in self.inbound_connections if conn.is_expired)
+
+    @property
+    def subscription_status(self) -> str:
+        """Get subscription status based on connections."""
+        if not self.is_active:
+            return "❌ Неактивна"
+
+        active_count = self.active_connections_count
+        total_count = len(self.inbound_connections)
+
+        if total_count == 0:
+            return "❌ Нет подключений"
+        elif active_count == total_count:
+            return "✅ Активна"
+        elif active_count > 0:
+            return "⚠️ Частично"
+        else:
+            return "❌ Истекла"
