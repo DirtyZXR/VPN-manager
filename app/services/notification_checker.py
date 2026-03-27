@@ -43,17 +43,29 @@ class NotificationChecker:
     TIME_TOLERANCE_MINUTES = 30
     TRAFFIC_TOLERANCE_GB = 5
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, xui_service: "XUIService | None" = None) -> None:
         """Initialize checker with database session.
 
         Args:
             session: Async database session
+            xui_service: Optional XUI service for dependency injection
         """
         self.session = session
         self._notification_service = NotificationService(session)
-        self._xui_clients: dict[int, "XUIClient"] = {}
-        self._xui_client_last_used: dict[int, datetime] = {}
-        self._xui_client_ttl = timedelta(minutes=30)  # Same as XUIService.CLIENT_TTL
+
+        if xui_service is not None:
+            # Use injected XUI service - no local cache needed
+            self._xui_service = xui_service
+            self._xui_clients: dict[int, "XUIClient"] | None = None
+            self._xui_client_last_used: dict[int, datetime] | None = None
+            self._xui_client_ttl: timedelta | None = None
+        else:
+            # Create local XUI service with TTL management
+            from app.services.xui_service import XUIService
+            self._xui_service = XUIService(session)
+            self._xui_clients: dict[int, "XUIClient"] = {}
+            self._xui_client_last_used: dict[int, datetime] = {}
+            self._xui_client_ttl = timedelta(minutes=30)  # Same as XUIService.CLIENT_TTL
 
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
@@ -447,23 +459,15 @@ class NotificationChecker:
         server = inbound.server
 
         try:
-            # Cleanup old clients periodically
-            await self._cleanup_xui_clients()
+            # Cleanup old clients periodically (only if using local cache)
+            if self._xui_clients is not None:
+                await self._cleanup_xui_clients()
 
-            # Get or create XUI client using the cache
-            if server.id not in self._xui_clients:
-                from app.services.xui_service import XUIService
-                xui_service = XUIService(self.session)
-                self._xui_clients[server.id] = await xui_service._get_client(server)
-                self._xui_client_last_used[server.id] = datetime.now(timezone.utc)
-            else:
-                # Update last used time
-                self._xui_client_last_used[server.id] = datetime.now(timezone.utc)
-
-            client = self._xui_clients[server.id]
+            # Get XUI client using the injected service
+            xui_client = await self._xui_service._get_client(server)
 
             # Get client stats from XUI
-            clients = await client.get_clients(inbound.xui_id)
+            clients = await xui_client.get_clients(inbound.xui_id)
             for xui_client in clients:
                 if xui_client.get("id") == conn.uuid:
                     used_gb = (xui_client.get("up", 0) + xui_client.get("down", 0)) / (1024**3)
@@ -876,32 +880,40 @@ class NotificationChecker:
 
     async def close(self) -> None:
         """Close all XUI clients."""
-        for client in self._xui_clients.values():
-            try:
-                await client.close()
-            except Exception as e:
-                logger.error(f"Error closing XUI client: {e}", exc_info=True)
-        self._xui_clients.clear()
-        self._xui_client_last_used.clear()
+        # Only close local clients if we're managing our own cache
+        if self._xui_clients is not None:
+            for client in self._xui_clients.values():
+                try:
+                    await client.close()
+                except Exception as e:
+                    logger.error(f"Error closing XUI client: {e}", exc_info=True)
+            self._xui_clients.clear()
+            self._xui_client_last_used.clear()
 
     async def _cleanup_xui_clients(self) -> None:
         """Close XUI clients that haven't been used for longer than TTL.
 
         This prevents resource leaks in the notification checker while maintaining
         performance by keeping frequently used clients cached.
+
+        Only operates when using local cache (not injected XUIService).
         """
+        # Only cleanup if we're managing our own local cache
+        if self._xui_clients is None:
+            return
+
         now = datetime.now(timezone.utc)
         to_close = [
             server_id for server_id, last_used in self._xui_client_last_used.items()
-            if now - last_used > self._xui_client_ttl
+            if now - last_used > self._xui_client_ttl  # type: ignore
         ]
 
         for server_id in to_close:
             logger.info(f"Closing idle XUI client for server {server_id} in notification checker (TTL expired)")
             try:
-                if server_id in self._xui_clients:
-                    await self._xui_clients[server_id].close()
-                    self._xui_clients.pop(server_id, None)
-                    self._xui_client_last_used.pop(server_id, None)
+                if server_id in self._xui_clients:  # type: ignore
+                    await self._xui_clients[server_id].close()  # type: ignore
+                    self._xui_clients.pop(server_id, None)  # type: ignore
+                    self._xui_client_last_used.pop(server_id, None)  # type: ignore
             except Exception as e:
                 logger.warning(f"Error closing XUI client for server {server_id} in notification checker: {e}")

@@ -1,5 +1,6 @@
 """XUI service for managing 3x-ui panel connections."""
 
+import asyncio
 import json
 from datetime import datetime, timezone, timedelta
 from typing import Sequence
@@ -33,6 +34,7 @@ class XUIService:
         self._timeout = settings.xui_timeout
         self._clients: dict[int, XUIClient] = {}
         self._client_last_used: dict[int, datetime] = {}
+        self._cleanup_lock = asyncio.Lock()  # Lock to prevent race conditions in cleanup
 
     def _encrypt_password(self, password: str) -> str:
         """Encrypt password for storage.
@@ -150,15 +152,17 @@ class XUIService:
         This prevents resource leaks while maintaining performance by keeping
         frequently used clients cached.
         """
-        now = datetime.now(timezone.utc)
-        to_close = [
-            server_id for server_id, last_used in self._client_last_used.items()
-            if now - last_used > self.CLIENT_TTL
-        ]
+        # Use lock to prevent race conditions
+        async with self._cleanup_lock:
+            now = datetime.now(timezone.utc)
+            to_close = [
+                server_id for server_id, last_used in self._client_last_used.items()
+                if now - last_used > self.CLIENT_TTL
+            ]
 
-        for server_id in to_close:
-            logger.info(f"Closing idle XUI client for server {server_id} (TTL expired)")
-            await self.close_client(server_id)
+            for server_id in to_close:
+                logger.info(f"Closing idle XUI client for server {server_id} (TTL expired)")
+                await self.close_client(server_id)
 
     async def close_all_clients(self) -> None:
         """Close all XUI clients properly."""
