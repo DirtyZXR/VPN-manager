@@ -51,6 +51,9 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
         return
 
     try:
+        # Сначала отправляем ответ на callback, чтобы не истекло время
+        await callback.answer("⏳ Синхронизация запущена...")
+
         await callback.message.edit_text(
             "🔄 Синхронизация серверов...\n"
             "⏳ Пожалуйста, подождите.",
@@ -70,15 +73,17 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
             f"✅ Серверы, inbounds и клиенты синхронизированы",
             reply_markup=get_back_keyboard("admin_sync"),
         )
-        await callback.answer("✅ Сервера синхронизированы")
+        # Не отправляем callback.answer снова - уже отправили в начале
 
     except Exception as e:
         logger.error(f"Ошибка синхронизации серверов: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при синхронизации: {e}",
-            reply_markup=get_back_keyboard("admin_sync"),
-        )
-        await callback.answer("❌ Ошибка при синхронизации", show_alert=True)
+        try:
+            await callback.message.edit_text(
+                f"❌ Ошибка при синхронизации: {e}",
+                reply_markup=get_back_keyboard("admin_sync"),
+            )
+        except Exception:
+            pass  # Если сообщение уже истекло, игнорируем ошибку
 
 
 @router.callback_query(F.data == "sync_integrity")
@@ -89,6 +94,9 @@ async def check_integrity(callback: CallbackQuery, is_admin: bool) -> None:
         return
 
     try:
+        # Сначала отправляем ответ на callback
+        await callback.answer("⏳ Проверка целостности запущена...")
+
         await callback.message.edit_text(
             "🔍 Проверка целостности данных...\n"
             "⏳ Пожалуйста, подождите.",
@@ -108,12 +116,14 @@ async def check_integrity(callback: CallbackQuery, is_admin: bool) -> None:
             f"💡 При необходимости запустите полную синхронизацию.",
             reply_markup=get_back_keyboard("admin_sync"),
         )
-        await callback.answer("✅ Проверка целостности завершена")
+        # Не отправляем callback.answer снова - уже отправили в начале
 
     except Exception as e:
         logger.error(f"Ошибка проверки целостности: {e}", exc_info=True)
-        await callback.message.edit_text(
-            f"❌ Ошибка при проверке: {e}",
-            reply_markup=get_back_keyboard("admin_sync"),
-        )
-        await callback.answer("❌ Ошибка при проверке", show_alert=True)
+        try:
+            await callback.message.edit_text(
+                f"❌ Ошибка при проверке: {e}",
+                reply_markup=get_back_keyboard("admin_sync"),
+            )
+        except Exception:
+            pass  # Если сообщение уже истекло, игнорируем ошибку
