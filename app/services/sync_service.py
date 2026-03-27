@@ -46,7 +46,10 @@ class SyncService:
 
         while self._is_running:
             try:
-                await self._sync_cycle()
+                await self._sync_cycle(force=False)
+                # Wait for SYNC_INTERVAL (5 minutes) between cycles
+                logger.debug("Waiting for next sync cycle...")
+                await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             except Exception as e:
                 logger.error(f"[ERROR] Ошибка цикла синхронизации: {e}", exc_info=True)
                 await asyncio.sleep(60)  # 1 минута при ошибке
@@ -58,11 +61,10 @@ class SyncService:
         self._is_running = False
         logger.info("[STOP] Остановка фоновой синхронизации")
 
-    async def _sync_cycle(self, skip_sleep: bool = False, force: bool = False) -> dict:
+    async def _sync_cycle(self, force: bool = False) -> dict:
         """Один цикл синхронизации.
 
         Args:
-            skip_sleep: Пропустить ожидание после завершения (для ручной синхронизации)
             force: Принудительная синхронизация (для ручной синхронизации)
 
         Returns:
@@ -102,10 +104,6 @@ class SyncService:
             except Exception as e:
                 logger.error(f"[ERROR] Ошибка в цикле синхронизации: {e}", exc_info=True)
                 return {"servers": 0, "error": str(e)}
-
-        # Подождать до следующей итерации (за пределами блокировки)
-        if not skip_sleep:
-            await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
 
     # === SERVER SYNC ===
 
@@ -639,9 +637,9 @@ class SyncService:
             logger.info(f"[LOG] Блокировка получена, начало обработки entity_type={entity_type}")
             try:
                 if entity_type == "all":
-                    # Полная синхронизация (без ожидания после завершения)
-                    logger.info("[LOG] Запуск _sync_cycle с skip_sleep=True, force=True")
-                    sync_result = await self._sync_cycle(skip_sleep=True, force=True)
+                    # Полная синхронизация
+                    logger.info("[LOG] Запуск _sync_cycle с force=True")
+                    sync_result = await self._sync_cycle(force=True)
                     results["synced"] = sync_result.get("servers", 0)
                     logger.info(f"[LOG] _sync_cycle завершен, sync_result={sync_result}")
 

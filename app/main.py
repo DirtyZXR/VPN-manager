@@ -14,7 +14,6 @@ from app.database import init_db, async_session_factory
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
 from app.services import SyncService
-from app.services.xui_service import XUIService
 
 
 # Flag to control background sync
@@ -29,23 +28,18 @@ async def background_sync_wrapper() -> None:
     try:
         logger.info("Starting background sync wrapper...")
         while _background_sync_running:
-            xui_service = None
             try:
                 async with async_session_factory() as session:
                     sync_service = SyncService(session)
-                    xui_service = XUIService(session)  # Create XUI service for cleanup
-                    # Run one sync cycle with sleep=True (wait for SYNC_INTERVAL after completion)
-                    await sync_service._sync_cycle(skip_sleep=False, force=False)
+                    # Run one sync cycle
+                    await sync_service._sync_cycle(force=False)
+
+                # Wait for SYNC_INTERVAL (5 minutes) between cycles
+                logger.debug("Waiting for next sync cycle...")
+                await asyncio.sleep(300)  # 5 minutes = 300 seconds
             except Exception as e:
                 logger.error(f"Error in background sync cycle: {e}", exc_info=True)
                 await asyncio.sleep(60)  # Wait 1 minute on error
-            finally:
-                # Close XUI clients after each cycle
-                if xui_service:
-                    try:
-                        await xui_service.close_all_clients()
-                    except Exception as e:
-                        logger.warning(f"Error closing XUI clients: {e}")
 
     except asyncio.CancelledError:
         logger.info("Background sync cancelled")
