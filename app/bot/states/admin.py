@@ -109,17 +109,16 @@ class TemplateManagement(StatesGroup):
     editing_template_menu = State()  # For showing edit menu
 
     # Template inbound management states
+    waiting_for_server_selection = State()  # For selecting server in edit mode
     waiting_for_inbound_selection = State()
+    inbounds_multi_select_mode = State()  # Multi-selection mode for template inbounds
+    inbounds_multi_confirm_action = State()  # Confirm multi-selection action for templates
     confirm_remove_inbound = State()
 
     # Template subscription creation states
     waiting_for_client_selection = State()
     waiting_for_template_selection = State()  # For creating subscription from template for specific client
     waiting_for_subscription_name = State()
-    waiting_for_custom_traffic = State()
-    waiting_for_custom_expiry = State()
-    waiting_for_custom_notes = State()
-    confirm_template_creation = State()
     waiting_for_search_query = State()  # For client search
 
     # Template deletion

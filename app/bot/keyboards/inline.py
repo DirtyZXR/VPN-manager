@@ -58,6 +58,35 @@ def get_servers_keyboard(servers: list, action: str = "select") -> InlineKeyboar
     return builder.as_markup()
 
 
+def get_servers_keyboard_for_template_edit(
+    servers: list,
+    template_id: int,
+    action: str = "template_edit_server"
+) -> InlineKeyboardMarkup:
+    """Get servers keyboard for template editing.
+
+    Args:
+        servers: List of Server objects
+        template_id: Template ID
+        action: Action prefix for callback data
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    for server in servers:
+        status = "Активен" if server.is_active else "Неактивен"
+        builder.button(
+            text=f"{status} {server.name}",
+            callback_data=f"server_{action}_{server.id}",
+        )
+
+    builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def get_users_keyboard(users: list) -> InlineKeyboardMarkup:
     """Get users list keyboard.
 
@@ -247,11 +276,11 @@ def get_template_actions_keyboard(template_id: int) -> InlineKeyboardMarkup:
         template_id: Template ID
 
     Returns:
-        Inline keyboard markup with 4 buttons: Edit, Add Inbound, Delete, Back
+        Inline keyboard markup with 4 buttons: Edit, Edit Inbounds, Delete, Back
     """
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Изменить", callback_data=f"template_edit_menu_{template_id}")
-    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
+    builder.button(text="✏️ Редактировать подключения", callback_data=f"template_manage_inbounds_{template_id}")
     builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
     builder.button(text="🔙 Назад", callback_data="admin_templates")
     builder.adjust(2)
@@ -298,16 +327,54 @@ def get_template_inbounds_keyboard(
         for ti in template_inbounds:
             status = "✅" if ti.inbound.is_active else "❌"
             builder.button(
-                text=f"❌ {status} {ti.inbound.remark} ({ti.inbound.server.name})",
+                text=f"{status} {ti.inbound.remark} ({ti.inbound.server.name})",
                 callback_data=f"template_inbound_remove_{template_id}_{ti.inbound_id}",
             )
     else:
         builder.button(text="Нет подключений", callback_data="template_no_inbounds")
 
-    # Add inbound button
-    builder.button(text="➕ Добавить подключение", callback_data=f"template_add_inbound_{template_id}")
+    # Action buttons
+    builder.button(text="✏️ Редактировать подключения", callback_data=f"template_edit_inbounds_{template_id}")
     builder.button(text="Назад", callback_data=f"template_select_{template_id}")
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_template_edit_inbounds_keyboard(
+    template_id: int,
+    all_inbounds: list,
+    template_inbound_ids: set,
+    selected_ids: set,
+    server_name: str
+) -> InlineKeyboardMarkup:
+    """Get template inbounds editing keyboard with multi-select.
+
+    Args:
+        template_id: Template ID
+        all_inbounds: List of all available inbounds
+        template_inbound_ids: Set of inbound IDs already in template
+        selected_ids: Set of currently selected inbound IDs
+        server_name: Name of the server (all inbounds are from this server)
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    for inbound in all_inbounds:
+        in_template_status = "✅" if inbound.id in template_inbound_ids else "❌"
+        selected = "🔘" if inbound.id in selected_ids else "⭕"
+        builder.button(
+            text=f"{selected} {inbound.remark} {in_template_status}",
+            callback_data=f"template_inbound_edit_toggle_{template_id}_{inbound.id}",
+        )
+
+    builder.adjust(1)
+    builder.button(text="➕ Подключить выбранные", callback_data=f"template_bulk_add_selected_{template_id}")
+    builder.button(text="❌ Отключить выбранные", callback_data=f"template_bulk_remove_selected_{template_id}")
+    builder.button(text="🔙 Отмена", callback_data=f"template_bulk_cancel_{template_id}")
+    builder.adjust(1)
+
     return builder.as_markup()
 
 
@@ -336,11 +403,54 @@ def get_inbound_selection_for_template(
         for inbound in server_inbounds:
             status = "✅" if inbound.is_active else "❌"
             builder.button(
-                text=f"{status} {inbound.remark} ({server_name})",
-                callback_data=f"template_select_inbound_{template_id}_{inbound.id}",
+                text=f"📦 {status} {inbound.remark} ({server_name})",
+                callback_data=f"template_toggle_inbound_{template_id}_{inbound.id}",
             )
 
+    builder.button(text="➡️ Добавить выбранные", callback_data="template_confirm_add_inbounds")
     builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_template_multi_select_keyboard(
+    template_id: int,
+    template_inbounds: list,
+    selected_ids: set
+) -> InlineKeyboardMarkup:
+    """Get multi-select keyboard for template inbounds management.
+
+    Args:
+        template_id: Template ID
+        template_inbounds: List of current template inbounds
+        selected_ids: Set of selected inbound IDs
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    for ti in template_inbounds:
+        selected = "✅" if ti.inbound_id in selected_ids else "⭕"
+        status = "🟢" if ti.inbound.is_active else "🔴"
+        builder.button(
+            text=f"{selected} {status} {ti.inbound.remark} ({ti.inbound.server.name})",
+            callback_data=f"template_multi_select_{template_id}_{ti.inbound_id}",
+        )
+
+    builder.adjust(1)
+    builder.button(text="🗑️ Удалить выбранные", callback_data="template_multi_delete_inbounds")
+    builder.button(text="🔙 Выход", callback_data=f"template_select_{template_id}")
+    builder.adjust(1)
+
+    return builder.as_markup()
+
+
+def get_template_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Get confirmation keyboard for template multi-select action."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить", callback_data="template_multi_confirm")
+    builder.button(text="❌ Отмена", callback_data="template_multi_cancel")
     builder.adjust(1)
     return builder.as_markup()
 
