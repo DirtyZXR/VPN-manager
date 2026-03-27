@@ -18,6 +18,10 @@ from app.services.xui_service import XUIService
 from app.xui_client import XUIConnectionError, XUIError
 
 
+# Глобальная блокировка для предотвращения конфликтов между всеми экземплярами SyncService
+_global_sync_lock = asyncio.Lock()
+
+
 class SyncService:
     """Service for synchronizing data between database and XUI panels."""
 
@@ -31,7 +35,8 @@ class SyncService:
         """
         self.session = session
         self._is_running = False
-        self._sync_lock = asyncio.Lock()  # Блокировка для предотвращения параллельных синхронизаций
+        # Используем глобальную блокировку вместо локальной
+        self._sync_lock = _global_sync_lock
 
     # === CORE METHODS ===
 
@@ -73,8 +78,6 @@ class SyncService:
         # Проверить, есть ли другая активная синхронизация
         if self._sync_lock.locked():
             logger.debug("[PAUSE] Пропуск цикла синхронизации - другая синхронизация уже выполняется")
-            if not skip_sleep:
-                await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
