@@ -49,8 +49,17 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         # Use new subscription status property
         status = sub.subscription_status
 
+        # Collect server names for this subscription
+        server_names = []
+        for conn in sub.inbound_connections:
+            if conn.is_enabled and hasattr(conn, 'inbound') and conn.inbound and hasattr(conn.inbound, 'server') and conn.inbound.server:
+                server_names.append(conn.inbound.server.name)
+
+        # Build text with server names on the right
+        server_info = f" | {', '.join(server_names)}" if server_names else ""
+
         text += (
-            f"{status} <b>{sub.name}</b>\n"
+            f"{status} <b>{sub.name}</b>{server_info}\n"
             f"   Активных подключений: {sub.active_connections_count}/{len(sub.inbound_connections)}\n\n"
         )
 
