@@ -10,10 +10,40 @@ from aiogram.enums import ParseMode
 from loguru import logger
 
 from app.config import get_settings
-from app.database import init_db
+from app.database import init_db, async_session_factory
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
-from app.services.xui_service import XUIService
+from app.services import SyncService
+
+
+# Flag to control background sync
+_background_sync_running = False
+
+
+async def background_sync_wrapper() -> None:
+    """Wrapper for background sync that creates new sessions per cycle."""
+    global _background_sync_running
+    _background_sync_running = True
+
+    try:
+        logger.info("Starting background sync wrapper...")
+        while _background_sync_running:
+            try:
+                async with async_session_factory() as session:
+                    sync_service = SyncService(session)
+                    # Run one sync cycle
+                    await sync_service._sync_cycle()
+            except Exception as e:
+                logger.error(f"Error in background sync cycle: {e}", exc_info=True)
+                await asyncio.sleep(60)  # Wait 1 minute on error
+
+    except asyncio.CancelledError:
+        logger.info("Background sync cancelled")
+    except Exception as e:
+        logger.error(f"Fatal error in background sync wrapper: {e}", exc_info=True)
+    finally:
+        _background_sync_running = False
+        logger.info("Background sync wrapper stopped")
 
 
 def setup_logging() -> None:
@@ -61,16 +91,6 @@ async def main() -> None:
     data_path.mkdir(exist_ok=True)
     logger.info("Data directory created/verified")
 
-    # Create global XUI service instance for client caching
-    xui_service = None
-    try:
-        from app.database import async_session_factory
-        async with async_session_factory() as session:
-            xui_service = XUIService(session)
-            logger.info("XUI service initialized")
-    except Exception as e:
-        logger.warning(f"Could not initialize XUI service: {e}")
-
     # Create bot instance
     bot = Bot(
         token=settings.bot_token,
@@ -88,15 +108,30 @@ async def main() -> None:
     router = create_router()
     dp.include_router(router)
 
-    # Start polling (без автоматической синхронизации)
-    logger.info("Starting polling...")
+    # Start tasks
+    logger.info("Starting polling and background sync...")
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        # Create async tasks
+        sync_task = asyncio.create_task(background_sync_wrapper())
+        polling_task = asyncio.create_task(dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()))
+
+        # Wait for either task to complete (usually polling will run forever)
+        done, pending = await asyncio.wait(
+            [sync_task, polling_task],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+
+        # Cancel remaining tasks
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
     finally:
-        # Close XUI clients
-        if xui_service:
-            logger.info("Closing XUI clients...")
-            await xui_service.close_all_clients()
+        # Stop background sync
+        _background_sync_running = False
+        logger.info("Stopping background sync...")
         # Close bot session
         await bot.session.close()
 
