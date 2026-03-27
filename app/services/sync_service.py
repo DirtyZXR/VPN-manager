@@ -346,13 +346,17 @@ class SyncService:
         if hasattr(model, "last_sync_at") and model.last_sync_at is None:
             return True  # Никогда не синхронизировали
 
-        # Если прошло больше интервала
-        if (
-            hasattr(model, "last_sync_at")
-            and model.last_sync_at is not None
-            and datetime.now(timezone.utc) - model.last_sync_at > self.SYNC_INTERVAL
-        ):
-            return True
+        # Если прошло больше интервала (с учетом timezone-aware и timezone-naive)
+        if hasattr(model, "last_sync_at") and model.last_sync_at is not None:
+            now = datetime.now(timezone.utc)
+            last_sync = model.last_sync_at
+
+            # Если last_sync не имеет timezone, добавим ему UTC timezone
+            if last_sync.tzinfo is None:
+                last_sync = last_sync.replace(tzinfo=timezone.utc)
+
+            if now - last_sync > self.SYNC_INTERVAL:
+                return True
 
         return False
 
