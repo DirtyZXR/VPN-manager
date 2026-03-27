@@ -481,7 +481,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
         # Subscription-level expiry (from subscription or from connections)
         expiry_text = "Бессрочно"
         if sub.expiry_date:
-            expiry_text = sub.expiry_date.strftime('%d.%m.%Y %H:%M')
+            expiry_text = (sub.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')
 
             # Handle timezone-aware vs naive datetimes
             sub_expiry = sub.expiry_date
@@ -492,7 +492,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             remaining_days = (sub_expiry - now).days if sub.expiry_date else None
             if remaining_days is not None:
                 if remaining_days <= 1:
-                    expiry_text += " (истекает сегодня)"
+                    expiry_text += " (истекает в течение 24 часов)"
                 elif remaining_days <= 7:
                     expiry_text += f" (осталось {remaining_days} дн.)"
 
@@ -510,7 +510,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             # Connection expiry
             conn_expiry = "Бессрочно"
             if conn.expiry_date:
-                conn_expiry = conn.expiry_date.strftime('%d.%m.%Y %H:%M')
+                conn_expiry = (conn.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')
 
                 # Handle timezone-aware vs naive datetimes
                 conn_expiry_date = conn.expiry_date

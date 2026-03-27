@@ -725,7 +725,7 @@ class NotificationChecker:
                         f"⚠️ <b>Ваше подключение истекает {time_text}!</b>\n\n"
                         f"🔌 <b>Подключение:</b> {inbound.remark if inbound else 'Не указано'}\n"
                         f"🖥️ <b>Сервер:</b> {server.name if server else 'Не указано'}\n"
-                        f"📅 <b>Дата истечения:</b> {conn.expiry_date.strftime('%d.%m.%Y %H:%M') if conn.expiry_date else 'Не указано'}\n\n"
+                        f"📅 <b>Дата истечения:</b> {(conn.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if conn.expiry_date else 'Не указано'}\n\n"
                         f"Если хотите продлить подписку, обратитесь к администратору."
                     )
                 else:
@@ -736,7 +736,7 @@ class NotificationChecker:
                 message = (
                     f"⚠️ <b>Ваше подключение истекает {time_text}!</b>\n\n"
                     f"📦 <b>Подписка:</b> {sub.name}\n"
-                    f"📅 <b>Дата истечения:</b> {sub.expiry_date.strftime('%d.%m.%Y %H:%M') if sub.expiry_date else 'Не указано'}\n\n"
+                    f"📅 <b>Дата истечения:</b> {(sub.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if sub.expiry_date else 'Не указано'}\n\n"
                     f"Если хотите продлить подписку, обратитесь к администратору."
                 )
         elif level == NotificationLevel.SUBSCRIPTION:
@@ -757,7 +757,7 @@ class NotificationChecker:
                 f"⚠️ <b>Ваша подписка истекает {time_text}!</b>\n\n"
                 f"📦 <b>Подписка:</b> {sub.name}\n"
                 f"🔌 <b>Подключений:</b> {len(sub.inbound_connections) if hasattr(sub, 'inbound_connections') else 1}\n"
-                f"📅 <b>Дата истечения:</b> {expiry.strftime('%d.%m.%Y %H:%M') if expiry else 'Не указано'}\n\n"
+                f"📅 <b>Дата истечения:</b> {(expiry + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if expiry else 'Не указано'}\n\n"
                 f"Если хотите продлить подписку, обратитесь к администратору."
             )
         else:  # USER
@@ -776,7 +776,7 @@ class NotificationChecker:
                     if sub_data and sub_data["connections"]:
                         expiry = sub_data["connections"][0].expiry_date
 
-                expiry_text = expiry.strftime('%d.%m.%Y %H:%M') if expiry else "Не указано"
+                expiry_text = (expiry + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if expiry else "Не указано"
                 message += f"• 📦 {sub.name} - {expiry_text}\n"
 
             message += (
