@@ -10,6 +10,7 @@ from app.database.models.base import Base, TimestampMixin, SyncMixin
 if TYPE_CHECKING:
     from app.database.models.server import Server
     from app.database.models.inbound_connection import InboundConnection
+    from app.database.models.subscription_template_inbound import SubscriptionTemplateInbound
 
 
 class Inbound(Base, TimestampMixin, SyncMixin):
@@ -35,6 +36,11 @@ class Inbound(Base, TimestampMixin, SyncMixin):
     server: Mapped["Server"] = relationship("Server", back_populates="inbounds")
     client_connections: Mapped[list["InboundConnection"]] = relationship(
         "InboundConnection",
+        back_populates="inbound",
+        cascade="all, delete-orphan",
+    )
+    template_inbounds: Mapped[list["SubscriptionTemplateInbound"]] = relationship(
+        "SubscriptionTemplateInbound",
         back_populates="inbound",
         cascade="all, delete-orphan",
     )

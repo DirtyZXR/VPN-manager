@@ -6,6 +6,8 @@ from app.database.models.inbound import Inbound
 from app.database.models.inbound_connection import InboundConnection
 from app.database.models.server import Server
 from app.database.models.subscription import Subscription
+from app.database.models.subscription_template import SubscriptionTemplate
+from app.database.models.subscription_template_inbound import SubscriptionTemplateInbound
 
 __all__ = [
     "Base",
@@ -15,4 +17,6 @@ __all__ = [
     "Inbound",
     "Subscription",
     "InboundConnection",
+    "SubscriptionTemplate",
+    "SubscriptionTemplateInbound",
 ]

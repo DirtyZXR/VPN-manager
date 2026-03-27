@@ -17,8 +17,10 @@ from app.bot.keyboards import (
     get_client_search_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
+from app.bot.states.admin import TemplateManagement
 from app.database import async_session_factory
 from app.services.client_service import ClientService
+from app.services.subscription_template_service import SubscriptionTemplateService
 
 router = Router()
 
@@ -184,6 +186,7 @@ async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     kb = InlineKeyboardBuilder()
     kb.button(text="📝 Подписки клиента", callback_data=f"client_subscriptions_{client_id}")
+    kb.button(text="📋 Создать подписку по шаблону", callback_data=f"client_create_from_template_{client_id}")
     kb.button(text="✏️ Изменить имя", callback_data=f"client_rename_name_{client_id}")
     kb.button(text="📱 Изменить Telegram ID", callback_data=f"client_rename_telegram_{client_id}")
     if client.is_admin:
@@ -360,6 +363,76 @@ async def start_create_subscription_for_client(callback: CallbackQuery, state: F
         )
     except Exception:
         pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("client_create_from_template_"))
+async def start_create_subscription_from_template(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start creating subscription from template for specific client."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    client_id = int(callback.data.split("_")[-1])
+    await state.update_data(client_id=client_id)
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        templates = await template_service.get_all_templates()
+
+    if not templates:
+        await callback.answer("❌ Нет доступных шаблонов. Сначала создайте шаблон.", show_alert=True)
+        return
+
+    await state.set_state(TemplateManagement.waiting_for_template_selection)
+
+    text = (
+        f"📋 <b>Создание подписки по шаблону</b>\n\n"
+        f"Всего шаблонов: {len(templates)}\n\n"
+        f"Выберите шаблон:"
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    for template in templates:
+        status = "✅" if template.is_active else "❌"
+        inbounds_count = len(template.template_inbounds)
+        builder.button(
+            text=f"{status} {template.name} ({inbounds_count} подключений)",
+            callback_data=f"template_for_client_{template.id}",
+        )
+    builder.button(text="🔙 Назад", callback_data=f"client_select_{client_id}")
+    builder.adjust(1)
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(TemplateManagement.waiting_for_template_selection, F.data.startswith("template_for_client_"))
+async def select_template_for_client(callback: CallbackQuery, state: FSMContext) -> None:
+    """Handle template selection for client subscription."""
+    template_id = int(callback.data.split("_")[-1])
+    data = await state.get_data()
+    client_id = data["client_id"]
+
+    await state.update_data(template_id=template_id)
+    await state.set_state(TemplateManagement.waiting_for_subscription_name)
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(template_id)
+        client_service = ClientService(session)
+        client = await client_service.get_client_by_id(client_id)
+
+    text = (
+        f"📋 <b>Создание подписки из шаблона</b>\n\n"
+        f"📋 <b>Шаблон:</b> {template.name}\n"
+        f"👤 <b>Клиент:</b> {client.name}\n"
+        f"🔌 <b>Подключений:</b> {len(template.template_inbounds)}\n\n"
+        f"Введите название подписки:"
+    )
+
+    await callback.message.edit_text(text)
     await callback.answer()
 
 
