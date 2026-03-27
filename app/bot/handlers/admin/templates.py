@@ -366,7 +366,7 @@ async def handle_template_client_selection(callback: CallbackQuery, state: FSMCo
 
 @router.message(TemplateManagement.waiting_for_subscription_name)
 async def handle_template_subscription_name(message: Message, state: FSMContext):
-    """Handle subscription name input - create subscription from template."""
+    """Handle subscription name input."""
     name = message.text.strip()
 
     if not name:
@@ -378,70 +378,23 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
         return
 
     await state.update_data(subscription_name=name)
-    await state.set_state(TemplateManagement.confirm_template_creation)
+    await state.set_state(TemplateManagement.waiting_for_custom_traffic)
 
     data = await state.get_data()
 
-    # Create subscription from template immediately
-    try:
-        async with async_session_factory() as session:
-            template_service = SubscriptionTemplateService(session)
-            client_service = ClientService(session)
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(data["template_id"])
+        default_traffic = template.default_total_gb
 
-            # Create subscription from template
-            subscription, connections = await template_service.create_subscription_from_template(
-                template_id=data["template_id"],
-                client_id=data["client_id"],
-                subscription_name=data["subscription_name"],
-                # Use template defaults for all other parameters
-                total_gb=None,
-                expiry_days=None,
-                notes=None,
-            )
+    traffic_text = f"{default_traffic} ГБ {'(безлимитный)' if default_traffic == 0 else ''}"
 
-            # Get client for notification
-            client = await client_service.get_client_by_id(data["client_id"])
+    text = (
+        f"📦 <b>Название подписки:</b> {name}\n\n"
+        f"Введите лимит трафика в ГБ (текущее: {traffic_text}):"
+    )
 
-            # Send notification if client has telegram_id
-            if client.telegram_id:
-                from app.services.notification_service import NotificationService
-                notification_service = NotificationService(session)
-                await notification_service.notify_subscription_created(
-                    client=client,
-                    subscription=subscription,
-                    connections=connections,
-                )
-
-            await session.commit()
-
-        await state.clear()
-
-        traffic_text = f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
-        expiry_text = f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочный"
-
-        text = (
-            f"✅ <b>Подписка создана!</b>\n\n"
-            f"👤 <b>Клиент:</b> {client.name}\n"
-            f"📦 <b>Подписка:</b> {subscription.name}\n"
-            f"📊 <b>Лимит трафика:</b> {traffic_text}\n"
-            f"📅 <b>Срок действия:</b> {expiry_text}\n"
-            f"🔌 <b>Создано подключений:</b> {len(connections)}\n"
-        )
-
-        if client.telegram_id:
-            text += f"\n📱 <b>Уведомление отправлено:</b> Да"
-
-        keyboard = get_back_keyboard("admin_clients")
-
-        await message.answer(text, reply_markup=keyboard)
-
-    except XUIError as e:
-        await state.clear()
-        await message.answer(f"❌ Ошибка при создании подписки: {str(e)}")
-    except Exception as e:
-        await state.clear()
-        logger.error(f"Error creating subscription from template: {e}", exc_info=True)
-        await message.answer(f"❌ Произошла ошибка при создании подписки")
+    await message.answer(text)
 
 
 @router.message(TemplateManagement.waiting_for_custom_traffic)
