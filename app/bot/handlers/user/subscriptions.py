@@ -1,6 +1,6 @@
 """User subscription management handlers."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -356,9 +356,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 if i > 0:
                     text += "\n"
 
-                # Add connection status indicator
+                # Add connection status indicator with server name
                 conn_status = "✅" if conn.is_connection_active else "❌"
-                text += f"    └ {conn_status} {inbound.remark} ({inbound.protocol})\n"
+                server_name = conn_data.get('server_name', 'Unknown')
+                text += f"    └ {conn_status} {inbound.remark} ({inbound.protocol}) | {server_name}\n"
                 text += f"      Трафик: {traffic}\n"
                 text += f"      Срок: {expiry_info}\n"
 
