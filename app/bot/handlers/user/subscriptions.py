@@ -46,16 +46,12 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
     builder = InlineKeyboardBuilder()
 
     for sub in subscriptions:
-        # Check if subscription has any active connections (data is already eager loaded)
-        active_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
-        has_active = len(active_connections) > 0
-
-        # Status is active only if subscription is active AND has active connections
-        status = "✅" if (sub.is_active and has_active) else "❌"
+        # Use new subscription status property
+        status = sub.subscription_status
 
         text += (
             f"{status} <b>{sub.name}</b>\n"
-            f"   Подключений: {len(active_connections)}/{len(sub.inbound_connections)}\n\n"
+            f"   Активных подключений: {sub.active_connections_count}/{len(sub.inbound_connections)}\n\n"
         )
 
         # Add button for each subscription
@@ -302,30 +298,29 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         await callback.answer("❌ Подписка не найдена.", show_alert=True)
         return
 
-    # Check if subscription has any active connections (data is already eager loaded)
-    active_connections = [conn for conn in subscription.inbound_connections if conn.is_enabled]
-    has_active = len(active_connections) > 0
-    status = "✅ Активна" if (subscription.is_active and has_active) else "❌ Неактивна"
+    # Use new subscription status property
+    status = subscription.subscription_status
 
     text = (
         f"📝 Подписка: <b>{subscription.name}</b>\n\n"
         f"Статус: {status}\n"
         f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"Подключений: {len(active_connections)}/{len(subscription.inbound_connections)}\n"
+        f"Активных подключений: {subscription.active_connections_count}/{len(subscription.inbound_connections)}\n"
         f"Токен: <code>{subscription.subscription_token}</code>\n\n"
     )
 
     # Group URLs by server to avoid duplicates
     server_urls = defaultdict(list)
-    for conn in active_connections:
-        server = conn.inbound.server
-        subscription_path = getattr(server, 'subscription_path', '/sub/')
-        subscription_url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
-        server_urls[subscription_url].append({
-            'server_name': server.name,
-            'inbound': conn.inbound,
-            'connection': conn,
-        })
+    for conn in subscription.inbound_connections:
+        if conn.is_enabled:
+            server = conn.inbound.server
+            subscription_path = getattr(server, 'subscription_path', '/sub/')
+            subscription_url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
+            server_urls[subscription_url].append({
+                'server_name': server.name,
+                'inbound': conn.inbound,
+                'connection': conn,
+            })
 
     if server_urls:
         text += "📢 Активные подключения:\n\n"
@@ -344,9 +339,14 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 # Per-inbound expiry
                 if conn.expiry_date:
                     expiry = conn.expiry_date.strftime("%d.%m.%Y")
-                    remaining_days = conn.remaining_days
-                    if remaining_days is not None:
-                        expiry_info = f"{expiry} (осталось {remaining_days} дней)"
+                    remaining = conn.remaining_days_with_sign
+                    if remaining is not None:
+                        if remaining > 0:
+                            expiry_info = f"{expiry} (осталось {remaining} дней)"
+                        elif remaining == 0:
+                            expiry_info = f"{expiry} (истекает сегодня)"
+                        else:
+                            expiry_info = f"{expiry} (истек {abs(remaining)} дней назад)"
                     else:
                         expiry_info = expiry
                 else:
@@ -356,7 +356,9 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 if i > 0:
                     text += "\n"
 
-                text += f"    └ {inbound.remark} ({inbound.protocol})\n"
+                # Add connection status indicator
+                conn_status = "✅" if conn.is_connection_active else "❌"
+                text += f"    └ {conn_status} {inbound.remark} ({inbound.protocol})\n"
                 text += f"      Трафик: {traffic}\n"
                 text += f"      Срок: {expiry_info}\n"
 
@@ -470,10 +472,10 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
     xui_clients = {}
 
     for sub in subscriptions:
-        # Get active connections (data is already eager loaded)
-        active_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
+        # Get enabled connections (data is already eager loaded)
+        enabled_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
 
-        if not active_connections:
+        if not enabled_connections:
             text += f"❌ <b>{sub.name}</b>\n"
             text += f"   Нет активных подключений\n\n"
             continue
@@ -498,12 +500,12 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
         text += f"📦 <b>{sub.name}</b>\n"
         text += f"   📅 Срок: {expiry_text}\n"
-        text += f"   🔌 Подключений: {len(active_connections)}\n\n"
+        text += f"   🔌 Активных подключений: {sub.active_connections_count}/{len(enabled_connections)}\n\n"
 
         # Show per-connection details
         text += "   <b>Подключения:</b>\n"
 
-        for conn in active_connections:
+        for conn in enabled_connections:
             inbound = conn.inbound
             server = inbound.server
 
@@ -519,8 +521,13 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                     conn_expiry_date = conn_expiry_date.replace(tzinfo=timezone.utc)
 
                 conn_remaining = (conn_expiry_date - now).days if conn.expiry_date else None
-                if conn_remaining is not None and conn_remaining <= 7:
-                    conn_expiry += f" ({conn_remaining} дн.)"
+                if conn_remaining is not None:
+                    if conn_remaining > 0:
+                        conn_expiry += f" (осталось {conn_remaining} дн.)"
+                    elif conn_remaining == 0:
+                        conn_expiry += " (истекает сегодня)"
+                    else:
+                        conn_expiry += f" (истек {abs(conn_remaining)} дн. назад)"
 
             # Connection traffic
             if conn.is_unlimited:
@@ -552,7 +559,9 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                     logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
                     traffic_text += " (ошибка получения данных)"
 
-            text += f"      • {inbound.remark} ({server.name})\n"
+            # Add connection status indicator
+            conn_status = "✅" if conn.is_connection_active else "❌"
+            text += f"      {conn_status} {inbound.remark} ({server.name})\n"
             text += f"        📅 Срок: {conn_expiry}\n"
             text += f"        📊 Трафик: {traffic_text}\n"
 
