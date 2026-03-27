@@ -1,6 +1,6 @@
 """User subscription management handlers."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
