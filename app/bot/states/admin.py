@@ -56,6 +56,9 @@ class ClientManagement(StatesGroup):
     waiting_for_search_query = State()
     waiting_for_search_field = State()
 
+    # Notes state
+    waiting_for_notes = State()
+
 
 class SubscriptionManagement(StatesGroup):
     """Subscription management states."""
@@ -117,7 +120,9 @@ class TemplateManagement(StatesGroup):
 
     # Template subscription creation states
     waiting_for_client_selection = State()
-    waiting_for_template_selection = State()  # For creating subscription from template for specific client
+    waiting_for_template_selection = (
+        State()
+    )  # For creating subscription from template for specific client
     waiting_for_subscription_name = State()
     waiting_for_search_query = State()  # For client search
 

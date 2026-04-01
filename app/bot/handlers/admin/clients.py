@@ -790,53 +790,54 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
     await select_client(callback, is_admin)
 
 
-# ==================== CLIENT NOTES ====================
+# ==================== CLIENT LIST (PAGINATED) ====================
 
 
-@router.callback_query(F.data.startswith("client_edit_notes_"))
-async def start_edit_client_notes(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    """Start editing client notes."""
+@router.callback_query(F.data == "clients_list")
+async def show_clients_list(callback: CallbackQuery, is_admin: bool) -> None:
+    """Show paginated list of all active clients (first page)."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    client_id = int(callback.data.split("_")[-1])
-    await state.update_data(client_id=client_id)
-    await state.set_state(ClientManagement.waiting_for_notes)
-
-    try:
-        await callback.message.edit_text(
-            "📝 Изменение заметок клиента\n\n"
-            "Введите новые заметки (для удаления отправьте `-`):",
-            reply_markup=get_back_keyboard(f"client_select_{client_id}"),
-        )
-    except Exception:
-        pass
-    await callback.answer()
+    await _render_clients_page(callback, page=0)
 
 
-@router.message(ClientManagement.waiting_for_notes)
-async def process_client_notes(message: Message, state: FSMContext) -> None:
-    """Process client notes input."""
-    data = await state.get_data()
-    client_id = data["client_id"]
-    notes = message.text.strip()
+@router.callback_query(F.data.startswith("clients_page_"))
+async def navigate_clients_page(callback: CallbackQuery, is_admin: bool) -> None:
+    """Navigate between client list pages."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
 
-    if notes == "-":
-        notes = None
+    # Ignore the "current page" indicator button
+    if callback.data == "clients_page_current":
+        await callback.answer()
+        return
 
+    page = int(callback.data.split("_")[-1])
+    await _render_clients_page(callback, page=page)
+
+
+async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page: int = 5) -> None:
+    """Render a page of clients list.
+
+    Args:
+        callback: Callback query to respond to
+        page: Page number (0-indexed)
+        per_page: Number of clients per page
+    """
     async with async_session_factory() as session:
         service = ClientService(session)
-        await service.update_client(client_id, notes=notes)
-        await session.commit()
-    await state.clear()
-    await message.answer(
-        "✅ Заметки клиента обновлены.",
-        reply_markup=get_back_keyboard(f"client_select_{client_id}"),
-    )
+        clients, total_count = await service.get_clients_paginated(page=page, per_page=per_page)
 
-
-# ==================== CLIENT DELETION ====================
+    if not clients:
+        try:
+            await callback.message.edit_text(
+                "👥 Список клиентов пуст.\n\n"
+                "Нажмите '➕ Добавить клиента' для создания первого клиента.",
+                reply_markup=get_back_keyboard("admin_clients"),
+            )
         except Exception:
             pass
         await callback.answer()
