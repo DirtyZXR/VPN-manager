@@ -28,7 +28,7 @@ def _normalize_search_query(query: str, is_email: bool = False) -> str:
 
     # Remove common punctuation except @ and . for emails
     if not is_email:
-        query = re.sub(r'[,.!?:;\'"()\[\]{}<>|\\/~^$*+?@]', ' ', query)
+        query = re.sub(r'[,.!?:;\'"()\[\]{}<>|\\/~^$*+?@]', " ", query)
         # Remove extra spaces again after removing punctuation
         query = " ".join(query.split())
 
@@ -87,6 +87,34 @@ class ClientService:
         )
         return result.scalars().all()
 
+    async def get_clients_paginated(
+        self, page: int = 0, per_page: int = 5
+    ) -> tuple[Sequence[Client], int]:
+        """Get clients with pagination.
+
+        Args:
+            page: Page number (0-indexed)
+            per_page: Number of clients per page
+
+        Returns:
+            Tuple of (clients for this page, total client count)
+        """
+        count_result = await self.session.execute(select(Client).where(Client.is_active == True))
+        total_count = len(count_result.scalars().all())
+
+        offset = page * per_page
+        result = await self.session.execute(
+            select(Client)
+            .where(Client.is_active == True)
+            .options(selectinload(Client.subscriptions))
+            .order_by(Client.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
+        )
+        clients = result.scalars().all()
+
+        return clients, total_count
+
     async def get_client_by_id(self, client_id: int) -> Client | None:
         """Get client by ID.
 
@@ -97,9 +125,7 @@ class ClientService:
             Client or None if not found
         """
         result = await self.session.execute(
-            select(Client)
-            .where(Client.id == client_id)
-            .options(selectinload(Client.subscriptions))
+            select(Client).where(Client.id == client_id).options(selectinload(Client.subscriptions))
         )
         return result.scalar_one_or_none()
 
@@ -112,9 +138,7 @@ class ClientService:
         Returns:
             Client or None if not found
         """
-        result = await self.session.execute(
-            select(Client).where(Client.email == email)
-        )
+        result = await self.session.execute(select(Client).where(Client.email == email))
         return result.scalar_one_or_none()
 
     async def get_client_by_telegram_id(self, telegram_id: int) -> Client | None:
@@ -126,13 +150,11 @@ class ClientService:
         Returns:
             Client or None if not found
         """
-        result = await self.session.execute(
-            select(Client).where(Client.telegram_id == telegram_id)
-        )
+        result = await self.session.execute(select(Client).where(Client.telegram_id == telegram_id))
         return result.scalar_one_or_none()
 
     async def get_client_by_telegram_username(self, telegram_username: str) -> Client | None:
-        """Get client by Telegram username.
+        """Get client by Telegram username (case-insensitive).
 
         Args:
             telegram_username: Client Telegram username (@example)
@@ -140,10 +162,9 @@ class ClientService:
         Returns:
             Client or None if not found
         """
-        # Remove @ if present
-        username = telegram_username.lstrip('@')
+        username = telegram_username.lstrip("@").lower()
         result = await self.session.execute(
-            select(Client).where(Client.telegram_username == username)
+            select(Client).where(Client.telegram_username_lower == username)
         )
         return result.scalar_one_or_none()
 
@@ -172,11 +193,14 @@ class ClientService:
         if email is None:
             email = generate_email(name, "vpn", "client")
 
+        clean_username = telegram_username.lstrip("@") if telegram_username else None
         client = Client(
             name=name,
+            name_lower=name.lower(),
             email=email,
             telegram_id=telegram_id,
-            telegram_username=telegram_username.lstrip('@') if telegram_username else None,
+            telegram_username=clean_username,
+            telegram_username_lower=clean_username.lower() if clean_username else None,
             notes=notes,
             is_active=True,
             is_admin=is_admin,
@@ -221,12 +245,15 @@ class ClientService:
 
         if name is not None:
             client.name = name
+            client.name_lower = name.lower()
         if email is not None:
             client.email = email
         if telegram_id is not None:
             client.telegram_id = telegram_id
         if telegram_username is not None:
-            client.telegram_username = telegram_username.lstrip('@')
+            clean_username = telegram_username.lstrip("@")
+            client.telegram_username = clean_username
+            client.telegram_username_lower = clean_username.lower() if clean_username else None
         if notes is not None:
             client.notes = notes
         if is_active is not None:
@@ -240,12 +267,17 @@ class ClientService:
         if telegram_id_changed:
             try:
                 from app.services.new_subscription_service import NewSubscriptionService
+
                 sub_service = NewSubscriptionService(self.session)
                 updated = await sub_service.sync_client_telegram_id(client_id)
-                logger.info(f"✅ Synced Telegram ID for client {client_id}, updated {updated} connections in XUI")
+                logger.info(
+                    f"✅ Synced Telegram ID for client {client_id}, updated {updated} connections in XUI"
+                )
                 await sub_service.close_all_clients()
             except Exception as e:
-                logger.error(f"Failed to sync Telegram ID for client {client_id}: {e}", exc_info=True)
+                logger.error(
+                    f"Failed to sync Telegram ID for client {client_id}: {e}", exc_info=True
+                )
 
         return client
 
@@ -307,10 +339,14 @@ class ClientService:
         name: str | None = None,
         email: str | None = None,
         telegram_id: int | None = None,
+        telegram_username: str | None = None,
         xui_email: str | None = None,
         search_all_fields: bool = False,
     ) -> Sequence[Client]:
         """Search clients by various criteria with smart text processing.
+
+        Uses pre-lowered columns (name_lower, telegram_username_lower) for
+        case-insensitive search that works correctly with Cyrillic text.
 
         Args:
             name: Partial name match (case-insensitive, multi-word support)
@@ -327,62 +363,53 @@ class ClientService:
 
         conditions = []
 
-        # Build conditions for direct client fields
+        # telegram_id is always an exact AND filter, never OR with text fields
+        if telegram_id:
+            query = select(Client).where(Client.telegram_id == telegram_id)
+        else:
+            query = select(Client)
+
+        query = query.options(selectinload(Client.subscriptions))
+
         if name:
             normalized_name = _normalize_search_query(name, is_email=False)
+            name_lower_query = normalized_name.lower()
 
-            # Check if query contains multiple words
             name_words = _split_query_into_words(normalized_name)
 
             if len(name_words) > 1:
-                # Multi-word search: match any word in the name
                 name_conditions = []
                 for word in name_words:
-                    # Use text() with explicit table name for reliable Cyrillic support
-                    name_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{word}%"))
+                    name_conditions.append(Client.name_lower.like(f"%{word.lower()}%"))
 
-                # Match if ANY word matches (more flexible) or ALL words (stricter)
-                # Using OR for better UX - shows more results
                 conditions.append(or_(*name_conditions))
-
-                # Also try full name match for exact matches
-                conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_name}%"))
             else:
-                # Single word search
-                conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_name}%"))
+                conditions.append(Client.name_lower.like(f"%{name_lower_query}%"))
 
         if email:
-            # Normalize email: preserve @ and ., lowercase
-            normalized_email = _normalize_search_query(email, is_email=True)
-            conditions.append(text("LOWER(clients.email) LIKE LOWER(:email)").params(email=f"%{normalized_email}%"))
+            normalized_email = _normalize_search_query(email, is_email=True).lower()
+            conditions.append(Client.email.like(f"%{normalized_email}%"))
 
-        if telegram_id:
-            conditions.append(Client.telegram_id == telegram_id)
-
-        # Build query
-        query = select(Client).options(selectinload(Client.subscriptions))
+        if telegram_username:
+            conditions.append(Client.telegram_username_lower.like(f"%{telegram_username}%"))
 
         if xui_email:
-            # Normalize XUI email: preserve @ and ., lowercase
-            normalized_xui_email = _normalize_search_query(xui_email, is_email=True)
+            normalized_xui_email = _normalize_search_query(xui_email, is_email=True).lower()
 
-            # Join with InboundConnection to search by XUI email
             query = (
                 query.join(Subscription, Client.id == Subscription.client_id)
                 .join(InboundConnection, Subscription.id == InboundConnection.subscription_id)
-                .where(text("LOWER(inbound_connections.email) LIKE LOWER(:xui_email)").params(xui_email=f"%{normalized_xui_email}%"))
+                .where(InboundConnection.email.like(f"%{normalized_xui_email}%"))
             )
 
         if conditions:
             if xui_email:
-                # If we have xui_email and other conditions, combine them
                 query = query.where(and_(*conditions))
             else:
-                # If no xui_email, just use or_ for direct client fields
                 query = query.where(or_(*conditions))
 
         query = query.order_by(Client.created_at.desc())
-        query = query.distinct()  # Avoid duplicates when joining
+        query = query.distinct()
 
         result = await self.session.execute(query)
         return result.scalars().all()
@@ -390,51 +417,60 @@ class ClientService:
     async def search_clients_all_fields(self, query: str) -> Sequence[Client]:
         """Search clients across all fields with OR logic.
 
+        Searches: name, email, telegram_id, telegram_username, XUI email.
+        Uses pre-lowered columns for case-insensitive Cyrillic support.
+
+        When query is purely numeric, searches ONLY by telegram_id (exact match)
+        to avoid false positives from substring matching in UUID-based emails.
+
         Args:
             query: Search term to match across all fields
 
         Returns:
             List of matching clients
         """
-        from sqlalchemy import or_, and_, text
+        from sqlalchemy import or_
         from app.database.models import InboundConnection, Subscription
 
-        # Normalize query for text fields (not for numbers)
-        normalized_query = _normalize_search_query(query, is_email=False)
+        # If query is purely numeric, search only by telegram_id
+        if query.strip().isdigit():
+            search_query = (
+                select(Client)
+                .options(selectinload(Client.subscriptions))
+                .where(Client.telegram_id == int(query))
+                .order_by(Client.created_at.desc())
+            )
+            result = await self.session.execute(search_query)
+            return result.scalars().all()
 
-        # Build OR conditions for all fields
+        # Text query: search across all text fields
+        normalized_query = _normalize_search_query(query, is_email=False)
+        query_lower = normalized_query.lower()
+
         all_conditions = []
 
-        # Name search with multi-word support
         name_words = _split_query_into_words(normalized_query)
         if len(name_words) > 1:
+            word_conditions = []
             for word in name_words:
-                all_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{word}%"))
-            all_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_query}%"))
+                word_conditions.append(Client.name_lower.like(f"%{word.lower()}%"))
+            all_conditions.append(or_(*word_conditions))
         else:
-            all_conditions.append(text("LOWER(clients.name) LIKE LOWER(:name)").params(name=f"%{normalized_query}%"))
+            all_conditions.append(Client.name_lower.like(f"%{query_lower}%"))
 
-        # Email search
-        normalized_email = _normalize_search_query(query, is_email=True)
-        all_conditions.append(text("LOWER(clients.email) LIKE LOWER(:email)").params(email=f"%{normalized_email}%"))
+        normalized_email = _normalize_search_query(query, is_email=True).lower()
+        all_conditions.append(Client.email.like(f"%{normalized_email}%"))
 
-        # Telegram ID search (if numeric)
-        if query.isdigit():
-            all_conditions.append(Client.telegram_id == int(query))
+        all_conditions.append(Client.telegram_username_lower.like(f"%{query_lower}%"))
 
-        # XUI email search (requires JOIN)
-        xui_email_condition = text("LOWER(inbound_connections.email) LIKE LOWER(:xui_email)").params(xui_email=f"%{normalized_email}%")
+        xui_email_condition = InboundConnection.email.like(f"%{normalized_email}%")
 
-        # Build query
         search_query = select(Client).options(selectinload(Client.subscriptions))
 
-        # Join for XUI email search
-        search_query = (
-            search_query.join(Subscription, Client.id == Subscription.client_id)
-            .join(InboundConnection, Subscription.id == InboundConnection.subscription_id)
+        search_query = search_query.join(Subscription, Client.id == Subscription.client_id).join(
+            InboundConnection, Subscription.id == InboundConnection.subscription_id
         )
 
-        # Combine all conditions with OR - client fields OR XUI email
         direct_conditions = or_(*all_conditions)
         final_condition = or_(direct_conditions, xui_email_condition)
 

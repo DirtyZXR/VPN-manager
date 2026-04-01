@@ -18,6 +18,7 @@ class Client(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    name_lower: Mapped[str | None] = mapped_column(String(200), nullable=True)
     email: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
     telegram_id: Mapped[int | None] = mapped_column(
         Integer,
@@ -27,6 +28,10 @@ class Client(Base, TimestampMixin):
         String(100),
         nullable=True,
         unique=True,
+    )
+    telegram_username_lower: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
