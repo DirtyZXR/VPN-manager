@@ -79,13 +79,7 @@ def load_instructions() -> dict:
     if _instructions_cache is not None:
         return _instructions_cache
 
-    try:
-        import yaml
-    except ImportError:
-        return {
-            "full_instruction": "⚠️ PyYAML не установлен. Установите: pip install pyyaml",
-            "step_by_step": {"steps": []},
-        }
+    import yaml
 
     path = Path(__file__).parent.parent / "instructions.yaml"
     if not path.exists():

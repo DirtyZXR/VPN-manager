@@ -104,15 +104,21 @@ async def show_full_instruction(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "instruction_step_by_step")
 async def start_step_by_step(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start step-by-step instruction (placeholder)."""
-    await callback.message.edit_text(
-        "🔧 <b>Пошаговая инструкция</b>\n\n"
-        "Функция в разработке.\n\n"
-        "Пока воспользуйтесь полной инструкцией.",
-        reply_markup=get_instruction_menu_keyboard(),
-        parse_mode="HTML",
-    )
-    await callback.answer()
+    """Start step-by-step instruction."""
+    instructions = load_instructions()
+    steps = instructions.get("step_by_step", {}).get("steps", [])
+
+    if not steps:
+        await callback.message.edit_text(
+            "⚠️ Пошаговая инструкция не настроена.",
+            reply_markup=get_instruction_menu_keyboard(),
+        )
+        await callback.answer()
+        return
+
+    await state.set_state(InstructionViewing.viewing)
+    await state.update_data(step=0)
+    await _render_step(callback, 0, steps)
 
 
 @router.callback_query(F.data == "instruction_next")
@@ -147,7 +153,11 @@ async def instruction_prev_step(callback: CallbackQuery, state: FSMContext) -> N
 async def instruction_done(callback: CallbackQuery, state: FSMContext) -> None:
     """Finish step-by-step instruction, return to menu."""
     await state.clear()
-    await callback.message.edit_text(
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
+    await callback.message.answer(
         "✅ <b>Настройка завершена!</b>\n\nЕсли возникли проблемы — обратитесь к админу.",
         reply_markup=get_instruction_menu_keyboard(),
         parse_mode="HTML",

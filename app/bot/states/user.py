@@ -18,7 +18,7 @@ class UserRegistration(StatesGroup):
     entering_custom_name = State()
 
 
-class InstructionViewing:
+class InstructionViewing(StatesGroup):
     """States for step-by-step instruction viewing."""
 
     viewing = State()
