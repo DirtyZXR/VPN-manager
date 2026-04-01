@@ -44,6 +44,7 @@ async def show_templates(callback: CallbackQuery, is_admin: bool):
             text = "📋 <b>Шаблоны подписок</b>\n\nШаблонов пока нет. Создайте первый шаблон!"
             # Create keyboard with create template button
             from aiogram.utils.keyboard import InlineKeyboardBuilder
+
             builder = InlineKeyboardBuilder()
             builder.button(text="➕ Создать шаблон", callback_data="template_add")
             builder.button(text="Назад", callback_data="admin_menu")
@@ -67,12 +68,9 @@ async def start_template_creation(callback: CallbackQuery, state: FSMContext, is
     await state.clear()
     await state.set_state(TemplateManagement.waiting_for_template_name)
 
-    text = (
-        "📝 <b>Создание шаблона подписки</b>\n\n"
-        "Введите название шаблона:"
-    )
+    text = "📝 <b>Создание шаблона подписки</b>\n\nВведите название шаблона:"
 
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(text, reply_markup=get_back_keyboard("admin_templates"))
     await callback.answer()
 
 
@@ -82,11 +80,17 @@ async def handle_template_name(message: Message, state: FSMContext):
     name = message.text.strip()
 
     if not name:
-        await message.answer("⚠️ Название не может быть пустым. Введите название:")
+        await message.answer(
+            "⚠️ Название не может быть пустым. Введите название:",
+            reply_markup=get_back_keyboard("admin_templates"),
+        )
         return
 
     if len(name) > 100:
-        await message.answer("⚠️ Название слишком длинное. Максимум 100 символов. Введите название:")
+        await message.answer(
+            "⚠️ Название слишком длинное. Максимум 100 символов. Введите название:",
+            reply_markup=get_back_keyboard("admin_templates"),
+        )
         return
 
     await state.update_data(template_name=name)
@@ -97,7 +101,7 @@ async def handle_template_name(message: Message, state: FSMContext):
         "Введите описание шаблона (необязательно, отправьте /skip для пропуска):"
     )
 
-    await message.answer(text)
+    await message.answer(text, reply_markup=get_back_keyboard("admin_templates"))
 
 
 @router.message(TemplateManagement.waiting_for_template_description)
@@ -108,7 +112,9 @@ async def handle_template_description(message: Message, state: FSMContext):
     else:
         description = message.text.strip()
         if len(description) > 500:
-            await message.answer("⚠️ Описание слишком длинное. Максимум 500 символов. Введите описание:")
+            await message.answer(
+                "⚠️ Описание слишком длинное. Максимум 500 символов. Введите описание:"
+            )
             return
 
     await state.update_data(template_description=description)
@@ -159,7 +165,9 @@ async def handle_default_expiry(message: Message, state: FSMContext):
                 await message.answer("⚠️ Срок действия не может быть отрицательным. Введите число:")
                 return
         except ValueError:
-            await message.answer("⚠️ Введите корректное число (0 = бессрочный, /skip = использовать шаблон):")
+            await message.answer(
+                "⚠️ Введите корректное число (0 = бессрочный, /skip = использовать шаблон):"
+            )
             return
 
         if expiry == 0:
@@ -189,7 +197,9 @@ async def handle_template_notes(message: Message, state: FSMContext):
     else:
         notes = message.text.strip()
         if len(notes) > 500:
-            await message.answer("⚠️ Заметки слишком длинные. Максимум 500 символов. Введите заметки:")
+            await message.answer(
+                "⚠️ Заметки слишком длинные. Максимум 500 символов. Введите заметки:"
+            )
             return
 
     data = await state.get_data()
@@ -210,8 +220,12 @@ async def handle_template_notes(message: Message, state: FSMContext):
 
         await state.clear()
 
-        traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
-        expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+        traffic_limit = (
+            f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
+        )
+        expiry_text = (
+            f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+        )
 
         text = (
             f"✅ <b>Шаблон создан!</b>\n\n"
@@ -238,7 +252,9 @@ async def handle_template_notes(message: Message, state: FSMContext):
         await message.answer(f"❌ Произошла ошибка при создании шаблона: {str(e)}")
 
 
-@router.callback_query(F.data.startswith("template_select_") & ~F.data.startswith("template_select_inbound_"))
+@router.callback_query(
+    F.data.startswith("template_select_") & ~F.data.startswith("template_select_inbound_")
+)
 async def show_template_details(callback: CallbackQuery, is_admin: bool):
     """Show template details."""
     if not is_admin:
@@ -255,8 +271,12 @@ async def show_template_details(callback: CallbackQuery, is_admin: bool):
             await callback.answer("⚠️ Шаблон не найден", show_alert=True)
             return
 
-        traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
-        expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+        traffic_limit = (
+            f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
+        )
+        expiry_text = (
+            f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+        )
         inbounds_count = len(template.template_inbounds)
 
         text = (
@@ -277,7 +297,9 @@ async def show_template_details(callback: CallbackQuery, is_admin: bool):
 
 
 @router.callback_query(F.data.startswith("template_create_subscription_"))
-async def start_subscription_from_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_subscription_from_template(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+):
     """Start subscription creation from template."""
     if not is_admin:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
@@ -301,6 +323,7 @@ async def start_subscription_from_template(callback: CallbackQuery, state: FSMCo
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     builder = InlineKeyboardBuilder()
     builder.button(text="🔍 Поиск клиента", callback_data=f"template_client_search_{template_id}")
     builder.button(text="👤 Все клиенты", callback_data="template_show_all_clients")
@@ -339,9 +362,12 @@ async def show_all_clients_for_template(callback: CallbackQuery, state: FSMConte
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     builder = InlineKeyboardBuilder()
     for client in clients[:10]:  # Limit to 10 clients
-        builder.button(text=f"👤 {client.name}", callback_data=f"template_client_select_{client.id}")
+        builder.button(
+            text=f"👤 {client.name}", callback_data=f"template_client_select_{client.id}"
+        )
     builder.button(text="🔍 Поиск клиента", callback_data=f"template_client_search_{template_id}")
     builder.button(text="Назад", callback_data=f"template_select_{template_id}")
     builder.adjust(1)
@@ -350,7 +376,9 @@ async def show_all_clients_for_template(callback: CallbackQuery, state: FSMConte
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.waiting_for_client_selection, F.data.startswith("template_client_select_"))
+@router.callback_query(
+    TemplateManagement.waiting_for_client_selection, F.data.startswith("template_client_select_")
+)
 async def handle_template_client_selection(callback: CallbackQuery, state: FSMContext):
     """Handle client selection for template."""
     client_id = int(callback.data.split("_")[3])
@@ -417,6 +445,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
             # Send notification if client has telegram_id
             if client.telegram_id:
                 from app.services.notification_service import NotificationService
+
                 notification_service = NotificationService(session)
                 await notification_service.notify_subscription_created(
                     client=client,
@@ -429,7 +458,9 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
         await state.clear()
 
         traffic_text = f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
-        expiry_text = f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочный"
+        expiry_text = (
+            f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочный"
+        )
 
         text = (
             f"✅ <b>Подписка создана!</b>\n\n"
@@ -482,6 +513,7 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
 
     # Get all inbounds using same session
     from app.services.xui_service import XUIService
+
     async with async_session_factory() as session2:
         xui_service = XUIService(session2)
         inbounds = await xui_service.get_all_inbounds()
@@ -491,7 +523,9 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
         available_inbounds = [ib for ib in inbounds if ib.id not in template_inbound_ids]
 
         if not available_inbounds:
-            await callback.answer("⚠️ Все доступные подключения уже добавлены в шаблон", show_alert=True)
+            await callback.answer(
+                "⚠️ Все доступные подключения уже добавлены в шаблон", show_alert=True
+            )
             # Show current inbounds instead
             keyboard = get_template_inbounds_keyboard(template_id, template_inbounds)
             await callback.message.edit_text(
@@ -516,7 +550,9 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.waiting_for_inbound_selection, F.data.startswith("template_toggle_inbound_"))
+@router.callback_query(
+    TemplateManagement.waiting_for_inbound_selection, F.data.startswith("template_toggle_inbound_")
+)
 async def toggle_inbound_selection_for_template(callback: CallbackQuery, state: FSMContext):
     """Toggle inbound selection in multi-select mode for adding to template."""
     parts = callback.data.split("_")
@@ -535,6 +571,7 @@ async def toggle_inbound_selection_for_template(callback: CallbackQuery, state: 
 
     # Get available inbounds and template inbound IDs
     from app.services.xui_service import XUIService
+
     async with async_session_factory() as session:
         xui_service = XUIService(session)
         inbounds = await xui_service.get_all_inbounds()
@@ -552,6 +589,7 @@ async def toggle_inbound_selection_for_template(callback: CallbackQuery, state: 
 
     # Group inbounds by server
     from collections import defaultdict
+
     inbounds_by_server = defaultdict(list)
     for inbound in available_inbounds:
         inbounds_by_server[inbound.server.name].append(inbound)
@@ -573,7 +611,9 @@ async def toggle_inbound_selection_for_template(callback: CallbackQuery, state: 
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.waiting_for_inbound_selection, F.data == "template_confirm_add_inbounds")
+@router.callback_query(
+    TemplateManagement.waiting_for_inbound_selection, F.data == "template_confirm_add_inbounds"
+)
 async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMContext):
     """Confirm and add selected inbounds to template."""
     data = await state.get_data()
@@ -619,6 +659,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
         await state.set_state(TemplateManagement.waiting_for_server_selection)
 
         from app.services.xui_service import XUIService
+
         async with async_session_factory() as session:
             xui_service = XUIService(session)
             servers = await xui_service.get_active_servers()
@@ -742,7 +783,9 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
         await callback.answer()
 
 
-@router.callback_query(F.data.startswith("template_edit_") & ~F.data.startswith("template_edit_menu_"))
+@router.callback_query(
+    F.data.startswith("template_edit_") & ~F.data.startswith("template_edit_menu_")
+)
 async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
     """Start editing template."""
     if not is_admin:
@@ -816,7 +859,9 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
         "name": f"Текущее название: <b>{template.name}</b>",
         "description": f"Текущее описание: <b>{template.description or 'Нет описания'}</b>",
         "traffic": f"Текущий лимит трафика: <b>{template.default_total_gb} ГБ {'(безлимитный)' if template.default_total_gb == 0 else ''}</b>",
-        "expiry": f"Текущий срок действия: <b>{template.default_expiry_days} дн.</b>" if template.default_expiry_days else f"<b>Бессрочный</b>",
+        "expiry": f"Текущий срок действия: <b>{template.default_expiry_days} дн.</b>"
+        if template.default_expiry_days
+        else f"<b>Бессрочный</b>",
         "notes": f"Текущие заметки: <b>{template.notes or 'Нет заметок'}</b>",
     }
 
@@ -973,7 +1018,9 @@ async def process_edit_default_traffic(message: Message, state: FSMContext):
             await message.answer("⚠️ Лимит трафика не может быть отрицательным. Введите число:")
             return
     except ValueError:
-        await message.answer("⚠️ Введите корректное число (0 = безлимитный, /skip = использовать текущее):")
+        await message.answer(
+            "⚠️ Введите корректное число (0 = безлимитный, /skip = использовать текущее):"
+        )
         return
 
     data = await state.get_data()
@@ -1015,7 +1062,9 @@ async def process_edit_default_expiry(message: Message, state: FSMContext):
             await message.answer("⚠️ Срок действия не может быть отрицательным. Введите число:")
             return
     except ValueError:
-        await message.answer("⚠️ Введите корректное число (0 = бессрочный, /skip = использовать текущее):")
+        await message.answer(
+            "⚠️ Введите корректное число (0 = бессрочный, /skip = использовать текущее):"
+        )
         return
 
     if expiry == 0:
@@ -1110,7 +1159,9 @@ async def show_template_details_edit_menu(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("template_inbound_remove_"))
-async def start_remove_inbound_from_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_remove_inbound_from_template(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+):
     """Start removing inbound from template."""
     if not is_admin:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
@@ -1171,8 +1222,16 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
             template_service = SubscriptionTemplateService(session)
             template = await template_service.get_template(template_id)
 
-            traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
-            expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+            traffic_limit = (
+                f"{template.default_total_gb} ГБ"
+                if template.default_total_gb > 0
+                else "Безлимитный"
+            )
+            expiry_text = (
+                f"{template.default_expiry_days} дн."
+                if template.default_expiry_days
+                else "Бессрочный"
+            )
             inbounds_count = len(template.template_inbounds)
 
             text = (
@@ -1214,8 +1273,7 @@ async def start_template_client_search(callback: CallbackQuery, state: FSMContex
     keyboard = get_back_keyboard(f"template_select_{template_id}")
 
     await callback.message.edit_text(
-        "🔍 <b>Поиск клиента</b>\n\n"
-        "Введите имя, email или Telegram ID клиента для поиска:",
+        "🔍 <b>Поиск клиента</b>\n\nВведите имя, email или Telegram ID клиента для поиска:",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -1233,64 +1291,33 @@ async def process_template_client_search(message: Message, state: FSMContext):
     try:
         async with async_session_factory() as session:
             client_service = ClientService(session)
-            from app.services.client_service import _normalize_search_query
-            normalized_query = _normalize_search_query(query)
-
-            # Search by multiple fields
-            clients = []
-            try:
-                # Try exact match by telegram_id first
-                if normalized_query.isdigit():
-                    client = await client_service.get_client_by_telegram_id(int(normalized_query))
-                    if client and client.is_active:
-                        clients.append(client)
-
-                # Search by other fields
-                all_clients = await client_service.get_active_clients()
-                for client in all_clients:
-                    if client in clients:
-                        continue  # Skip if already found
-
-                    # Check name
-                    if _normalize_search_query(client.name) in normalized_query:
-                        clients.append(client)
-                        continue
-
-                    # Check email
-                    if client.xui_email and normalized_query in _normalize_search_query(client.xui_email):
-                        clients.append(client)
-                        continue
-
-                    # Check telegram_username
-                    if client.telegram_username and normalized_query in _normalize_search_query(client.telegram_username):
-                        clients.append(client)
-                        continue
-
-            except Exception as e:
-                logger.error(f"Error searching clients: {e}", exc_info=True)
+            all_results = await client_service.search_clients_all_fields(query)
+            clients = [c for c in all_results if c.is_active][:10]
 
         if not clients:
             await message.answer(
                 f"❌ Клиенты не найдены по запросу: <b>{query}</b>\n\n"
                 "Попробуйте другой запрос или создайте нового клиента.",
-                parse_mode="HTML"
+                parse_mode="HTML",
             )
             return
 
+        data = await state.get_data()
+        template_id = data.get("template_id")
         await state.set_state(TemplateManagement.waiting_for_client_selection)
 
         text = f"🔍 <b>Результаты поиска</b>\n\nПо запросу: <b>{query}</b>\n\nНайдено клиентов: {len(clients)}\n\nВыберите клиента:"
 
-        # Build keyboard with search results
         from aiogram.utils.keyboard import InlineKeyboardBuilder
+
         builder = InlineKeyboardBuilder()
-        for client in clients[:10]:  # Limit to 10 results
+        for client in clients:
             builder.button(
                 text=f"👤 {client.name}",
                 callback_data=f"template_client_select_{client.id}",
             )
-        builder.button(text="🔍 Новый поиск", callback_data=f"template_client_search_{state.get_data().get('template_id')}")
-        builder.button(text="Назад", callback_data=f"template_select_{state.get_data().get('template_id')}")
+        builder.button(text="🔍 Новый поиск", callback_data=f"template_client_search_{template_id}")
+        builder.button(text="Назад", callback_data=f"template_select_{template_id}")
         builder.adjust(1)
 
         await message.answer(text, reply_markup=builder.as_markup())
@@ -1311,7 +1338,9 @@ async def handle_template_no_inbounds(callback: CallbackQuery, is_admin: bool):
 
 
 @router.callback_query(F.data.startswith("template_multi_select_mode_"))
-async def enter_template_multi_select_mode(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def enter_template_multi_select_mode(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+):
     """Enter multi-select mode for template inbounds."""
     if not is_admin:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
@@ -1332,8 +1361,7 @@ async def enter_template_multi_select_mode(callback: CallbackQuery, state: FSMCo
         builder.button(text="🔙 Назад", callback_data=f"template_select_{template_id}")
         builder.adjust(1)
         await callback.message.edit_text(
-            "❌ У шаблона нет подключений.",
-            reply_markup=builder.as_markup()
+            "❌ У шаблона нет подключений.", reply_markup=builder.as_markup()
         )
         await callback.answer()
         return
@@ -1348,7 +1376,9 @@ async def enter_template_multi_select_mode(callback: CallbackQuery, state: FSMCo
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.inbounds_multi_select_mode, F.data.startswith("template_multi_select_"))
+@router.callback_query(
+    TemplateManagement.inbounds_multi_select_mode, F.data.startswith("template_multi_select_")
+)
 async def toggle_template_multi_selection(callback: CallbackQuery, state: FSMContext):
     """Toggle inbound selection in template multi-select mode."""
     parts = callback.data.split("_")
@@ -1379,12 +1409,16 @@ async def toggle_template_multi_selection(callback: CallbackQuery, state: FSMCon
         f"✅ <b>Режим множественного выбора</b>\n\n"
         f"Выберите inbounds для массовых действий:\n"
         f"(Выбрано: {len(selected_inbound_ids)}/{len(template_inbounds)})",
-        reply_markup=get_template_multi_select_keyboard(template_id, template_inbounds, selected_inbound_ids),
+        reply_markup=get_template_multi_select_keyboard(
+            template_id, template_inbounds, selected_inbound_ids
+        ),
     )
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.inbounds_multi_select_mode, F.data == "template_multi_delete_inbounds")
+@router.callback_query(
+    TemplateManagement.inbounds_multi_select_mode, F.data == "template_multi_delete_inbounds"
+)
 async def delete_selected_template_inbounds(callback: CallbackQuery, state: FSMContext):
     """Delete all selected inbounds from template."""
     data = await state.get_data()
@@ -1405,7 +1439,9 @@ async def delete_selected_template_inbounds(callback: CallbackQuery, state: FSMC
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.inbounds_multi_confirm_action, F.data == "template_multi_confirm")
+@router.callback_query(
+    TemplateManagement.inbounds_multi_confirm_action, F.data == "template_multi_confirm"
+)
 async def confirm_template_multi_action(callback: CallbackQuery, state: FSMContext):
     """Confirm multi-select action for template."""
     data = await state.get_data()
@@ -1438,8 +1474,16 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
 
             await state.clear()
 
-            traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
-            expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+            traffic_limit = (
+                f"{template.default_total_gb} ГБ"
+                if template.default_total_gb > 0
+                else "Безлимитный"
+            )
+            expiry_text = (
+                f"{template.default_expiry_days} дн."
+                if template.default_expiry_days
+                else "Бессрочный"
+            )
             inbounds_count = len(template.template_inbounds)
 
             text = (
@@ -1468,7 +1512,9 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
             await state.clear()
 
 
-@router.callback_query(TemplateManagement.inbounds_multi_confirm_action, F.data == "template_multi_cancel")
+@router.callback_query(
+    TemplateManagement.inbounds_multi_confirm_action, F.data == "template_multi_cancel"
+)
 async def cancel_template_multi_action(callback: CallbackQuery, state: FSMContext):
     """Cancel multi-select action and return to selection mode."""
     data = await state.get_data()
@@ -1487,12 +1533,16 @@ async def cancel_template_multi_action(callback: CallbackQuery, state: FSMContex
         f"✅ <b>Режим множественного выбора</b>\n\n"
         f"Выберите inbounds для массовых действий:\n"
         f"(Выбрано: {len(selected_inbound_ids)}/{len(template_inbounds)})",
-        reply_markup=get_template_multi_select_keyboard(template_id, template_inbounds, selected_inbound_ids),
+        reply_markup=get_template_multi_select_keyboard(
+            template_id, template_inbounds, selected_inbound_ids
+        ),
     )
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.inbounds_multi_select_mode, F.data == "template_multi_cancel")
+@router.callback_query(
+    TemplateManagement.inbounds_multi_select_mode, F.data == "template_multi_cancel"
+)
 async def exit_template_multi_select_mode(callback: CallbackQuery, state: FSMContext):
     """Exit multi-select mode and show template details."""
     data = await state.get_data()
@@ -1505,8 +1555,12 @@ async def exit_template_multi_select_mode(callback: CallbackQuery, state: FSMCon
         template = await template_service.get_template(template_id)
         template_inbounds = await template_service.get_template_inbounds(template_id)
 
-    traffic_limit = f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
-    expiry_text = f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+    traffic_limit = (
+        f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
+    )
+    expiry_text = (
+        f"{template.default_expiry_days} дн." if template.default_expiry_days else "Бессрочный"
+    )
     inbounds_count = len(template.template_inbounds)
 
     text = (
@@ -1545,6 +1599,7 @@ async def start_edit_template_inbounds(callback: CallbackQuery, state: FSMContex
             return
 
     from app.services.xui_service import XUIService
+
     async with async_session_factory() as session2:
         xui_service = XUIService(session2)
         servers = await xui_service.get_active_servers()
@@ -1565,7 +1620,10 @@ async def start_edit_template_inbounds(callback: CallbackQuery, state: FSMContex
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.waiting_for_server_selection, F.data.startswith("server_template_edit_server_"))
+@router.callback_query(
+    TemplateManagement.waiting_for_server_selection,
+    F.data.startswith("server_template_edit_server_"),
+)
 async def select_server_for_template_edit(callback: CallbackQuery, state: FSMContext):
     """Handle server selection for template inbound editing."""
     server_id = int(callback.data.split("_")[-1])
@@ -1577,6 +1635,7 @@ async def select_server_for_template_edit(callback: CallbackQuery, state: FSMCon
     # Get all needed data in one session context
     async with async_session_factory() as session:
         from app.services.xui_service import XUIService
+
         xui_service = XUIService(session)
 
         # Get template inbounds
@@ -1593,29 +1652,22 @@ async def select_server_for_template_edit(callback: CallbackQuery, state: FSMCon
         # Return to server selection
         async with async_session_factory() as session:
             from app.services.xui_service import XUIService
+
             xui_service = XUIService(session)
             servers = await xui_service.get_active_servers()
         await state.set_state(TemplateManagement.waiting_for_server_selection)
         await callback.message.edit_text(
-            f"✏️ <b>Редактирование подключений шаблона</b>\n\n"
-            f"Выберите сервер:",
+            f"✏️ <b>Редактирование подключений шаблона</b>\n\nВыберите сервер:",
             reply_markup=get_servers_keyboard_for_template_edit(servers, template_id),
         )
         return
 
     # Initialize selection state
-    await state.update_data(
-        template_inbound_ids=template_inbound_ids,
-        selected_inbound_ids=set()
-    )
+    await state.update_data(template_inbound_ids=template_inbound_ids, selected_inbound_ids=set())
     await state.set_state(TemplateManagement.waiting_for_inbound_selection)
 
     keyboard = get_template_edit_inbounds_keyboard(
-        template_id,
-        inbounds,
-        template_inbound_ids,
-        set(),
-        server.name
+        template_id, inbounds, template_inbound_ids, set(), server.name
     )
 
     await callback.message.edit_text(
@@ -1646,6 +1698,7 @@ async def cancel_template_edit_inbounds(callback: CallbackQuery, state: FSMConte
     await state.set_state(TemplateManagement.waiting_for_server_selection)
 
     from app.services.xui_service import XUIService
+
     async with async_session_factory() as session:
         xui_service = XUIService(session)
         servers = await xui_service.get_active_servers()
@@ -1661,7 +1714,10 @@ async def cancel_template_edit_inbounds(callback: CallbackQuery, state: FSMConte
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.waiting_for_inbound_selection, F.data.startswith("template_inbound_edit_toggle_"))
+@router.callback_query(
+    TemplateManagement.waiting_for_inbound_selection,
+    F.data.startswith("template_inbound_edit_toggle_"),
+)
 async def toggle_edit_inbound_selection(callback: CallbackQuery, state: FSMContext):
     """Toggle inbound selection in edit mode."""
     parts = callback.data.split("_")
@@ -1681,6 +1737,7 @@ async def toggle_edit_inbound_selection(callback: CallbackQuery, state: FSMConte
 
     # Get inbounds for the selected server
     from app.services.xui_service import XUIService
+
     async with async_session_factory() as session:
         xui_service = XUIService(session)
         server_id = data.get("server_id")
@@ -1688,11 +1745,7 @@ async def toggle_edit_inbound_selection(callback: CallbackQuery, state: FSMConte
         server = await xui_service.get_server_by_id(server_id)
 
     keyboard = get_template_edit_inbounds_keyboard(
-        template_id,
-        inbounds,
-        template_inbound_ids,
-        selected_inbound_ids,
-        server.name
+        template_id, inbounds, template_inbound_ids, selected_inbound_ids, server.name
     )
 
     await callback.message.edit_reply_markup(reply_markup=keyboard)
@@ -1711,7 +1764,9 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
     template_inbound_ids = data.get("template_inbound_ids", set())
 
     # Filter to only add inbounds not already in template
-    inbounds_to_add = [inb_id for inb_id in selected_inbound_ids if inb_id not in template_inbound_ids]
+    inbounds_to_add = [
+        inb_id for inb_id in selected_inbound_ids if inb_id not in template_inbound_ids
+    ]
 
     if not inbounds_to_add:
         await callback.answer("❌ Выберите хотя бы один новый inbound.", show_alert=True)
@@ -1752,6 +1807,7 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
         await state.set_state(TemplateManagement.waiting_for_server_selection)
 
         from app.services.xui_service import XUIService
+
         async with async_session_factory() as session:
             xui_service = XUIService(session)
             servers = await xui_service.get_active_servers()
@@ -1788,7 +1844,9 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
     template_inbound_ids = data.get("template_inbound_ids", set())
 
     # Filter to only remove inbounds that are in template
-    inbounds_to_remove = [inb_id for inb_id in selected_inbound_ids if inb_id in template_inbound_ids]
+    inbounds_to_remove = [
+        inb_id for inb_id in selected_inbound_ids if inb_id in template_inbound_ids
+    ]
 
     if not inbounds_to_remove:
         await callback.answer("❌ Выберите хотя бы один существующий inbound.", show_alert=True)
@@ -1820,6 +1878,7 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
         await state.set_state(TemplateManagement.waiting_for_server_selection)
 
         from app.services.xui_service import XUIService
+
         async with async_session_factory() as session:
             xui_service = XUIService(session)
             servers = await xui_service.get_active_servers()

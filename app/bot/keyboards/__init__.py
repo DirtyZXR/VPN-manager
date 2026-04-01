@@ -7,6 +7,7 @@ from app.bot.keyboards.inline import (
     get_confirm_keyboard,
     get_inbounds_keyboard,
     get_main_menu_keyboard,
+    get_user_keyboard,
     get_registration_keyboard,
     get_servers_keyboard,
     get_servers_keyboard_for_template_edit,
@@ -24,6 +25,7 @@ from app.bot.keyboards.inline import (
 
 __all__ = [
     "get_main_menu_keyboard",
+    "get_user_keyboard",
     "get_servers_keyboard",
     "get_servers_keyboard_for_template_edit",
     "get_clients_keyboard",

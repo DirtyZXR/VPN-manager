@@ -1,7 +1,19 @@
 """Inline keyboards for bot."""
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+
+
+def get_user_keyboard() -> ReplyKeyboardMarkup:
+    """Get persistent user keyboard with /start button.
+
+    Returns:
+        Reply keyboard markup that is always visible
+    """
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="/start")
+    builder.adjust(1)
+    return builder.as_markup(resize_keyboard=True)
 
 
 def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> InlineKeyboardMarkup:

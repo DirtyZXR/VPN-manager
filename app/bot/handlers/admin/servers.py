@@ -66,11 +66,11 @@ async def process_server_name(message: TgMessage, state: FSMContext) -> None:
     name = message.text.strip()
 
     if not name:
-        await message.answer("❌ Название не может быть пустым.")
+        await message.answer("❌ Название не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     if len(name) > 100:
-        await message.answer("❌ Название не должно превышать 100 символов.")
+        await message.answer("❌ Название не должно превышать 100 символов.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     await state.update_data(name=name)
@@ -87,15 +87,15 @@ async def process_server_base_url(message: TgMessage, state: FSMContext) -> None
     url = message.text.strip()
 
     if not url:
-        await message.answer("❌ URL не может быть пустым.")
+        await message.answer("❌ URL не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     if not url.startswith(("http://", "https://")):
-        await message.answer("❌ URL должен начинаться с http:// или https://")
+        await message.answer("❌ URL должен начинаться с http:// или https://", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     if len(url) > 500:
-        await message.answer("❌ URL не должен превышать 500 символов.")
+        await message.answer("❌ URL не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     await state.update_data(url=url)
@@ -121,7 +121,7 @@ async def process_server_panel_path(message: TgMessage, state: FSMContext) -> No
         panel_path = message.text.strip()
         if panel_path:
             if len(panel_path) > 500:
-                await message.answer("❌ Путь не должен превышать 500 символов.")
+                await message.answer("❌ Путь не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
                 return
             # Ensure path starts with /
             if not panel_path.startswith("/"):
@@ -155,7 +155,7 @@ async def process_server_subscription_path(message: TgMessage, state: FSMContext
         subscription_path = message.text.strip()
         if subscription_path:
             if len(subscription_path) > 500:
-                await message.answer("❌ Путь не должен превышать 500 символов.")
+                await message.answer("❌ Путь не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
                 return
             # Ensure path starts with /
             if not subscription_path.startswith("/"):
@@ -189,7 +189,7 @@ async def process_server_subscription_json_path(message: TgMessage, state: FSMCo
         subscription_json_path = message.text.strip()
         if subscription_json_path:
             if len(subscription_json_path) > 500:
-                await message.answer("❌ Путь не должен превышать 500 символов.")
+                await message.answer("❌ Путь не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
                 return
             # Ensure path starts with /
             if not subscription_json_path.startswith("/"):
@@ -214,11 +214,11 @@ async def process_server_username(message: TgMessage, state: FSMContext) -> None
     username = message.text.strip()
 
     if not username:
-        await message.answer("❌ Имя пользователя не может быть пустым.")
+        await message.answer("❌ Имя пользователя не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     if len(username) > 100:
-        await message.answer("❌ Имя пользователя не должно превышать 100 символов.")
+        await message.answer("❌ Имя пользователя не должно превышать 100 символов.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     await state.update_data(username=username)
@@ -236,7 +236,7 @@ async def process_server_password(message: TgMessage, state: FSMContext) -> None
     password = message.text
 
     if not password:
-        await message.answer("❌ Пароль не может быть пустым.")
+        await message.answer("❌ Пароль не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
         return
 
     await state.update_data(password=password)

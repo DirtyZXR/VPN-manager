@@ -78,11 +78,11 @@ async def process_client_name(message: Message, state: FSMContext) -> None:
     name = message.text.strip()
 
     if not name:
-        await message.answer("❌ Имя не может быть пустым.")
+        await message.answer("❌ Имя не может быть пустым.", reply_markup=get_back_keyboard("admin_clients"))
         return
 
     if len(name) > 100:
-        await message.answer("❌ Имя не должно превышать 100 символов.")
+        await message.answer("❌ Имя не должно превышать 100 символов.", reply_markup=get_back_keyboard("admin_clients"))
         return
 
     await state.update_data(name=name)
@@ -100,7 +100,7 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
 
     if email != "-":
         if "@" not in email or "." not in email:
-            await message.answer("❌ Некорректный формат email.")
+            await message.answer("❌ Некорректный формат email.", reply_markup=get_back_keyboard("admin_clients"))
             return
 
     await state.update_data(email=email if email != "-" else None)
@@ -125,7 +125,7 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
         try:
             telegram_id = int(input_text)
         except ValueError:
-            await message.answer("❌ Telegram ID должен быть числом или '-'.")
+            await message.answer("❌ Telegram ID должен быть числом или '-'.", reply_markup=get_back_keyboard("admin_clients"))
             return
 
     async with async_session_factory() as session:
@@ -148,7 +148,7 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
         except Exception as e:
             logger.error(f"Failed to create client: {e}", exc_info=True)
             await session.rollback()
-            await message.answer(f"❌ Ошибка при создании клиента: {e}")
+            await message.answer(f"❌ Ошибка при создании клиента: {e}", reply_markup=get_back_keyboard("admin_clients"))
             await state.clear()
 
 

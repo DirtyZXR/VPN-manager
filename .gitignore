@@ -67,3 +67,19 @@ dmypy.json
 # Alembic
 alembic/versions/*.py
 !alembic/versions/.gitkeep
+analyze_notification_issue.py
+CORRECT_ANALYSIS.md
+debug_detailed.py
+debug_fixed.py
+demonstrate_problem.py
+EXPLANATION.md
+FINAL_VERIFICATION_REPORT.md
+LOGIC_VERIFICATION.md
+REAL_PROBLEM_ANALYSIS.md
+SIMPLE_EXPLANATION.md
+simulate_flow.py
+SOLUTION_REPORT.md
+test_group_key_fix.py
+TRANSACTION_ISOLATION_PROBLEM.md
+verify_fix.py
+VISUAL_EXAMPLE.md

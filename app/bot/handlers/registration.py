@@ -6,7 +6,7 @@ from aiogram.fsm.context import FSMContext
 from loguru import logger
 
 from app.bot.states.user import UserRegistration
-from app.bot.keyboards import get_registration_keyboard
+from app.bot.keyboards import get_registration_keyboard, get_back_keyboard
 from app.database import async_session_factory
 from app.services.client_service import ClientService
 from app.config import get_settings
@@ -48,7 +48,7 @@ async def choose_enter_name(callback: CallbackQuery, state: FSMContext):
         "Вы можете ввести любое имя, которое будет использоваться в системе."
     )
 
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(text, reply_markup=get_back_keyboard("cancel"))
     await callback.answer()
 
 
@@ -97,7 +97,7 @@ async def choose_use_telegram(
         f"📱 Telegram ID: {client.telegram_id}"
     )
 
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(text, reply_markup=get_back_keyboard("back"))
     await callback.answer()
 
 
@@ -156,4 +156,4 @@ async def handle_custom_name(message: Message, state: FSMContext, event_from_use
         f"📱 Telegram ID: {client.telegram_id}"
     )
 
-    await message.answer(text)
+    await message.answer(text, reply_markup=get_back_keyboard("back"))
