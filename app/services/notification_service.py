@@ -69,11 +69,11 @@ class NotificationService:
                 )
 
             # Add subscription details
-            traffic_limit = f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
+            traffic_limit = (
+                f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
+            )
             expiry_text = (
-                f"{subscription.remaining_days} дн."
-                if subscription.expiry_date
-                else "Бессрочная"
+                f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочная"
             )
 
             message += (
@@ -81,17 +81,22 @@ class NotificationService:
                 f"📅 <b>Срок действия:</b> {expiry_text}\n"
             )
 
-            # Add subscription URL
+            # Add subscription URLs
             if connections:
-                server = connections[0].inbound.server
                 from urllib.parse import urljoin
-                subscription_path = getattr(server, 'subscription_path', '/sub/')
-                url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
 
-                message += (
-                    f"\n🔗 <b>URL подписки:</b>\n"
-                    f"<code>{url}</code>"
-                )
+                servers = {conn.inbound.server for conn in connections}
+                urls = []
+                for server in servers:
+                    subscription_path = getattr(server, "subscription_path", "/sub/")
+                    url = urljoin(
+                        server.url, f"{subscription_path}{subscription.subscription_token}"
+                    )
+                    urls.append(url)
+
+                if urls:
+                    message += f"\n🔗 <b>Все URL подписки:</b>\n"
+                    message += "\n".join([f"<code>{u}</code>" for u in urls])
 
             await bot.send_message(
                 chat_id=client.telegram_id,
@@ -112,7 +117,7 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send notification to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False
 
@@ -145,11 +150,11 @@ class NotificationService:
             )
 
             # Add subscription details
-            traffic_limit = f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
+            traffic_limit = (
+                f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
+            )
             expiry_text = (
-                f"{subscription.remaining_days} дн."
-                if subscription.expiry_date
-                else "Бессрочная"
+                f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочная"
             )
 
             message += (
@@ -176,7 +181,7 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send update notification to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False
 
@@ -226,7 +231,7 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send deletion notification to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False
 
@@ -267,13 +272,11 @@ class NotificationService:
 
             # Add subscription URL
             from urllib.parse import urljoin
-            subscription_path = getattr(server, 'subscription_path', '/sub/')
+
+            subscription_path = getattr(server, "subscription_path", "/sub/")
             url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
 
-            message += (
-                f"\n🔗 <b>URL подписки:</b>\n"
-                f"<code>{url}</code>"
-            )
+            message += f"\n🔗 <b>URL подписки:</b>\n<code>{url}</code>"
 
             await bot.send_message(
                 chat_id=client.telegram_id,
@@ -294,7 +297,7 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send inbound added notification to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False
 
@@ -347,7 +350,7 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send inbound removed notification to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False
 
@@ -392,7 +395,7 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send expiry warning to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False
 
@@ -434,6 +437,6 @@ class NotificationService:
             logger.error(
                 f"❌ Failed to send traffic warning to client {client.name} "
                 f"(Telegram ID: {client.telegram_id}): {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False

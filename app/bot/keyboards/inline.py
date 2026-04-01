@@ -35,7 +35,7 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
 
     if is_registered:
         builder.button(text="Мои подписки", callback_data="my_subscriptions")
-        builder.button(text="Все subscription URLs", callback_data="all_sub_urls")
+        builder.button(text="Все URL подписок", callback_data="all_sub_urls")
         builder.button(text="📖 Инструкция", callback_data="instruction_menu")
 
         if is_admin:
