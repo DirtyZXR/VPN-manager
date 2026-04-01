@@ -1,6 +1,7 @@
 """Application configuration using pydantic-settings."""
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Set
 
 from pydantic import Field
@@ -52,11 +53,7 @@ class Settings(BaseSettings):
         """Parse admin Telegram IDs from comma-separated string."""
         if not self.admin_telegram_ids:
             return set()
-        return {
-            int(id_.strip())
-            for id_ in self.admin_telegram_ids.split(",")
-            if id_.strip()
-        }
+        return {int(id_.strip()) for id_ in self.admin_telegram_ids.split(",") if id_.strip()}
 
     def is_admin(self, telegram_id: int) -> bool:
         """Check if Telegram ID is in admin list."""
@@ -67,3 +64,49 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
+
+
+_instructions_cache: dict | None = None
+
+
+def load_instructions() -> dict:
+    """Load instructions from YAML file with caching.
+
+    Returns:
+        Dictionary with 'full_instruction' and 'step_by_step' keys.
+    """
+    global _instructions_cache
+    if _instructions_cache is not None:
+        return _instructions_cache
+
+    try:
+        import yaml
+    except ImportError:
+        return {
+            "full_instruction": "⚠️ PyYAML не установлен. Установите: pip install pyyaml",
+            "step_by_step": {"steps": []},
+        }
+
+    path = Path(__file__).parent.parent / "instructions.yaml"
+    if not path.exists():
+        return {
+            "full_instruction": "⚠️ Файл instructions.yaml не найден.",
+            "step_by_step": {"steps": []},
+        }
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    _instructions_cache = data
+    return data
+
+
+def reload_instructions() -> dict:
+    """Force reload instructions from YAML file (clears cache).
+
+    Returns:
+        Freshly loaded instructions dictionary.
+    """
+    global _instructions_cache
+    _instructions_cache = None
+    return load_instructions()
