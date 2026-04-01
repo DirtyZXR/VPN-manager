@@ -25,7 +25,9 @@ router = Router()
 
 
 @router.callback_query(F.data == "admin_create_subscription")
-async def start_create_subscription(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_create_subscription(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start subscription creation flow."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -41,8 +43,7 @@ async def start_create_subscription(callback: CallbackQuery, state: FSMContext, 
 
     await state.set_state(SubscriptionManagement.waiting_for_client_selection)
     await callback.message.edit_text(
-        "📝 Создание подписки\n\n"
-        "Выберите клиента:",
+        "📝 Создание подписки\n\nВыберите клиента:",
         reply_markup=await get_clients_keyboard(clients),
     )
     await callback.answer()
@@ -64,7 +65,9 @@ async def get_clients_keyboard(clients: list) -> str:
     return builder.as_markup()
 
 
-@router.callback_query(SubscriptionManagement.waiting_for_client_selection, F.data.startswith("sub_client_select_"))
+@router.callback_query(
+    SubscriptionManagement.waiting_for_client_selection, F.data.startswith("sub_client_select_")
+)
 async def select_client_for_subscription(callback: CallbackQuery, state: FSMContext) -> None:
     """Handle client selection for subscription."""
     client_id = int(callback.data.split("_")[-1])
@@ -86,7 +89,9 @@ async def select_client_for_subscription(callback: CallbackQuery, state: FSMCont
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.waiting_for_server_selection, F.data.startswith("server_sub_select_"))
+@router.callback_query(
+    SubscriptionManagement.waiting_for_server_selection, F.data.startswith("server_sub_select_")
+)
 async def select_server_for_subscription(callback: CallbackQuery, state: FSMContext) -> None:
     """Handle server selection for subscription."""
     server_id = int(callback.data.split("_")[-1])
@@ -97,7 +102,9 @@ async def select_server_for_subscription(callback: CallbackQuery, state: FSMCont
         inbounds = await service.get_server_inbounds(server_id)
 
     if not inbounds:
-        await callback.answer("❌ У сервера нет активных inbounds. Сначала синхронизируйте сервер.", show_alert=True)
+        await callback.answer(
+            "❌ У сервера нет активных inbounds. Сначала синхронизируйте сервер.", show_alert=True
+        )
         return
 
     await state.set_state(SubscriptionManagement.waiting_for_inbound_selection)
@@ -111,7 +118,9 @@ async def select_server_for_subscription(callback: CallbackQuery, state: FSMCont
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.waiting_for_inbound_selection, F.data.startswith("toggle_inbound_"))
+@router.callback_query(
+    SubscriptionManagement.waiting_for_inbound_selection, F.data.startswith("toggle_inbound_")
+)
 async def toggle_inbound_selection(callback: CallbackQuery, state: FSMContext) -> None:
     """Toggle inbound selection."""
     inbound_id = int(callback.data.split("_")[-1])
@@ -156,7 +165,9 @@ async def toggle_inbound_selection(callback: CallbackQuery, state: FSMContext) -
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.waiting_for_inbound_selection, F.data == "confirm_inbounds")
+@router.callback_query(
+    SubscriptionManagement.waiting_for_inbound_selection, F.data == "confirm_inbounds"
+)
 async def confirm_inbound_selection(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm inbound selection and ask for parameters."""
     data = await state.get_data()
@@ -168,8 +179,7 @@ async def confirm_inbound_selection(callback: CallbackQuery, state: FSMContext) 
 
     await state.set_state(SubscriptionManagement.waiting_for_subscription_name)
     await callback.message.edit_text(
-        f"Выбрано {len(selected_inbounds)} inbounds\n\n"
-        "Введите название подписки:",
+        f"Выбрано {len(selected_inbounds)} inbounds\n\nВведите название подписки:",
         reply_markup=get_back_keyboard("admin_create_subscription"),
     )
     await callback.answer()
@@ -197,8 +207,7 @@ async def process_subscription_name(message: Message, state: FSMContext) -> None
         traffic = data.get("total_gb", 0)
         traffic_str = f"{traffic} GB" if traffic > 0 else "Безлимит"
         await message.answer(
-            f"Текущий трафик: {traffic_str}\n"
-            "Введите новый лимит трафика в GB (0 для безлимита):",
+            f"Текущий трафик: {traffic_str}\nВведите новый лимит трафика в GB (0 для безлимита):",
             reply_markup=get_back_keyboard("admin_sub_edit"),
         )
         return
@@ -242,8 +251,7 @@ async def process_traffic_limit(message: Message, state: FSMContext) -> None:
         expiry_date = data.get("expiry_date")
         expiry_str = f"{expiry_date.strftime('%d.%m.%Y')}" if expiry_date else "Бессрочно"
         await message.answer(
-            f"Текущий срок: {expiry_str}\n"
-            "Введите новый срок действия в днях (0 для бессрочной):",
+            f"Текущий срок: {expiry_str}\nВведите новый срок действия в днях (0 для бессрочной):",
             reply_markup=get_back_keyboard("admin_sub_edit"),
         )
         return
@@ -287,6 +295,7 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
         # Update subscription with all new parameters
         async with async_session_factory() as session:
             from app.services.new_subscription_service import NewSubscriptionService
+
             service = NewSubscriptionService(session)
             subscription = await service.update_subscription(
                 subscription_id,
@@ -350,7 +359,9 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.callback_query(SubscriptionManagement.confirm_creation, F.data == "confirm_create_subscription")
+@router.callback_query(
+    SubscriptionManagement.confirm_creation, F.data == "confirm_create_subscription"
+)
 async def create_subscription(callback: CallbackQuery, state: FSMContext) -> None:
     """Create subscription with inbound connections."""
     data = await state.get_data()
@@ -364,7 +375,7 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
             from app.services.new_subscription_service import NewSubscriptionService
 
             sub_service = NewSubscriptionService(session)
-            subscription = await sub_service.create_subscription(
+            subscription, _ = await sub_service.create_subscription(
                 client_id=data["client_id"],
                 name=data["subscription_name"],
                 total_gb=data["total_gb"],
@@ -386,6 +397,17 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                 created_connections.append(connection)
 
             await session.commit()
+
+            # Send notification
+            from app.services.notification_service import NotificationService
+
+            notification_service = NotificationService(session)
+            client = await client_service.get_client_by_id(data["client_id"])
+            await notification_service.notify_subscription_created(
+                client=client,
+                subscription=subscription,
+                connections=created_connections,
+            )
 
             # Show success message
             inbound_names = ", ".join([ib.remark for ib in selected_inbounds])
@@ -429,15 +451,17 @@ async def list_all_subscriptions(callback: CallbackQuery, is_admin: bool) -> Non
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscriptions = await service.get_all_subscriptions()
 
-    logger.info(f"Loading subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions")
+    logger.info(
+        f"Loading subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions"
+    )
 
     if not subscriptions:
         await callback.message.edit_text(
-            "📝 Список подписок пуст.\n\n"
-            "Создайте первую подписку через 'Создать подписку'.",
+            "📝 Список подписок пуст.\n\nСоздайте первую подписку через 'Создать подписку'.",
             reply_markup=get_back_keyboard("admin_menu"),
         )
         await callback.answer()
@@ -482,6 +506,7 @@ async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> 
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription(subscription_id)
 
@@ -490,7 +515,9 @@ async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> 
         return
 
     status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
-    expiry = subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
+    expiry = (
+        subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
+    )
     traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
 
     text = (
@@ -534,6 +561,7 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         connections = await service.get_subscription_inbounds(subscription_id)
 
@@ -543,9 +571,8 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
         builder.adjust(1)
 
         await callback.message.edit_text(
-            "❌ У подписки нет подключений.\n\n"
-            "Добавьте первый inbound для использования подписки.",
-            reply_markup=builder.as_markup()
+            "❌ У подписки нет подключений.\n\nДобавьте первый inbound для использования подписки.",
+            reply_markup=builder.as_markup(),
         )
         await callback.answer()
         return
@@ -577,8 +604,12 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
         builder.adjust(2)
 
     # Add action buttons once at the bottom
-    builder.button(text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}")
-    builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}")
+    builder.button(
+        text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}"
+    )
+    builder.button(
+        text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}"
+    )
     builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
     builder.adjust(1)
 
@@ -595,7 +626,9 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
 
 @router.callback_query(F.data.startswith("admin_sub_add_inbound_"))
-async def start_add_inbound_to_subscription(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_add_inbound_to_subscription(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start adding inbound to existing subscription."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -614,14 +647,16 @@ async def start_add_inbound_to_subscription(callback: CallbackQuery, state: FSMC
 
     await state.set_state(SubscriptionManagement.waiting_for_server_selection)
     await callback.message.edit_text(
-        "📢 Добавление inbound к подписке\n\n"
-        "Выберите сервер:",
+        "📢 Добавление inbound к подписке\n\nВыберите сервер:",
         reply_markup=get_servers_keyboard(servers, action="sub_add_inbound"),
     )
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.waiting_for_server_selection, F.data.startswith("server_sub_add_inbound_"))
+@router.callback_query(
+    SubscriptionManagement.waiting_for_server_selection,
+    F.data.startswith("server_sub_add_inbound_"),
+)
 async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMContext) -> None:
     """Handle server selection for adding inbound."""
     server_id = int(callback.data.split("_")[-1])
@@ -655,7 +690,10 @@ async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> No
 
     if not subscription_id:
         # Creating new subscription flow - use existing handler
-        from app.bot.handlers.admin.subscriptions import confirm_inbound_selection as original_confirm
+        from app.bot.handlers.admin.subscriptions import (
+            confirm_inbound_selection as original_confirm,
+        )
+
         await original_confirm(callback, state)
         return
 
@@ -665,6 +703,7 @@ async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> No
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
 
         try:
@@ -695,8 +734,6 @@ async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> No
             await service.close_all_clients()
 
     await state.clear()
-
-
 
 
 async def get_inbounds_selection_keyboard(inbounds: list, mode: str = "create") -> str:
@@ -738,13 +775,16 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
 
         try:
             # Get current connection
             from app.database.models import InboundConnection
+
             result = await session.execute(
-                select(InboundConnection).where(InboundConnection.id == connection_id)
+                select(InboundConnection)
+                .where(InboundConnection.id == connection_id)
                 .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
             )
             connection = result.scalar_one_or_none()
@@ -764,6 +804,7 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
             # Get updated connections and rebuild keyboard
             async with async_session_factory() as session2:
                 from app.services.new_subscription_service import NewSubscriptionService
+
                 service2 = NewSubscriptionService(session2)
                 connections = await service2.get_subscription_inbounds(connection.subscription_id)
 
@@ -787,15 +828,24 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
 
                 # Add buttons for each inbound
                 if conn.is_enabled:
-                    builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                    builder.button(
+                        text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}"
+                    )
                 else:
-                    builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                    builder.button(
+                        text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}"
+                    )
                 builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
                 builder.adjust(2)
 
             # Add action buttons once at the bottom
-            builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{connection.subscription_id}")
-            builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{connection.subscription_id}")
+            builder.button(
+                text="➕ Добавить inbound",
+                callback_data=f"admin_sub_add_inbound_{connection.subscription_id}",
+            )
+            builder.button(
+                text="🔙 Назад", callback_data=f"admin_sub_detail_{connection.subscription_id}"
+            )
             builder.adjust(1)
 
             await callback.message.edit_text(text, reply_markup=builder.as_markup())
@@ -809,7 +859,9 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
 
 
 @router.callback_query(F.data.startswith("inbounds_multi_select_"))
-async def enter_multi_select_mode(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def enter_multi_select_mode(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Enter multi-select mode for inbounds."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -822,6 +874,7 @@ async def enter_multi_select_mode(callback: CallbackQuery, state: FSMContext, is
     # Get connections for this subscription
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         connections = await service.get_subscription_inbounds(subscription_id)
 
@@ -830,8 +883,7 @@ async def enter_multi_select_mode(callback: CallbackQuery, state: FSMContext, is
         builder.button(text="🔙 Назад", callback_data=f"admin_sub_inbounds_{subscription_id}")
         builder.adjust(1)
         await callback.message.edit_text(
-            "❌ У подписки нет подключений.",
-            reply_markup=builder.as_markup()
+            "❌ У подписки нет подключений.", reply_markup=builder.as_markup()
         )
         await callback.answer()
         return
@@ -846,7 +898,9 @@ async def enter_multi_select_mode(callback: CallbackQuery, state: FSMContext, is
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data.startswith("multi_select_conn_"))
+@router.callback_query(
+    SubscriptionManagement.inbounds_multi_select_mode, F.data.startswith("multi_select_conn_")
+)
 async def toggle_multi_selection(callback: CallbackQuery, state: FSMContext) -> None:
     """Toggle connection selection in multi-select mode."""
     connection_id = int(callback.data.split("_")[-1])
@@ -864,6 +918,7 @@ async def toggle_multi_selection(callback: CallbackQuery, state: FSMContext) -> 
     subscription_id = data["subscription_id"]
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         connections = await service.get_subscription_inbounds(subscription_id)
 
@@ -876,7 +931,9 @@ async def toggle_multi_selection(callback: CallbackQuery, state: FSMContext) -> 
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_enable_all")
+@router.callback_query(
+    SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_enable_all"
+)
 async def enable_selected_connections(callback: CallbackQuery, state: FSMContext) -> None:
     """Enable all selected connections."""
     data = await state.get_data()
@@ -897,7 +954,9 @@ async def enable_selected_connections(callback: CallbackQuery, state: FSMContext
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_disable_all")
+@router.callback_query(
+    SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_disable_all"
+)
 async def disable_selected_connections(callback: CallbackQuery, state: FSMContext) -> None:
     """Disable all selected connections."""
     data = await state.get_data()
@@ -918,7 +977,9 @@ async def disable_selected_connections(callback: CallbackQuery, state: FSMContex
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.inbounds_multi_confirm_action, F.data == "multi_select_confirm")
+@router.callback_query(
+    SubscriptionManagement.inbounds_multi_confirm_action, F.data == "multi_select_confirm"
+)
 async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm multi-select action."""
     data = await state.get_data()
@@ -946,9 +1007,7 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
         result = await session.execute(
             select(InboundConnection)
             .where(InboundConnection.id.in_(list(selected_connections)))
-            .options(
-                selectinload(InboundConnection.inbound).selectinload(Inbound.server)
-            )
+            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
         )
         connections = result.scalars().all()
 
@@ -993,6 +1052,7 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
             # Refresh inbounds list with updated statuses
             async with async_session_factory() as session2:
                 from app.services.new_subscription_service import NewSubscriptionService
+
                 service2 = NewSubscriptionService(session2)
                 updated_connections = await service2.get_subscription_inbounds(subscription_id)
 
@@ -1015,20 +1075,32 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
 
                 # Add buttons for each inbound
                 if conn.is_enabled:
-                    builder.button(text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                    builder.button(
+                        text=f"✅ {inbound.remark}", callback_data=f"toggle_conn_{conn.id}"
+                    )
                 else:
-                    builder.button(text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}")
+                    builder.button(
+                        text=f"🔌 {inbound.remark}", callback_data=f"toggle_conn_{conn.id}"
+                    )
                 builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
                 builder.adjust(2)
 
             # Add action buttons once at the bottom
-            builder.button(text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}")
-            builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}")
+            builder.button(
+                text="✅ Множественный выбор",
+                callback_data=f"inbounds_multi_select_{subscription_id}",
+            )
+            builder.button(
+                text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}"
+            )
             builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
             builder.adjust(1)
 
             await callback.message.edit_text(text, reply_markup=builder.as_markup())
-            await callback.answer(f"Успешно {action_text} {success_count}/{len(selected_connections)} подключений", show_alert=True)
+            await callback.answer(
+                f"Успешно {action_text} {success_count}/{len(selected_connections)} подключений",
+                show_alert=True,
+            )
 
         except Exception as e:
             logger.error(f"Error in multi-select action: {e}", exc_info=True)
@@ -1041,7 +1113,9 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
             await service.close_all_clients()
 
 
-@router.callback_query(SubscriptionManagement.inbounds_multi_confirm_action, F.data == "multi_select_cancel")
+@router.callback_query(
+    SubscriptionManagement.inbounds_multi_confirm_action, F.data == "multi_select_cancel"
+)
 async def cancel_multi_select_action(callback: CallbackQuery, state: FSMContext) -> None:
     """Cancel multi-select action and return to selection mode."""
     data = await state.get_data()
@@ -1050,6 +1124,7 @@ async def cancel_multi_select_action(callback: CallbackQuery, state: FSMContext)
     # Get connections for this subscription
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         connections = await service.get_subscription_inbounds(subscription_id)
 
@@ -1065,7 +1140,9 @@ async def cancel_multi_select_action(callback: CallbackQuery, state: FSMContext)
     await callback.answer()
 
 
-@router.callback_query(SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_cancel")
+@router.callback_query(
+    SubscriptionManagement.inbounds_multi_select_mode, F.data == "multi_select_cancel"
+)
 async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> None:
     """Exit multi-select mode."""
     data = await state.get_data()
@@ -1076,14 +1153,14 @@ async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> 
     # We need to create a proper callback query for the inbounds list
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         connections = await service.get_subscription_inbounds(subscription_id)
 
     if not connections:
         await callback.answer("❌ У подписки нет подключений.")
         await callback.message.edit_text(
-            "❌ У подписки нет подключений.\n\n"
-            "Добавьте первый inbound для использования подписки.",
+            "❌ У подписки нет подключений.\n\nДобавьте первый inbound для использования подписки.",
             reply_markup=get_back_keyboard("admin_menu"),
         )
         return
@@ -1114,8 +1191,12 @@ async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> 
         builder.adjust(2)
 
     # Add action buttons once at the bottom
-    builder.button(text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}")
-    builder.button(text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}")
+    builder.button(
+        text="✅ Множественный выбор", callback_data=f"inbounds_multi_select_{subscription_id}"
+    )
+    builder.button(
+        text="➕ Добавить inbound", callback_data=f"admin_sub_add_inbound_{subscription_id}"
+    )
     builder.button(text="🔙 Назад", callback_data=f"admin_sub_detail_{subscription_id}")
     builder.adjust(1)
 
@@ -1155,7 +1236,9 @@ def get_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
 
 
 @router.callback_query(F.data.startswith("delete_conn_"))
-async def confirm_delete_inbound_connection(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def confirm_delete_inbound_connection(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Confirm deletion of inbound connection."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -1165,15 +1248,16 @@ async def confirm_delete_inbound_connection(callback: CallbackQuery, state: FSMC
     await state.update_data(connection_id=connection_id)
 
     await callback.message.edit_text(
-        "⚠️ Вы уверены, что хотите удалить это подключение?\n\n"
-        "Клиент будет удален из XUI панели!",
+        "⚠️ Вы уверены, что хотите удалить это подключение?\n\nКлиент будет удален из XUI панели!",
         reply_markup=get_confirm_keyboard(f"delete_conn_{connection_id}", "cancel"),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("confirm_delete_conn_"))
-async def delete_inbound_connection(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def delete_inbound_connection(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Delete inbound connection."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -1184,12 +1268,14 @@ async def delete_inbound_connection(callback: CallbackQuery, state: FSMContext, 
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
 
         try:
             # Get connection info
             from app.database.models import InboundConnection
             from sqlalchemy.orm import selectinload
+
             result = await session.execute(
                 select(InboundConnection)
                 .where(InboundConnection.id == connection_id)
@@ -1205,7 +1291,9 @@ async def delete_inbound_connection(callback: CallbackQuery, state: FSMContext, 
             subscription_id = connection.subscription_id
 
             # Remove from subscription
-            success = await service.remove_inbound_from_subscription(subscription_id, connection.inbound_id)
+            success = await service.remove_inbound_from_subscription(
+                subscription_id, connection.inbound_id
+            )
             await session.commit()
 
             await state.clear()
@@ -1220,6 +1308,7 @@ async def delete_inbound_connection(callback: CallbackQuery, state: FSMContext, 
 
             # Show error with back button to inbounds list
             from aiogram.utils.keyboard import InlineKeyboardBuilder
+
             builder = InlineKeyboardBuilder()
             builder.button(text="🔙 Назад", callback_data=f"admin_sub_inbounds_{subscription_id}")
             await callback.message.edit_text(
@@ -1232,7 +1321,9 @@ async def delete_inbound_connection(callback: CallbackQuery, state: FSMContext, 
 
 
 @router.callback_query(F.data.startswith("admin_sub_edit_"))
-async def start_edit_subscription(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_edit_subscription(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start editing subscription."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -1252,8 +1343,7 @@ async def start_edit_subscription(callback: CallbackQuery, state: FSMContext, is
     builder.adjust(1)
 
     await callback.message.edit_text(
-        "✏️ Редактирование подписки\n\n"
-        "Выберите параметр для изменения:",
+        "✏️ Редактирование подписки\n\nВыберите параметр для изменения:",
         reply_markup=builder.as_markup(),
     )
     await callback.answer()
@@ -1309,6 +1399,7 @@ async def process_edit_subscription_name(message, state: FSMContext) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.update_subscription(subscription_id, name=name)
         await session.commit()
@@ -1337,6 +1428,7 @@ async def process_edit_subscription_traffic(message, state: FSMContext) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.update_subscription(subscription_id, total_gb=total_gb)
         await session.commit()
@@ -1366,9 +1458,12 @@ async def process_edit_subscription_expiry(message, state: FSMContext) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         expiry_days_param = expiry_days if expiry_days > 0 else 0
-        subscription = await service.update_subscription(subscription_id, expiry_days=expiry_days_param)
+        subscription = await service.update_subscription(
+            subscription_id, expiry_days=expiry_days_param
+        )
         await session.commit()
 
     await state.clear()
@@ -1392,6 +1487,7 @@ async def process_subscription_notes(message, state: FSMContext) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.update_subscription(subscription_id, notes=notes)
         await session.commit()
@@ -1405,7 +1501,9 @@ async def process_subscription_notes(message, state: FSMContext) -> None:
 
 # Edit all subscription parameters
 @router.callback_query(F.data == "edit_sub_all")
-async def start_edit_all_subscription_params(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_edit_all_subscription_params(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start editing all subscription parameters."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -1416,6 +1514,7 @@ async def start_edit_all_subscription_params(callback: CallbackQuery, state: FSM
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription(subscription_id)
 
@@ -1454,6 +1553,7 @@ async def enable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.update_subscription(subscription_id, is_active=True)
         await session.commit()
@@ -1473,6 +1573,7 @@ async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
         subscription = await service.update_subscription(subscription_id, is_active=False)
         await session.commit()
@@ -1482,7 +1583,9 @@ async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("admin_sub_delete_"))
-async def confirm_delete_subscription(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def confirm_delete_subscription(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Confirm subscription deletion."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -1492,8 +1595,7 @@ async def confirm_delete_subscription(callback: CallbackQuery, state: FSMContext
     await state.update_data(subscription_id=subscription_id)
 
     await callback.message.edit_text(
-        "⚠️ Вы уверены, что хотите удалить эту подписку?\n\n"
-        "Все подключения в XUI будут удалены!",
+        "⚠️ Вы уверены, что хотите удалить эту подписку?\n\nВсе подключения в XUI будут удалены!",
         reply_markup=get_confirm_keyboard(f"admin_sub_delete_{subscription_id}", "admin_menu"),
     )
     await callback.answer()
@@ -1511,6 +1613,7 @@ async def delete_subscription(callback: CallbackQuery, state: FSMContext, is_adm
 
     async with async_session_factory() as session:
         from app.services.new_subscription_service import NewSubscriptionService
+
         service = NewSubscriptionService(session)
 
         try:

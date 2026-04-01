@@ -218,10 +218,7 @@ class SubscriptionTemplateService:
         result = await self.session.execute(
             select(SubscriptionTemplateInbound)
             .where(SubscriptionTemplateInbound.id == template_inbound.id)
-            .options(
-                selectinload(SubscriptionTemplateInbound.inbound)
-                .selectinload(Inbound.server)
-            )
+            .options(selectinload(SubscriptionTemplateInbound.inbound).selectinload(Inbound.server))
         )
         return result.scalar_one()
 
@@ -320,10 +317,11 @@ class SubscriptionTemplateService:
 
         # Import NewSubscriptionService for subscription creation
         from app.services.new_subscription_service import NewSubscriptionService
+
         sub_service = NewSubscriptionService(self.session)
 
         # Create subscription
-        subscription = await sub_service.create_subscription(
+        subscription, _ = await sub_service.create_subscription(
             client_id=client_id,
             name=subscription_name,
             total_gb=total_gb,
@@ -380,14 +378,13 @@ class SubscriptionTemplateService:
                 SubscriptionTemplateInbound.template_id == template_id,
                 SubscriptionTemplateInbound.inbound_id == inbound_id,
             )
-            .options(
-                selectinload(SubscriptionTemplateInbound.inbound)
-                .selectinload(Inbound.server)
-            )
+            .options(selectinload(SubscriptionTemplateInbound.inbound).selectinload(Inbound.server))
         )
         return result.scalar_one_or_none()
 
-    async def get_template_inbounds(self, template_id: int) -> Sequence[SubscriptionTemplateInbound]:
+    async def get_template_inbounds(
+        self, template_id: int
+    ) -> Sequence[SubscriptionTemplateInbound]:
         """Get all inbounds for template.
 
         Args:
@@ -399,10 +396,7 @@ class SubscriptionTemplateService:
         result = await self.session.execute(
             select(SubscriptionTemplateInbound)
             .where(SubscriptionTemplateInbound.template_id == template_id)
-            .options(
-                selectinload(SubscriptionTemplateInbound.inbound)
-                .selectinload(Inbound.server)
-            )
+            .options(selectinload(SubscriptionTemplateInbound.inbound).selectinload(Inbound.server))
             .order_by(SubscriptionTemplateInbound.order)
         )
         return result.scalars().all()

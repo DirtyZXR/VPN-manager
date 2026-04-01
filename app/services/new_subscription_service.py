@@ -47,9 +47,9 @@ class NewSubscriptionService:
             .where(Subscription.client_id == client_id)
             .options(
                 selectinload(Subscription.client),
-                selectinload(Subscription.inbound_connections).selectinload(
-                    InboundConnection.inbound
-                ).selectinload(Inbound.server),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server),
             )
             .order_by(Subscription.created_at.desc())
         )
@@ -71,9 +71,9 @@ class NewSubscriptionService:
             .where(Subscription.id == subscription_id)
             .options(
                 selectinload(Subscription.client),
-                selectinload(Subscription.inbound_connections).selectinload(
-                    InboundConnection.inbound
-                ).selectinload(Inbound.server),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server),
             )
         )
         return result.scalar_one_or_none()
@@ -85,7 +85,7 @@ class NewSubscriptionService:
         total_gb: int = 0,
         expiry_days: int | None = None,
         notes: str | None = None,
-    ) -> Subscription:
+    ) -> tuple[Subscription, list[InboundConnection]]:
         """Create a new subscription.
 
         Args:
@@ -96,7 +96,7 @@ class NewSubscriptionService:
             notes: Optional notes
 
         Returns:
-            Created subscription
+            A tuple containing the created subscription and an empty list of connections.
         """
         # Calculate expiry date
         expiry_date = None
@@ -117,7 +117,10 @@ class NewSubscriptionService:
         await self.session.flush()
 
         # Reload with relationships
-        return await self.get_subscription(subscription.id)
+        reloaded_subscription = await self.get_subscription(subscription.id)
+
+        # Return subscription and an empty list for connections, as they are created later
+        return reloaded_subscription, []
 
     # Inbound Connection methods
 
@@ -156,9 +159,7 @@ class NewSubscriptionService:
             raise XUIError("Subscription not found")
 
         inbound = await self.session.execute(
-            select(Inbound)
-            .where(Inbound.id == inbound_id)
-            .options(selectinload(Inbound.server))
+            select(Inbound).where(Inbound.id == inbound_id).options(selectinload(Inbound.server))
         )
         inbound = inbound.scalar_one_or_none()
         if not inbound:
@@ -166,6 +167,7 @@ class NewSubscriptionService:
 
         # Generate UUID and email with uniqueness check
         import uuid
+
         client_uuid = str(uuid.uuid4())
 
         # Generate unique email for this inbound
@@ -249,9 +251,7 @@ class NewSubscriptionService:
 
         # Get inbound info with server relationship
         inbound = await self.session.execute(
-            select(Inbound)
-            .where(Inbound.id == inbound_id)
-            .options(selectinload(Inbound.server))
+            select(Inbound).where(Inbound.id == inbound_id).options(selectinload(Inbound.server))
         )
         inbound = inbound.scalar_one_or_none()
 
@@ -387,6 +387,7 @@ class NewSubscriptionService:
         """
         # Get client
         from app.database.models import Client
+
         client = await self.session.get(Client, client_id)
         if not client:
             return 0
@@ -415,6 +416,7 @@ class NewSubscriptionService:
 
                     # Create update request with new tg_id
                     from app.xui_client.models import XUIAddClientRequest
+
                     expiry_time = 0
                     if subscription.expiry_date:
                         expiry_time = int(subscription.expiry_date.timestamp() * 1000)
@@ -433,7 +435,9 @@ class NewSubscriptionService:
                     # Use update_client instead of add_client to avoid duplicate email error
                     await xui_client.update_client(inbound.xui_id, update_request)
                     updated_count += 1
-                    logger.info(f"✅ Updated Telegram ID for client {client_id} in inbound {inbound.id}")
+                    logger.info(
+                        f"✅ Updated Telegram ID for client {client_id} in inbound {inbound.id}"
+                    )
 
                 except Exception as e:
                     logger.warning(f"Failed to update Telegram ID for client {client_id}: {e}")
@@ -557,7 +561,8 @@ class NewSubscriptionService:
                     server = connection.inbound.server
                     # Build subscription URL using server URL + subscription path
                     from urllib.parse import urljoin
-                    subscription_path = getattr(server, 'subscription_path', '/sub/')
+
+                    subscription_path = getattr(server, "subscription_path", "/sub/")
 
                     # subscription_path already ends with /, so just append token
                     urls.append(
@@ -566,7 +571,9 @@ class NewSubscriptionService:
                             "subscription_name": sub.name,
                             "server_name": server.name,
                             "inbound_name": connection.inbound.remark,
-                            "url": urljoin(server.url, f"{subscription_path}{sub.subscription_token}"),
+                            "url": urljoin(
+                                server.url, f"{subscription_path}{sub.subscription_token}"
+                            ),
                             "token": sub.subscription_token,
                         }
                     )
@@ -591,7 +598,8 @@ class NewSubscriptionService:
                     server = connection.inbound.server
                     # Build JSON subscription URL using server URL + subscription JSON path
                     from urllib.parse import urljoin
-                    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+
+                    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
                     # subscription_json_path already ends with /, so just append token
                     urls.append(
@@ -600,7 +608,9 @@ class NewSubscriptionService:
                             "subscription_name": sub.name,
                             "server_name": server.name,
                             "inbound_name": connection.inbound.remark,
-                            "url": urljoin(server.url, f"{subscription_json_path}{sub.subscription_token}"),
+                            "url": urljoin(
+                                server.url, f"{subscription_json_path}{sub.subscription_token}"
+                            ),
                             "token": sub.subscription_token,
                         }
                     )
@@ -681,10 +691,7 @@ class NewSubscriptionService:
             result = await self.session.execute(
                 select(InboundConnection)
                 .where(InboundConnection.subscription_id == subscription_id)
-                .options(
-                    selectinload(InboundConnection.inbound)
-                    .selectinload(Inbound.server)
-                )
+                .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
             )
             connections = result.scalars().all()
 
@@ -705,7 +712,9 @@ class NewSubscriptionService:
                         totalGB=subscription.total_gb * 1024 * 1024 * 1024,
                         expiryTime=expiry_time,
                         subId=subscription.subscription_token,
-                        tgId=int(subscription.client.telegram_id) if subscription.client.telegram_id else 0,
+                        tgId=int(subscription.client.telegram_id)
+                        if subscription.client.telegram_id
+                        else 0,
                     )
 
                     await xui_client.update_client(connection.inbound.xui_id, update_request)
@@ -715,7 +724,9 @@ class NewSubscriptionService:
                     connection.sync_status = "synced"
                     connection.last_sync_at = datetime.now(timezone.utc)
                 except Exception as e:
-                    logger.warning(f"Failed to update XUI client for connection {connection.id}: {e}")
+                    logger.warning(
+                        f"Failed to update XUI client for connection {connection.id}: {e}"
+                    )
                     connection.sync_status = "error"
 
             await self.session.flush()
@@ -774,10 +785,7 @@ class NewSubscriptionService:
         result = await self.session.execute(
             select(InboundConnection)
             .where(InboundConnection.subscription_id == subscription_id)
-            .options(
-                selectinload(InboundConnection.inbound)
-                .selectinload(Inbound.server)
-            )
+            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
             .order_by(InboundConnection.created_at.desc())
         )
         return result.scalars().all()
