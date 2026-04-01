@@ -101,9 +101,6 @@ class NotificationChecker:
                     # Check traffic notifications
                     await self._check_traffic_notifications(user, subs_with_conns)
 
-                    # Commit after processing this user to minimize transaction time
-                    await self.session.commit()
-
                 except Exception as e:
                     logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
                     # Rollback on error to avoid leaving pending transaction
@@ -198,6 +195,7 @@ class NotificationChecker:
                 notification_type,
                 group["subscriptions"],
                 group["level"],
+                subs_with_conns,
             )
 
     async def _check_traffic_notifications(
@@ -302,11 +300,11 @@ class NotificationChecker:
                     # Single connection -> profile level
                     conn = connections[0]
                     level = NotificationLevel.PROFILE
-                    key = self._get_group_key([conn.id])
+                    key = self._get_group_key([conn.id], notification_type)
                 else:
                     # Multiple connections in one subscription -> subscription level
                     level = NotificationLevel.SUBSCRIPTION
-                    key = self._get_group_key([subscription.id])
+                    key = self._get_group_key([subscription.id], notification_type)
             else:
                 # Multiple subscriptions -> user level
                 level = NotificationLevel.USER
@@ -367,10 +365,10 @@ class NotificationChecker:
             if len(group["subscriptions"]) == 1:
                 subscription = group["subscriptions"][0]
                 level = NotificationLevel.SUBSCRIPTION
-                key = self._get_group_key([subscription.id])
+                key = self._get_group_key([subscription.id], NotificationType.TRAFFIC_5GB.value)
             else:
                 level = NotificationLevel.USER
-                key = self._get_group_key([s.id for s in group["subscriptions"]])
+                key = self._get_group_key([s.id for s in group["subscriptions"]], NotificationType.TRAFFIC_5GB.value)
 
             group["level"] = level
             group["key"] = key
@@ -495,17 +493,23 @@ class NotificationChecker:
                 return True
         return False
 
-    def _get_group_key(self, ids: list[int]) -> str:
+    def _get_group_key(self, ids: list[int], notification_type: str | None = None) -> str:
         """Generate unique hash key for group of IDs.
 
         Args:
             ids: List of IDs
+            notification_type: Type of notification (to make keys unique per type)
 
         Returns:
             Hash string
         """
         sorted_ids = sorted(ids)
         key_string = ",".join(str(id) for id in sorted_ids)
+
+        # Add notification type to make keys unique per notification type
+        if notification_type:
+            key_string += f":{notification_type}"
+
         return hashlib.sha256(key_string.encode()).hexdigest()[:16]
 
     async def _notification_sent(
@@ -602,7 +606,7 @@ class NotificationChecker:
             )
 
             # Log notification
-            group_key = self._get_group_key([s.id for s in subscriptions])
+            group_key = self._get_group_key([s.id for s in subscriptions], notification_type)
             await self._log_notification(
                 user.id,
                 notification_type,
@@ -610,7 +614,7 @@ class NotificationChecker:
                 group_key,
             )
 
-            # Commit after logging to avoid transaction conflicts
+            # Commit immediately to ensure duplicate prevention works
             await self.session.commit()
 
             logger.info(
@@ -624,11 +628,7 @@ class NotificationChecker:
                 f"❌ Failed to send expiry notification to user {user.id}: {e}",
                 exc_info=True
             )
-            # Rollback to avoid leaving pending transaction
-            try:
-                await self.session.rollback()
-            except Exception:
-                pass
+            raise
 
     async def _send_traffic_notification(
         self,
@@ -658,7 +658,7 @@ class NotificationChecker:
             )
 
             # Log notification
-            group_key = self._get_group_key([s.id for s in subscriptions])
+            group_key = self._get_group_key([s.id for s in subscriptions], notification_type)
             await self._log_notification(
                 user.id,
                 notification_type,
@@ -666,7 +666,7 @@ class NotificationChecker:
                 group_key,
             )
 
-            # Commit after logging to avoid transaction conflicts
+            # Commit immediately to ensure duplicate prevention works
             await self.session.commit()
 
             logger.info(
@@ -680,11 +680,7 @@ class NotificationChecker:
                 f"❌ Failed to send traffic notification to user {user.id}: {e}",
                 exc_info=True
             )
-            # Rollback to avoid leaving pending transaction
-            try:
-                await self.session.rollback()
-            except Exception:
-                pass
+            raise
 
     def _build_expiry_message(
         self,
