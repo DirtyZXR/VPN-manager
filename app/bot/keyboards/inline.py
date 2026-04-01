@@ -1,6 +1,11 @@
 """Inline keyboards for bot."""
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
 
@@ -71,9 +76,7 @@ def get_servers_keyboard(servers: list, action: str = "select") -> InlineKeyboar
 
 
 def get_servers_keyboard_for_template_edit(
-    servers: list,
-    template_id: int,
-    action: str = "template_edit_server"
+    servers: list, template_id: int, action: str = "template_edit_server"
 ) -> InlineKeyboardMarkup:
     """Get servers keyboard for template editing.
 
@@ -226,6 +229,73 @@ def get_clients_keyboard(clients: list) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_clients_page_keyboard(
+    clients: list,
+    page: int,
+    total_count: int,
+    per_page: int = 5,
+) -> InlineKeyboardMarkup:
+    """Create inline keyboard for paginated clients list.
+
+    Args:
+        clients: List of clients for current page
+        page: Current page number (0-indexed)
+        total_count: Total number of active clients
+        per_page: Number of clients per page
+
+    Returns:
+        Inline keyboard markup
+    """
+    total_pages = max(1, -(-total_count // per_page))  # Ceiling division
+    current_page_display = page + 1  # 1-indexed for display
+
+    builder = InlineKeyboardBuilder()
+
+    for client in clients:
+        status = "✅" if client.is_active else "❌"
+        admin_badge = "🛡️" if client.is_admin else "👤"
+        builder.button(
+            text=f"{admin_badge} {status} {client.name} (ID: {client.id})",
+            callback_data=f"client_select_{client.id}",
+        )
+
+    if total_pages > 1:
+        pagination_row = []
+        if page > 0:
+            pagination_row.append(
+                InlineKeyboardButton(
+                    text=f"⬅️ Назад ({page}/{total_pages})",
+                    callback_data=f"clients_page_{page - 1}",
+                )
+            )
+        pagination_row.append(
+            InlineKeyboardButton(
+                text=f"📄 {current_page_display}/{total_pages}",
+                callback_data="clients_page_current",
+            )
+        )
+        if page < total_pages - 1:
+            pagination_row.append(
+                InlineKeyboardButton(
+                    text=f"Вперед ➡️ ({page + 2}/{total_pages})",
+                    callback_data=f"clients_page_{page + 1}",
+                )
+            )
+        builder.row(*pagination_row)
+
+    builder.button(text="🔍 Поиск клиентов", callback_data="client_search")
+    builder.button(text="➕ Добавить клиента", callback_data="client_add")
+    builder.button(text="🔙 Назад", callback_data="admin_clients")
+
+    rows = [1] * len(clients)
+    if total_pages > 1:
+        rows.append(len(pagination_row))
+    rows.extend([1, 1, 1])
+    builder.adjust(*rows)
+
+    return builder.as_markup()
+
+
 def get_client_search_keyboard() -> InlineKeyboardMarkup:
     """Get client search options keyboard.
 
@@ -292,7 +362,9 @@ def get_template_actions_keyboard(template_id: int) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Изменить", callback_data=f"template_edit_menu_{template_id}")
-    builder.button(text="✏️ Редактировать подключения", callback_data=f"template_manage_inbounds_{template_id}")
+    builder.button(
+        text="✏️ Редактировать подключения", callback_data=f"template_manage_inbounds_{template_id}"
+    )
     builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
     builder.button(text="🔙 Назад", callback_data="admin_templates")
     builder.adjust(2)
@@ -346,7 +418,9 @@ def get_template_inbounds_keyboard(
         builder.button(text="Нет подключений", callback_data="template_no_inbounds")
 
     # Action buttons
-    builder.button(text="✏️ Редактировать подключения", callback_data=f"template_edit_inbounds_{template_id}")
+    builder.button(
+        text="✏️ Редактировать подключения", callback_data=f"template_edit_inbounds_{template_id}"
+    )
     builder.button(text="Назад", callback_data=f"template_select_{template_id}")
     builder.adjust(1)
     return builder.as_markup()
@@ -357,7 +431,7 @@ def get_template_edit_inbounds_keyboard(
     all_inbounds: list,
     template_inbound_ids: set,
     selected_ids: set,
-    server_name: str
+    server_name: str,
 ) -> InlineKeyboardMarkup:
     """Get template inbounds editing keyboard with multi-select.
 
@@ -382,18 +456,19 @@ def get_template_edit_inbounds_keyboard(
         )
 
     builder.adjust(1)
-    builder.button(text="➕ Подключить выбранные", callback_data=f"template_bulk_add_selected_{template_id}")
-    builder.button(text="❌ Отключить выбранные", callback_data=f"template_bulk_remove_selected_{template_id}")
+    builder.button(
+        text="➕ Подключить выбранные", callback_data=f"template_bulk_add_selected_{template_id}"
+    )
+    builder.button(
+        text="❌ Отключить выбранные", callback_data=f"template_bulk_remove_selected_{template_id}"
+    )
     builder.button(text="🔙 Отмена", callback_data=f"template_bulk_cancel_{template_id}")
     builder.adjust(1)
 
     return builder.as_markup()
 
 
-def get_inbound_selection_for_template(
-    template_id: int,
-    inbounds: list
-) -> InlineKeyboardMarkup:
+def get_inbound_selection_for_template(template_id: int, inbounds: list) -> InlineKeyboardMarkup:
     """Get inbound selection keyboard for template.
 
     Args:
@@ -407,6 +482,7 @@ def get_inbound_selection_for_template(
 
     # Group inbounds by server
     from collections import defaultdict
+
     inbounds_by_server = defaultdict(list)
     for inbound in inbounds:
         inbounds_by_server[inbound.server.name].append(inbound)
@@ -426,9 +502,7 @@ def get_inbound_selection_for_template(
 
 
 def get_template_multi_select_keyboard(
-    template_id: int,
-    template_inbounds: list,
-    selected_ids: set
+    template_id: int, template_inbounds: list, selected_ids: set
 ) -> InlineKeyboardMarkup:
     """Get multi-select keyboard for template inbounds management.
 
@@ -465,4 +539,3 @@ def get_template_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="❌ Отмена", callback_data="template_multi_cancel")
     builder.adjust(1)
     return builder.as_markup()
-

@@ -3,6 +3,7 @@
 from app.bot.keyboards.inline import (
     get_back_keyboard,
     get_clients_keyboard,
+    get_clients_page_keyboard,
     get_client_search_keyboard,
     get_confirm_keyboard,
     get_inbounds_keyboard,
@@ -29,6 +30,7 @@ __all__ = [
     "get_servers_keyboard",
     "get_servers_keyboard_for_template_edit",
     "get_clients_keyboard",
+    "get_clients_page_keyboard",
     "get_client_search_keyboard",
     "get_users_keyboard",
     "get_inbounds_keyboard",

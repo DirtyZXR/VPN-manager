@@ -15,6 +15,7 @@ from app.bot.keyboards import (
     get_servers_keyboard,
     get_clients_keyboard,
     get_client_search_keyboard,
+    get_clients_page_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
 from app.bot.states.admin import TemplateManagement
@@ -35,7 +36,9 @@ async def show_clients(callback: CallbackQuery, is_admin: bool) -> None:
     try:
         # Create a custom keyboard for main menu
         from aiogram.utils.keyboard import InlineKeyboardBuilder
+
         kb = InlineKeyboardBuilder()
+        kb.button(text="📋 Все клиенты", callback_data="clients_list")
         kb.button(text="🔍 Поиск клиентов", callback_data="client_search")
         kb.button(text="➕ Добавить клиента", callback_data="client_add")
         kb.button(text="🔙 Назад", callback_data="admin_menu")
@@ -63,8 +66,7 @@ async def start_add_client(callback: CallbackQuery, state: FSMContext, is_admin:
     await state.set_state(ClientManagement.waiting_for_name)
     try:
         await callback.message.edit_text(
-            "➕ Добавление нового клиента\n\n"
-            "Введите имя клиента:",
+            "➕ Добавление нового клиента\n\nВведите имя клиента:",
             reply_markup=get_back_keyboard("admin_clients"),
         )
     except Exception:
@@ -78,11 +80,16 @@ async def process_client_name(message: Message, state: FSMContext) -> None:
     name = message.text.strip()
 
     if not name:
-        await message.answer("❌ Имя не может быть пустым.", reply_markup=get_back_keyboard("admin_clients"))
+        await message.answer(
+            "❌ Имя не может быть пустым.", reply_markup=get_back_keyboard("admin_clients")
+        )
         return
 
     if len(name) > 100:
-        await message.answer("❌ Имя не должно превышать 100 символов.", reply_markup=get_back_keyboard("admin_clients"))
+        await message.answer(
+            "❌ Имя не должно превышать 100 символов.",
+            reply_markup=get_back_keyboard("admin_clients"),
+        )
         return
 
     await state.update_data(name=name)
@@ -100,7 +107,9 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
 
     if email != "-":
         if "@" not in email or "." not in email:
-            await message.answer("❌ Некорректный формат email.", reply_markup=get_back_keyboard("admin_clients"))
+            await message.answer(
+                "❌ Некорректный формат email.", reply_markup=get_back_keyboard("admin_clients")
+            )
             return
 
     await state.update_data(email=email if email != "-" else None)
@@ -125,7 +134,10 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
         try:
             telegram_id = int(input_text)
         except ValueError:
-            await message.answer("❌ Telegram ID должен быть числом или '-'.", reply_markup=get_back_keyboard("admin_clients"))
+            await message.answer(
+                "❌ Telegram ID должен быть числом или '-'.",
+                reply_markup=get_back_keyboard("admin_clients"),
+            )
             return
 
     async with async_session_factory() as session:
@@ -148,7 +160,10 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
         except Exception as e:
             logger.error(f"Failed to create client: {e}", exc_info=True)
             await session.rollback()
-            await message.answer(f"❌ Ошибка при создании клиента: {e}", reply_markup=get_back_keyboard("admin_clients"))
+            await message.answer(
+                f"❌ Ошибка при создании клиента: {e}",
+                reply_markup=get_back_keyboard("admin_clients"),
+            )
             await state.clear()
 
 
@@ -184,9 +199,13 @@ async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     kb.button(text="📝 Подписки клиента", callback_data=f"client_subscriptions_{client_id}")
-    kb.button(text="📋 Создать подписку по шаблону", callback_data=f"client_create_from_template_{client_id}")
+    kb.button(
+        text="📋 Создать подписку по шаблону",
+        callback_data=f"client_create_from_template_{client_id}",
+    )
     kb.button(text="✏️ Изменить имя", callback_data=f"client_rename_name_{client_id}")
     kb.button(text="📱 Изменить Telegram ID", callback_data=f"client_rename_telegram_{client_id}")
     if client.is_admin:
@@ -224,12 +243,15 @@ async def show_client_subscriptions(callback: CallbackQuery, is_admin: bool) -> 
         subscriptions = await service.get_client_subscriptions(client_id)
 
     if not subscriptions:
-        text = "📝 У клиента нет подписок.\n\n" \
-               "Нажмите '➕ Создать подписку' для добавления первой подписки."
+        text = (
+            "📝 У клиента нет подписок.\n\n"
+            "Нажмите '➕ Создать подписку' для добавления первой подписки."
+        )
     else:
         text = "📝 Подписки клиента:\n\n"
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
 
     if subscriptions:
@@ -294,7 +316,9 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
         return
 
     status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
-    expiry = subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
+    expiry = (
+        subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
+    )
     traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
 
     text = (
@@ -312,6 +336,7 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
         text += f"\n📝 Заметки: {subscription.notes}"
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     builder = InlineKeyboardBuilder()
     builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
     builder.button(text="✏️ Редактировать", callback_data=f"admin_sub_edit_{subscription_id}")
@@ -336,7 +361,9 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
 
 
 @router.callback_query(F.data.startswith("client_create_subscription_"))
-async def start_create_subscription_for_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_create_subscription_for_client(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start creating subscription for specific client."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -367,7 +394,9 @@ async def start_create_subscription_for_client(callback: CallbackQuery, state: F
 
 
 @router.callback_query(F.data.startswith("client_create_from_template_"))
-async def start_create_subscription_from_template(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_create_subscription_from_template(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start creating subscription from template for specific client."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -381,7 +410,9 @@ async def start_create_subscription_from_template(callback: CallbackQuery, state
         templates = await template_service.get_all_templates()
 
     if not templates:
-        await callback.answer("❌ Нет доступных шаблонов. Сначала создайте шаблон.", show_alert=True)
+        await callback.answer(
+            "❌ Нет доступных шаблонов. Сначала создайте шаблон.", show_alert=True
+        )
         return
 
     await state.set_state(TemplateManagement.waiting_for_template_selection)
@@ -393,6 +424,7 @@ async def start_create_subscription_from_template(callback: CallbackQuery, state
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     builder = InlineKeyboardBuilder()
     for template in templates:
         status = "✅" if template.is_active else "❌"
@@ -408,7 +440,9 @@ async def start_create_subscription_from_template(callback: CallbackQuery, state
     await callback.answer()
 
 
-@router.callback_query(TemplateManagement.waiting_for_template_selection, F.data.startswith("template_for_client_"))
+@router.callback_query(
+    TemplateManagement.waiting_for_template_selection, F.data.startswith("template_for_client_")
+)
 async def select_template_for_client(callback: CallbackQuery, state: FSMContext) -> None:
     """Handle template selection for client subscription."""
     template_id = int(callback.data.split("_")[-1])
@@ -437,7 +471,9 @@ async def select_template_for_client(callback: CallbackQuery, state: FSMContext)
 
 
 @router.callback_query(F.data.startswith("client_rename_name_"))
-async def start_rename_client_name(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_rename_client_name(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start renaming client name."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -449,8 +485,7 @@ async def start_rename_client_name(callback: CallbackQuery, state: FSMContext, i
 
     try:
         await callback.message.edit_text(
-            "✏️ Изменение имени клиента\n\n"
-            "Введите новое имя:",
+            "✏️ Изменение имени клиента\n\nВведите новое имя:",
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     except Exception:
@@ -485,7 +520,9 @@ async def process_rename_client_name(message: Message, state: FSMContext) -> Non
 
 
 @router.callback_query(F.data.startswith("client_rename_telegram_"))
-async def start_rename_client_telegram(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_rename_client_telegram(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Start changing client Telegram ID."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
@@ -497,8 +534,7 @@ async def start_rename_client_telegram(callback: CallbackQuery, state: FSMContex
 
     try:
         await callback.message.edit_text(
-            "📱 Изменение Telegram ID\n\n"
-            "Введите новый Telegram ID (или '-' для удаления):",
+            "📱 Изменение Telegram ID\n\nВведите новый Telegram ID (или '-' для удаления):",
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     except Exception:
@@ -601,7 +637,9 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
             await session.commit()
 
-            await callback.answer(f"✅ Клиент отключен. Деактивировано {toggled} подключений в XUI.")
+            await callback.answer(
+                f"✅ Клиент отключен. Деактивировано {toggled} подключений в XUI."
+            )
             await select_client(callback, is_admin)
         except Exception:
             await session.rollback()
@@ -702,6 +740,83 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
     await select_client(callback, is_admin)
 
 
+# ==================== CLIENT LIST (PAGINATED) ====================
+
+
+@router.callback_query(F.data == "clients_list")
+async def show_clients_list(callback: CallbackQuery, is_admin: bool) -> None:
+    """Show paginated list of all active clients (first page)."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    await _render_clients_page(callback, page=0)
+
+
+@router.callback_query(F.data.startswith("clients_page_"))
+async def navigate_clients_page(callback: CallbackQuery, is_admin: bool) -> None:
+    """Navigate between client list pages."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    # Ignore the "current page" indicator button
+    if callback.data == "clients_page_current":
+        await callback.answer()
+        return
+
+    page = int(callback.data.split("_")[-1])
+    await _render_clients_page(callback, page=page)
+
+
+async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page: int = 5) -> None:
+    """Render a page of clients list.
+
+    Args:
+        callback: Callback query to respond to
+        page: Page number (0-indexed)
+        per_page: Number of clients per page
+    """
+    async with async_session_factory() as session:
+        service = ClientService(session)
+        clients, total_count = await service.get_clients_paginated(page=page, per_page=per_page)
+
+    if not clients:
+        try:
+            await callback.message.edit_text(
+                "👥 Список клиентов пуст.\n\n"
+                "Нажмите '➕ Добавить клиента' для создания первого клиента.",
+                reply_markup=get_back_keyboard("admin_clients"),
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    total_pages = max(1, -(-total_count // per_page))
+    text = (
+        f"👥 <b>Список клиентов</b> (страница {page + 1}/{total_pages})\n"
+        f"Всего активных: {total_count}\n\n"
+    )
+
+    for client in clients:
+        status = "✅" if client.is_active else "❌"
+        admin_badge = "🛡️" if client.is_admin else "👤"
+        text += f"{admin_badge} {status} <b>{client.name}</b> (ID: {client.id})\n"
+        if client.telegram_id:
+            text += f"   📱 Telegram: {client.telegram_id}\n"
+        text += f"   📧 {client.email}\n"
+        text += f"   📝 Подписок: {len(client.subscriptions)}\n\n"
+
+    keyboard = get_clients_page_keyboard(clients, page, total_count, per_page)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer()
+
+
 # ==================== CLIENT SEARCH HANDLERS ====================
 
 
@@ -714,8 +829,7 @@ async def start_client_search(callback: CallbackQuery, state: FSMContext, is_adm
 
     try:
         await callback.message.edit_text(
-            "🔍 Поиск клиентов\n\n"
-            "Выберите критерий поиска:",
+            "🔍 Поиск клиентов\n\nВыберите критерий поиска:",
             reply_markup=get_client_search_keyboard(),
         )
     except Exception:
@@ -740,10 +854,10 @@ async def select_search_field(callback: CallbackQuery, state: FSMContext, is_adm
         "telegram_id": "Введите Telegram ID клиента (точное совпадение):",
         "xui_email": "Введите email из XUI inbound (частичное совпадение):",
         "all": "Введите поисковый запрос (проверит ВСЕ поля одновременно):\n"
-                "• Имя\n"
-                "• Email клиента\n"
-                "• Telegram ID\n"
-                "• Email из XUI inbound",
+        "• Имя\n"
+        "• Email клиента\n"
+        "• Telegram ID\n"
+        "• Email из XUI inbound",
     }
 
     try:

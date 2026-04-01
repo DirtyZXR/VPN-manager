@@ -87,6 +87,34 @@ class ClientService:
         )
         return result.scalars().all()
 
+    async def get_clients_paginated(
+        self, page: int = 0, per_page: int = 5
+    ) -> tuple[Sequence[Client], int]:
+        """Get clients with pagination.
+
+        Args:
+            page: Page number (0-indexed)
+            per_page: Number of clients per page
+
+        Returns:
+            Tuple of (clients for this page, total client count)
+        """
+        count_result = await self.session.execute(select(Client).where(Client.is_active == True))
+        total_count = len(count_result.scalars().all())
+
+        offset = page * per_page
+        result = await self.session.execute(
+            select(Client)
+            .where(Client.is_active == True)
+            .options(selectinload(Client.subscriptions))
+            .order_by(Client.created_at.desc())
+            .offset(offset)
+            .limit(per_page)
+        )
+        clients = result.scalars().all()
+
+        return clients, total_count
+
     async def get_client_by_id(self, client_id: int) -> Client | None:
         """Get client by ID.
 
