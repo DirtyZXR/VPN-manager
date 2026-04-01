@@ -197,6 +197,8 @@ async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
         f"Подписок: {len(client.subscriptions)}\n"
         f"Создан: {client.created_at.strftime('%d.%m.%Y %H:%M')}"
     )
+    if client.notes:
+        text += f"\n📝 Заметки: {client.notes}"
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -206,6 +208,7 @@ async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
         text="📋 Создать подписку по шаблону",
         callback_data=f"client_create_from_template_{client_id}",
     )
+    kb.button(text="📝 Изменить заметки", callback_data=f"client_edit_notes_{client_id}")
     kb.button(text="✏️ Изменить имя", callback_data=f"client_rename_name_{client_id}")
     kb.button(text="📱 Изменить Telegram ID", callback_data=f"client_rename_telegram_{client_id}")
     if client.is_admin:
@@ -648,6 +651,53 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
             await sub_service.close_all_clients()
 
 
+# ==================== CLIENT NOTES ====================
+
+
+@router.callback_query(F.data.startswith("client_edit_notes_"))
+async def start_edit_client_notes(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
+    """Start editing client notes."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    client_id = int(callback.data.split("_")[-1])
+    await state.update_data(client_id=client_id)
+    await state.set_state(ClientManagement.waiting_for_notes)
+
+    try:
+        await callback.message.edit_text(
+            "📝 Изменение заметок клиента\n\nВведите новые заметки (для удаления отправьте `-`):",
+            reply_markup=get_back_keyboard(f"client_select_{client_id}"),
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.message(ClientManagement.waiting_for_notes)
+async def process_client_notes(message: Message, state: FSMContext) -> None:
+    """Process client notes input."""
+    data = await state.get_data()
+    client_id = data["client_id"]
+    notes = message.text.strip()
+
+    if notes == "-":
+        notes = None
+
+    async with async_session_factory() as session:
+        service = ClientService(session)
+        await service.update_client(client_id, notes=notes)
+        await session.commit()
+    await state.clear()
+    await message.answer(
+        "✅ Заметки клиента обновлены.",
+        reply_markup=get_back_keyboard(f"client_select_{client_id}"),
+    )
+
+
 @router.callback_query(F.data.startswith("client_delete_"))
 async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Confirm client deletion."""
@@ -740,54 +790,53 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
     await select_client(callback, is_admin)
 
 
-# ==================== CLIENT LIST (PAGINATED) ====================
+# ==================== CLIENT NOTES ====================
 
 
-@router.callback_query(F.data == "clients_list")
-async def show_clients_list(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show paginated list of all active clients (first page)."""
+@router.callback_query(F.data.startswith("client_edit_notes_"))
+async def start_edit_client_notes(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start editing client notes."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    await _render_clients_page(callback, page=0)
+    client_id = int(callback.data.split("_")[-1])
+    await state.update_data(client_id=client_id)
+    await state.set_state(ClientManagement.waiting_for_notes)
+
+    try:
+        await callback.message.edit_text(
+            "📝 Изменение заметок клиента\n\n"
+            "Введите новые заметки (для удаления отправьте `-`):",
+            reply_markup=get_back_keyboard(f"client_select_{client_id}"),
+        )
+    except Exception:
+        pass
+    await callback.answer()
 
 
-@router.callback_query(F.data.startswith("clients_page_"))
-async def navigate_clients_page(callback: CallbackQuery, is_admin: bool) -> None:
-    """Navigate between client list pages."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
+@router.message(ClientManagement.waiting_for_notes)
+async def process_client_notes(message: Message, state: FSMContext) -> None:
+    """Process client notes input."""
+    data = await state.get_data()
+    client_id = data["client_id"]
+    notes = message.text.strip()
 
-    # Ignore the "current page" indicator button
-    if callback.data == "clients_page_current":
-        await callback.answer()
-        return
+    if notes == "-":
+        notes = None
 
-    page = int(callback.data.split("_")[-1])
-    await _render_clients_page(callback, page=page)
-
-
-async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page: int = 5) -> None:
-    """Render a page of clients list.
-
-    Args:
-        callback: Callback query to respond to
-        page: Page number (0-indexed)
-        per_page: Number of clients per page
-    """
     async with async_session_factory() as session:
         service = ClientService(session)
-        clients, total_count = await service.get_clients_paginated(page=page, per_page=per_page)
+        await service.update_client(client_id, notes=notes)
+        await session.commit()
+    await state.clear()
+    await message.answer(
+        "✅ Заметки клиента обновлены.",
+        reply_markup=get_back_keyboard(f"client_select_{client_id}"),
+    )
 
-    if not clients:
-        try:
-            await callback.message.edit_text(
-                "👥 Список клиентов пуст.\n\n"
-                "Нажмите '➕ Добавить клиента' для создания первого клиента.",
-                reply_markup=get_back_keyboard("admin_clients"),
-            )
+
+# ==================== CLIENT DELETION ====================
         except Exception:
             pass
         await callback.answer()
