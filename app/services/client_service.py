@@ -339,6 +339,7 @@ class ClientService:
         name: str | None = None,
         email: str | None = None,
         telegram_id: int | None = None,
+        telegram_username: str | None = None,
         xui_email: str | None = None,
         search_all_fields: bool = False,
     ) -> Sequence[Client]:
@@ -388,6 +389,9 @@ class ClientService:
         if email:
             normalized_email = _normalize_search_query(email, is_email=True).lower()
             conditions.append(Client.email.like(f"%{normalized_email}%"))
+
+        if telegram_username:
+            conditions.append(Client.telegram_username_lower.like(f"%{telegram_username}%"))
 
         if xui_email:
             normalized_xui_email = _normalize_search_query(xui_email, is_email=True).lower()

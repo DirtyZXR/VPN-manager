@@ -853,7 +853,7 @@ async def select_search_field(callback: CallbackQuery, state: FSMContext, is_adm
     field_messages = {
         "name": "Введите имя клиента (частичное совпадение):",
         "email": "Введите email клиента (частичное совпадение):",
-        "telegram_id": "Введите Telegram ID клиента (точное совпадение):",
+        "telegram": "Введите Telegram ID (цифры) или @username клиента:",
         "xui_email": "Введите email из XUI inbound (частичное совпадение):",
         "all": "Введите поисковый запрос (проверит ВСЕ поля одновременно):\n"
         "• Имя\n"
@@ -892,13 +892,12 @@ async def process_search_query(message: Message, state: FSMContext) -> None:
         search_params["name"] = _normalize_search_query(query, is_email=False)
     elif field == "email":
         search_params["email"] = _normalize_search_query(query, is_email=True)
-    elif field == "telegram_id":
-        try:
-            telegram_id = int(query)
-            search_params["telegram_id"] = telegram_id
-        except ValueError:
-            await message.answer("❌ Telegram ID должен быть числом.")
-            return
+    elif field == "telegram":
+        stripped = query.lstrip("@")
+        if stripped.isdigit():
+            search_params["telegram_id"] = int(stripped)
+        else:
+            search_params["telegram_username"] = stripped.lower()
     elif field == "xui_email":
         search_params["xui_email"] = _normalize_search_query(query, is_email=True)
     elif field == "all":

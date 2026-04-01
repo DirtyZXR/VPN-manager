@@ -305,7 +305,7 @@ def get_client_search_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="👤 По имени", callback_data="search_field_name")
     builder.button(text="📧 По email", callback_data="search_field_email")
-    builder.button(text="📱 По Telegram ID", callback_data="search_field_telegram_id")
+    builder.button(text="📱 По Telegram", callback_data="search_field_telegram")
     builder.button(text="🔗 По XUI email", callback_data="search_field_xui_email")
     builder.button(text="🔍 Комплексный поиск", callback_data="search_field_all")
     builder.button(text="Назад", callback_data="admin_clients")
