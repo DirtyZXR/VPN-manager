@@ -14,5 +14,8 @@ pydantic-settings>=2.1.0
 # Security
 cryptography>=41.0.0
 
+# YAML
+pyyaml>=6.0
+
 # Logging
 loguru>=0.7.0

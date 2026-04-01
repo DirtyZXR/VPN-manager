@@ -36,12 +36,14 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
     if is_registered:
         builder.button(text="Мои подписки", callback_data="my_subscriptions")
         builder.button(text="Все subscription URLs", callback_data="all_sub_urls")
+        builder.button(text="📖 Инструкция", callback_data="instruction_menu")
 
         if is_admin:
             builder.button(text="Управление серверами", callback_data="admin_servers")
             builder.button(text="Управление клиентами", callback_data="admin_clients")
             builder.button(text="📋 Шаблоны подписок", callback_data="admin_templates")
             builder.button(text="🔄 Синхронизация", callback_data="admin_sync")
+            builder.button(text="🔄 Обновить инструкцию", callback_data="admin_reload_instructions")
             builder.button(text="Экспорт БД", callback_data="admin_export")
     else:
         builder.button(text="📝 Регистрация", callback_data="start_registration")
@@ -293,6 +295,57 @@ def get_clients_page_keyboard(
     rows.extend([1, 1, 1])
     builder.adjust(*rows)
 
+    return builder.as_markup()
+
+
+def get_instruction_menu_keyboard() -> InlineKeyboardMarkup:
+    """Get instruction selection keyboard.
+
+    Returns:
+        Inline keyboard with instruction options
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📖 Пошаговая", callback_data="instruction_step_by_step")
+    builder.button(text="📄 Полная", callback_data="instruction_full")
+    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_step_navigation_keyboard(current_step: int, total_steps: int) -> InlineKeyboardMarkup:
+    """Get step-by-step navigation keyboard.
+
+    Args:
+        current_step: Current step number (0-indexed)
+        total_steps: Total number of steps
+
+    Returns:
+        Inline keyboard with navigation buttons
+    """
+    builder = InlineKeyboardBuilder()
+
+    if current_step > 0:
+        builder.button(text="⬅️ Назад", callback_data=f"instruction_prev")
+    builder.button(
+        text=f"📄 {current_step + 1}/{total_steps}", callback_data="instruction_page_current"
+    )
+    if current_step < total_steps - 1:
+        builder.button(text="Далее ➡️", callback_data="instruction_next")
+    else:
+        builder.button(text="✅ Готово", callback_data="instruction_done")
+
+    builder.button(text="🔙 К меню инструкции", callback_data="instruction_menu")
+
+    # Layout: navigation row + back button
+    nav_buttons = 1  # page indicator always present
+    if current_step > 0:
+        nav_buttons += 1
+    if current_step < total_steps - 1:
+        nav_buttons += 1
+    else:
+        nav_buttons += 1  # "Готово" button
+
+    builder.adjust(nav_buttons, 1)
     return builder.as_markup()
 
 

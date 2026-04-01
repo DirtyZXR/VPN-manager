@@ -16,3 +16,9 @@ class UserRegistration(StatesGroup):
 
     choosing_name_source = State()
     entering_custom_name = State()
+
+
+class InstructionViewing(StatesGroup):
+    """States for step-by-step instruction viewing."""
+
+    viewing = State()
