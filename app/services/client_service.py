@@ -362,6 +362,14 @@ class ClientService:
 
         conditions = []
 
+        # telegram_id is always an exact AND filter, never OR with text fields
+        if telegram_id:
+            query = select(Client).where(Client.telegram_id == telegram_id)
+        else:
+            query = select(Client)
+
+        query = query.options(selectinload(Client.subscriptions))
+
         if name:
             normalized_name = _normalize_search_query(name, is_email=False)
             name_lower_query = normalized_name.lower()
@@ -380,11 +388,6 @@ class ClientService:
         if email:
             normalized_email = _normalize_search_query(email, is_email=True).lower()
             conditions.append(Client.email.like(f"%{normalized_email}%"))
-
-        if telegram_id:
-            conditions.append(Client.telegram_id == telegram_id)
-
-        query = select(Client).options(selectinload(Client.subscriptions))
 
         if xui_email:
             normalized_xui_email = _normalize_search_query(xui_email, is_email=True).lower()
@@ -413,15 +416,30 @@ class ClientService:
         Searches: name, email, telegram_id, telegram_username, XUI email.
         Uses pre-lowered columns for case-insensitive Cyrillic support.
 
+        When query is purely numeric, searches ONLY by telegram_id (exact match)
+        to avoid false positives from substring matching in UUID-based emails.
+
         Args:
             query: Search term to match across all fields
 
         Returns:
             List of matching clients
         """
-        from sqlalchemy import or_, text
+        from sqlalchemy import or_
         from app.database.models import InboundConnection, Subscription
 
+        # If query is purely numeric, search only by telegram_id
+        if query.strip().isdigit():
+            search_query = (
+                select(Client)
+                .options(selectinload(Client.subscriptions))
+                .where(Client.telegram_id == int(query))
+                .order_by(Client.created_at.desc())
+            )
+            result = await self.session.execute(search_query)
+            return result.scalars().all()
+
+        # Text query: search across all text fields
         normalized_query = _normalize_search_query(query, is_email=False)
         query_lower = normalized_query.lower()
 
@@ -438,9 +456,6 @@ class ClientService:
 
         normalized_email = _normalize_search_query(query, is_email=True).lower()
         all_conditions.append(Client.email.like(f"%{normalized_email}%"))
-
-        if query.isdigit():
-            all_conditions.append(Client.telegram_id == int(query))
 
         all_conditions.append(Client.telegram_username_lower.like(f"%{query_lower}%"))
 

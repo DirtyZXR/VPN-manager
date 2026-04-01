@@ -844,7 +844,9 @@ async def select_search_field(callback: CallbackQuery, state: FSMContext, is_adm
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    field = callback.data.split("_")[-1]
+    # Extract field from callback data: "search_field_<field>"
+    # e.g. "search_field_name" -> "name", "search_field_xui_email" -> "xui_email"
+    field = callback.data.removeprefix("search_field_")
     await state.update_data(search_field=field)
     await state.set_state(ClientManagement.waiting_for_search_query)
 
