@@ -49,6 +49,10 @@ def _split_query_into_words(query: str) -> list[str]:
     return [word for word in words if len(word) > 1]  # Skip single characters
 
 
+# Sentinel for optional parameters
+_SENTINEL = object()
+
+
 class ClientService:
     """Service for client management."""
 
@@ -212,13 +216,13 @@ class ClientService:
     async def update_client(
         self,
         client_id: int,
-        name: str | None = None,
-        email: str | None = None,
-        telegram_id: int | None = None,
-        telegram_username: str | None = None,
-        notes: str | None = None,
-        is_active: bool | None = None,
-        is_admin: bool | None = None,
+        name: str | None = _SENTINEL,
+        email: str | None = _SENTINEL,
+        telegram_id: int | None = _SENTINEL,
+        telegram_username: str | None = _SENTINEL,
+        notes: str | None = _SENTINEL,
+        is_active: bool | None = _SENTINEL,
+        is_admin: bool | None = _SENTINEL,
     ) -> Client | None:
         """Update client.
 
@@ -227,7 +231,7 @@ class ClientService:
             name: New name (optional)
             email: New email (optional)
             telegram_id: New Telegram ID (optional)
-            notes: New notes (optional)
+            notes: New notes (optional). Pass None to clear.
             is_active: New active status (optional)
             is_admin: New admin status (optional)
 
@@ -240,25 +244,25 @@ class ClientService:
 
         # Track if Telegram ID is being updated
         telegram_id_changed = False
-        if telegram_id is not None and telegram_id != client.telegram_id:
+        if telegram_id is not _SENTINEL and telegram_id != client.telegram_id:
             telegram_id_changed = True
 
-        if name is not None:
+        if name is not _SENTINEL:
             client.name = name
             client.name_lower = name.lower()
-        if email is not None:
+        if email is not _SENTINEL:
             client.email = email
-        if telegram_id is not None:
+        if telegram_id is not _SENTINEL:
             client.telegram_id = telegram_id
-        if telegram_username is not None:
-            clean_username = telegram_username.lstrip("@")
+        if telegram_username is not _SENTINEL:
+            clean_username = telegram_username.lstrip("@") if telegram_username else None
             client.telegram_username = clean_username
             client.telegram_username_lower = clean_username.lower() if clean_username else None
-        if notes is not None:
+        if notes is not _SENTINEL:
             client.notes = notes
-        if is_active is not None:
+        if is_active is not _SENTINEL:
             client.is_active = is_active
-        if is_admin is not None:
+        if is_admin is not _SENTINEL:
             client.is_admin = is_admin
 
         await self.session.flush()
