@@ -88,7 +88,11 @@ class NotificationService:
                 servers = {conn.inbound.server for conn in connections}
                 urls = []
                 for server in servers:
-                    subscription_path = getattr(server, "subscription_path", "/sub/")
+                    # Prioritize JSON URL, fallback to standard URL
+                    subscription_path = getattr(server, "subscription_json_path", None)
+                    if not subscription_path:
+                        subscription_path = getattr(server, "subscription_path", "/sub/")
+
                     url = urljoin(
                         server.url, f"{subscription_path}{subscription.subscription_token}"
                     )
@@ -273,7 +277,11 @@ class NotificationService:
             # Add subscription URL
             from urllib.parse import urljoin
 
-            subscription_path = getattr(server, "subscription_path", "/sub/")
+            # Prioritize JSON URL, fallback to standard URL
+            subscription_path = getattr(server, "subscription_json_path", None)
+            if not subscription_path:
+                subscription_path = getattr(server, "subscription_path", "/sub/")
+
             url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
 
             message += f"\n🔗 <b>URL подписки:</b>\n<code>{url}</code>"

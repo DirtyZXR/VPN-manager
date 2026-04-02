@@ -546,6 +546,8 @@ class NewSubscriptionService:
     async def get_subscription_urls(self, client_id: int) -> list[dict]:
         """Get all subscription URLs for client.
 
+        Prioritizes JSON URLs if available.
+
         Args:
             client_id: Client ID
 
@@ -556,64 +558,31 @@ class NewSubscriptionService:
 
         urls = []
         for sub in subscriptions:
-            for connection in sub.inbound_connections:
-                if connection.is_enabled:
-                    server = connection.inbound.server
-                    # Build subscription URL using server URL + subscription path
-                    from urllib.parse import urljoin
+            # Create a set of unique servers for this subscription
+            servers = {conn.inbound.server for conn in sub.inbound_connections if conn.is_enabled}
 
+            for server in servers:
+                # Prioritize JSON URL, fallback to standard URL
+                subscription_path = getattr(server, "subscription_json_path", None)
+                url_type = "json"
+                if not subscription_path:
                     subscription_path = getattr(server, "subscription_path", "/sub/")
+                    url_type = "standard"
 
-                    # subscription_path already ends with /, so just append token
-                    urls.append(
-                        {
-                            "subscription_id": sub.id,
-                            "subscription_name": sub.name,
-                            "server_name": server.name,
-                            "inbound_name": connection.inbound.remark,
-                            "url": urljoin(
-                                server.url, f"{subscription_path}{sub.subscription_token}"
-                            ),
-                            "token": sub.subscription_token,
-                        }
-                    )
+                from urllib.parse import urljoin
 
-        return urls
+                url = urljoin(server.url, f"{subscription_path}{sub.subscription_token}")
 
-    async def get_subscription_json_urls(self, client_id: int) -> list[dict]:
-        """Get all JSON subscription URLs for client.
-
-        Args:
-            client_id: Client ID
-
-        Returns:
-            List of JSON subscription info dicts
-        """
-        subscriptions = await self.get_client_subscriptions(client_id)
-
-        urls = []
-        for sub in subscriptions:
-            for connection in sub.inbound_connections:
-                if connection.is_enabled:
-                    server = connection.inbound.server
-                    # Build JSON subscription URL using server URL + subscription JSON path
-                    from urllib.parse import urljoin
-
-                    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
-
-                    # subscription_json_path already ends with /, so just append token
-                    urls.append(
-                        {
-                            "subscription_id": sub.id,
-                            "subscription_name": sub.name,
-                            "server_name": server.name,
-                            "inbound_name": connection.inbound.remark,
-                            "url": urljoin(
-                                server.url, f"{subscription_json_path}{sub.subscription_token}"
-                            ),
-                            "token": sub.subscription_token,
-                        }
-                    )
+                urls.append(
+                    {
+                        "subscription_id": sub.id,
+                        "subscription_name": sub.name,
+                        "server_name": server.name,
+                        "url": url,
+                        "token": sub.subscription_token,
+                        "type": url_type,
+                    }
+                )
 
         return urls
 
