@@ -44,8 +44,7 @@ async def choose_enter_name(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserRegistration.entering_custom_name)
 
     text = (
-        "✏️ Введите ваше имя\n\n"
-        "Вы можете ввести любое имя, которое будет использоваться в системе."
+        "✏️ Введите ваше имя\n\nВы можете ввести любое имя, которое будет использоваться в системе."
     )
 
     await callback.message.edit_text(text, reply_markup=get_back_keyboard("cancel"))
@@ -53,11 +52,7 @@ async def choose_enter_name(callback: CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(UserRegistration.choosing_name_source, F.data == "reg_use_telegram")
-async def choose_use_telegram(
-    callback: CallbackQuery,
-    state: FSMContext,
-    event_from_user
-):
+async def choose_use_telegram(callback: CallbackQuery, state: FSMContext, event_from_user):
     """Handle choice to use Telegram data."""
     # Get Telegram user data
     tg_user = event_from_user
@@ -65,7 +60,9 @@ async def choose_use_telegram(
     telegram_id = tg_user.id
     telegram_username = tg_user.username
 
-    logger.info(f"User registration via Telegram: name={name}, telegram_id={telegram_id}, username={telegram_username}")
+    logger.info(
+        f"User registration via Telegram: name={name}, telegram_id={telegram_id}, username={telegram_username}"
+    )
 
     async with async_session_factory() as session:
         client_service = ClientService(session)
@@ -85,6 +82,12 @@ async def choose_use_telegram(
             is_admin=False,
         )
         await session.commit()
+
+        # Notify admins
+        from app.services.notification_service import NotificationService
+
+        notification_service = NotificationService(session)
+        await notification_service.notify_admin_of_new_user(client)
 
         logger.info(f"✅ Client created: {client.name} (ID: {client.id}, email: {client.email})")
 
@@ -116,7 +119,9 @@ async def handle_custom_name(message: Message, state: FSMContext, event_from_use
         return
 
     if len(name) > 100:
-        await message.answer("⚠️ Имя слишком длинное. Пожалуйста, введите имя (максимум 100 символов):")
+        await message.answer(
+            "⚠️ Имя слишком длинное. Пожалуйста, введите имя (максимум 100 символов):"
+        )
         return
 
     # Get Telegram data
@@ -124,7 +129,9 @@ async def handle_custom_name(message: Message, state: FSMContext, event_from_use
     telegram_id = tg_user.id
     telegram_username = tg_user.username
 
-    logger.info(f"User registration with custom name: name={name}, telegram_id={telegram_id}, username={telegram_username}")
+    logger.info(
+        f"User registration with custom name: name={name}, telegram_id={telegram_id}, username={telegram_username}"
+    )
 
     async with async_session_factory() as session:
         client_service = ClientService(session)
@@ -144,6 +151,12 @@ async def handle_custom_name(message: Message, state: FSMContext, event_from_use
             is_admin=False,
         )
         await session.commit()
+
+        # Notify admins
+        from app.services.notification_service import NotificationService
+
+        notification_service = NotificationService(session)
+        await notification_service.notify_admin_of_new_user(client)
 
         logger.info(f"✅ Client created: {client.name} (ID: {client.id}, email: {client.email})")
 
