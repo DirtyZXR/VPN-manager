@@ -30,12 +30,13 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         service = NewSubscriptionService(session)
         subscriptions = await service.get_client_subscriptions(client.id)
 
-    logger.info(f"User {client.id} subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions")
+    logger.info(
+        f"User {client.id} subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions"
+    )
 
     if not subscriptions:
         await callback.message.edit_text(
-            "📝 У вас пока нет подписок.\n\n"
-            "Свяжитесь с администратором для создания подписки.",
+            "📝 У вас пока нет подписок.\n\nСвяжитесь с администратором для создания подписки.",
             reply_markup=get_back_keyboard("admin_menu"),
         )
         await callback.answer()
@@ -58,7 +59,6 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         builder.button(text=f"📝 {sub.name}", callback_data=f"user_sub_select_{sub.id}")
 
     builder.button(text="🔗 Subscription URLs", callback_data="all_sub_urls")
-    builder.button(text="📋 JSON URLs", callback_data="all_json_urls")
     builder.button(text="📊 Сроки и остатки", callback_data="show_subscription_status")
     builder.button(text="🔙 Назад", callback_data="admin_menu")
     builder.adjust(1)
@@ -101,8 +101,8 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
         # Show unique URLs
         url_map = {}  # url -> server_name
         for url_info in url_list:
-            url = url_info['url']
-            server_name = url_info['server_name']
+            url = url_info["url"]
+            server_name = url_info["server_name"]
             if url not in url_map:
                 url_map[url] = server_name
 
@@ -129,113 +129,6 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data == "all_json_urls")
-async def show_all_json_urls(callback: CallbackQuery, client) -> None:
-    """Show all JSON subscription URLs for user."""
-    if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
-        return
-
-    async with async_session_factory() as session:
-        service = NewSubscriptionService(session)
-        urls = await service.get_subscription_json_urls(client.id)
-
-    if not urls:
-        await callback.answer("❌ Нет активных подписок.", show_alert=True)
-        return
-
-    # Group URLs by subscription ID (unique subscription = subscription_id)
-    grouped_subs = defaultdict(list)
-    for url_info in urls:
-        sub_id = url_info["subscription_id"]
-        grouped_subs[sub_id].append(url_info)
-
-    MAX_LENGTH = 4096
-    text = "📋 JSON Subscription URLs:\n\n"
-
-    # Show subscription info with URLs
-    for sub_id, url_list in grouped_subs.items():
-        sub_name = url_list[0]["subscription_name"]
-
-        section = f"<b>Подписка: {sub_name}</b>\n"
-
-        # Group by URL (different inbounds on same server have same URL)
-        # Show unique URLs
-        url_map = {}  # url -> server_name
-        for url_info in url_list:
-            url = url_info['url']
-            server_name = url_info['server_name']
-            if url not in url_map:
-                url_map[url] = server_name
-
-        # Add URLs as text (without code blocks)
-        for url, server_name in url_map.items():
-            section += f"{url}\n"
-
-        section += "\n"
-
-        # Check if adding this section would exceed limit
-        if len(text) + len(section) > MAX_LENGTH:
-            section = "\n... (остальные подписки скрыты из-за ограничений Telegram)"
-            text += section
-            break
-
-        text += section
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📋 Скопировать все JSON URL", callback_data="copy_all_json_urls")
-    builder.button(text="🔙 Назад", callback_data="my_subscriptions")
-    builder.adjust(1)
-
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    await callback.answer()
-
-
-@router.callback_query(F.data == "copy_all_urls")
-async def copy_all_subscription_urls(callback: CallbackQuery, client) -> None:
-    """Copy all subscription URLs to clipboard-friendly format."""
-    if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
-        return
-
-    async with async_session_factory() as session:
-        service = NewSubscriptionService(session)
-        urls = await service.get_subscription_urls(client.id)
-
-    if not urls:
-        await callback.answer("❌ Нет активных подписок.", show_alert=True)
-        return
-
-    # Group URLs by subscription ID (unique subscription = subscription_id)
-    from collections import defaultdict
-    grouped_subs = defaultdict(list)
-    for url_info in urls:
-        sub_id = url_info["subscription_id"]
-        grouped_subs[sub_id].append(url_info)
-
-    # Build text with all URLs
-    MAX_LENGTH = 4096 - 20  # Reserve space for markdown formatting
-    text = ""
-
-    for sub_id, url_list in grouped_subs.items():
-        # Group unique URLs by server (same URL = same server)
-        url_map = {}
-        for url_info in url_list:
-            url = url_info['url']
-            server_name = url_info['server_name']
-            if url not in url_map:
-                url_map[url] = server_name
-
-        for url, server_name in url_map.items():
-            # Check if adding this URL would exceed limit
-            if len(text) + len(url) + 1 > MAX_LENGTH:  # +1 for newline
-                break
-            text += f"{url}\n"
-
-    # Send as new message instead of callback answer for better copy support
-    await callback.message.answer(f"```\n{text}\n```", parse_mode="MarkdownV2")
-
-
 @router.callback_query(F.data == "copy_all_json_urls")
 async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
     """Copy all JSON subscription URLs to clipboard-friendly format."""
@@ -253,6 +146,7 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
 
     # Group URLs by subscription ID (unique subscription = subscription_id)
     from collections import defaultdict
+
     grouped_subs = defaultdict(list)
     for url_info in urls:
         sub_id = url_info["subscription_id"]
@@ -266,8 +160,8 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
         # Group unique URLs by server (same URL = same server)
         url_map = {}
         for url_info in url_list:
-            url = url_info['url']
-            server_name = url_info['server_name']
+            url = url_info["url"]
+            server_name = url_info["server_name"]
             if url not in url_map:
                 url_map[url] = server_name
 
@@ -314,13 +208,20 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
     for conn in subscription.inbound_connections:
         if conn.is_enabled:
             server = conn.inbound.server
-            subscription_path = getattr(server, 'subscription_path', '/sub/')
-            subscription_url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
-            server_urls[subscription_url].append({
-                'server_name': server.name,
-                'inbound': conn.inbound,
-                'connection': conn,
-            })
+            # Prioritize JSON URL, fallback to standard URL
+            subscription_path = getattr(server, "subscription_json_path", None)
+            if not subscription_path:
+                subscription_path = getattr(server, "subscription_path", "/sub/")
+            subscription_url = urljoin(
+                server.url, f"{subscription_path}{subscription.subscription_token}"
+            )
+            server_urls[subscription_url].append(
+                {
+                    "server_name": server.name,
+                    "inbound": conn.inbound,
+                    "connection": conn,
+                }
+            )
 
     if server_urls:
         text += "📢 Активные подключения:\n\n"
@@ -330,8 +231,8 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
             # Show per-inbound traffic and expiry
             for i, conn_data in enumerate(conn_list):
-                conn = conn_data['connection']
-                inbound = conn_data['inbound']
+                conn = conn_data["connection"]
+                inbound = conn_data["inbound"]
 
                 # Per-inbound traffic
                 traffic = "Безлимит" if conn.is_unlimited else f"{conn.total_gb} GB"
@@ -358,8 +259,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
                 # Add connection status indicator with server name
                 conn_status = "✅" if conn.is_connection_active else "❌"
-                server_name = conn_data.get('server_name', 'Unknown')
-                text += f"    └ {conn_status} {inbound.remark} ({inbound.protocol}) | {server_name}\n"
+                server_name = conn_data.get("server_name", "Unknown")
+                text += (
+                    f"    └ {conn_status} {inbound.remark} ({inbound.protocol}) | {server_name}\n"
+                )
                 text += f"      Трафик: {traffic}\n"
                 text += f"      Срок: {expiry_info}\n"
 
@@ -400,13 +303,14 @@ async def export_database(callback: CallbackQuery, client) -> None:
         file_size = db_path.stat().st_size
         if file_size > 1.5 * 1024 * 1024 * 1024:
             await callback.answer(
-                f"❌ Файл базы данных слишком большой ({file_size / (1024*1024):.1f} MB). Максимум: 1.5 GB",
-                show_alert=True
+                f"❌ Файл базы данных слишком большой ({file_size / (1024 * 1024):.1f} MB). Максимум: 1.5 GB",
+                show_alert=True,
             )
             return
 
         # Create temporary copy to avoid file locking issues
         import tempfile
+
         temp_dir = tempfile.gettempdir()
         temp_db_path = Path(temp_dir) / f"vpn_manager_export_{client.id}.db"
 
@@ -421,13 +325,14 @@ async def export_database(callback: CallbackQuery, client) -> None:
             # Send database file
             from datetime import datetime
             from aiogram.types import FSInputFile
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
             document = FSInputFile(path=temp_db_path, filename=f"vpn_manager_{timestamp}.db")
             await callback.message.answer_document(
                 document=document,
                 caption=f"📄 Экспорт базы данных VPN Manager\n"
-                f"Размер: {file_size / (1024*1024):.2f} MB\n"
+                f"Размер: {file_size / (1024 * 1024):.2f} MB\n"
                 f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
             )
 
@@ -469,6 +374,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
     # Get XUI service for traffic data
     from app.services import XUIService
+
     xui_service = None
     xui_clients = {}
 
@@ -484,7 +390,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
         # Subscription-level expiry (from subscription or from connections)
         expiry_text = "Бессрочно"
         if sub.expiry_date:
-            expiry_text = (sub.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')
+            expiry_text = (sub.expiry_date + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
 
             # Handle timezone-aware vs naive datetimes
             sub_expiry = sub.expiry_date
@@ -513,7 +419,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             # Connection expiry
             conn_expiry = "Бессрочно"
             if conn.expiry_date:
-                conn_expiry = (conn.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')
+                conn_expiry = (conn.expiry_date + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
 
                 # Handle timezone-aware vs naive datetimes
                 conn_expiry_date = conn.expiry_date
@@ -548,7 +454,9 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
                         for xui_conn in clients:
                             if xui_conn.get("id") == conn.uuid:
-                                used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (1024**3)
+                                used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
+                                    1024**3
+                                )
                                 remaining_gb = conn.total_gb - used_gb
 
                                 if remaining_gb <= 5:
@@ -581,4 +489,3 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             await client_obj.close()
         except Exception as e:
             logger.warning(f"Error closing XUI client: {e}")
-
