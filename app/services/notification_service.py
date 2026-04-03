@@ -448,3 +448,45 @@ class NotificationService:
                 exc_info=True,
             )
             return False
+
+    async def notify_admin_of_new_user(self, client: Client) -> None:
+        """Send notification to admins about new user registration.
+
+        Args:
+            client: The newly registered client
+        """
+        settings = get_settings()
+        if not settings.admin_telegram_ids:
+            logger.warning("No admin Telegram IDs configured, skipping new user notification.")
+            return
+
+        message = (
+            f"👤 <b>Новый пользователь зарегистрирован!</b>\n\n"
+            f"<b>ID:</b> {client.id}\n"
+            f"<b>Имя:</b> {client.name}\n"
+            f"<b>Telegram ID:</b> {client.telegram_id}\n"
+            f"<b>Email:</b> {client.email or 'Не указан'}"
+        )
+
+        try:
+            bot = await self._get_bot()
+            for admin_id in settings.admin_telegram_ids:
+                try:
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=message,
+                        parse_mode="HTML",
+                    )
+                    logger.info(
+                        f"✅ Admin notification sent to {admin_id} for new user {client.name}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"❌ Failed to send admin notification to {admin_id} for new user {client.name}: {e}"
+                    )
+            await bot.session.close()
+        except Exception as e:
+            logger.error(
+                f"❌ Failed to send admin notifications for new user {client.name}: {e}",
+                exc_info=True,
+            )

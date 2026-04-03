@@ -58,15 +58,23 @@ class AuthMiddleware(BaseMiddleware):
                 )
                 await session.commit()
 
+                # Notify admins about new admin registration
+                from app.services.notification_service import NotificationService
+
+                notification_service = NotificationService(session)
+                await notification_service.notify_admin_of_new_user(client)
+
             # Update client admin status from database if exists
             if client:
                 is_admin = client.is_admin
 
             # Update data dict with middleware results
             # Note: client can be None for non-registered non-admin users
-            data.update({
-                "client": client,
-                "is_admin": is_admin,
-            })
+            data.update(
+                {
+                    "client": client,
+                    "is_admin": is_admin,
+                }
+            )
 
         return await handler(event, data)
