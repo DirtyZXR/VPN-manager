@@ -38,6 +38,9 @@ class SyncService:
         # Используем глобальную блокировку вместо локальной
         self._sync_lock = _global_sync_lock
 
+        # Initialize centralized XUIService for connection pooling and proper cleanup
+        self._xui_service = XUIService(session)
+
     # === CORE METHODS ===
 
     async def start_background_sync(self) -> None:
@@ -68,9 +71,8 @@ class SyncService:
 
     async def close_xui_clients(self) -> None:
         """Закрыть все XUI клиенты для предотвращения утечек ресурсов."""
-        from app.services import XUIService
-        xui_service = XUIService(self.session)
-        await xui_service.close_all_clients()
+        if hasattr(self, "_xui_service") and self._xui_service:
+            await self._xui_service.close_all_clients()
         logger.debug("XUI clients closed")
 
     async def _sync_cycle(self, force: bool = False) -> dict:
@@ -84,7 +86,9 @@ class SyncService:
         """
         # Проверить, есть ли другая активная синхронизация
         if self._sync_lock.locked():
-            logger.debug("[PAUSE] Пропуск цикла синхронизации - другая синхронизация уже выполняется")
+            logger.debug(
+                "[PAUSE] Пропуск цикла синхронизации - другая синхронизация уже выполняется"
+            )
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
@@ -128,30 +132,36 @@ class SyncService:
         """
         from sqlalchemy import select
 
-        result = await self.session.execute(
-            select(Server).where(Server.is_active == True)
-        )
+        result = await self.session.execute(select(Server).where(Server.is_active == True))
         servers = result.scalars().all()
 
-        logger.info(f"[LOG] sync_all_servers: найдено {len(servers)} активных серверов, force={force}")
+        logger.info(
+            f"[LOG] sync_all_servers: найдено {len(servers)} активных серверов, force={force}"
+        )
 
         synced_count = 0
         for i, server in enumerate(servers, 1):
             try:
-                logger.info(f"[LOG] sync_all_servers: сервер {i}/{len(servers)} - {server.name} (ID: {server.id})")
+                logger.info(
+                    f"[LOG] sync_all_servers: сервер {i}/{len(servers)} - {server.name} (ID: {server.id})"
+                )
                 result = await self.sync_server(server, force=force)
                 if result:
                     synced_count += 1
                     logger.info(f"[OK] Сервер {server.name} успешно синхронизирован")
                 else:
-                    logger.info(f"[SKIP] Сервер {server.name} пропущен (не нужна синхронизация или ошибка)")
+                    logger.info(
+                        f"[SKIP] Сервер {server.name} пропущен (не нужна синхронизация или ошибка)"
+                    )
             except Exception as e:
                 logger.error(
                     f"[ERROR] Ошибка синхронизации сервера {server.id}: {e}",
                     exc_info=True,
                 )
 
-        logger.info(f"[LOG] sync_all_servers завершен: {synced_count}/{len(servers)} серверов синхронизировано")
+        logger.info(
+            f"[LOG] sync_all_servers завершен: {synced_count}/{len(servers)} серверов синхронизировано"
+        )
         return synced_count
 
     async def sync_server(self, server: Server, force: bool = False) -> bool:
@@ -174,27 +184,28 @@ class SyncService:
             logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
 
             # Получить XUI клиент
-            xui_service = XUIService(self.session)
-            xui_client = await xui_service._get_client(server)
+            xui_client = await self._xui_service._get_client(server)
 
             # Синхронизировать inbounds
             await self._sync_server_inbounds(server, xui_client)
 
             # Синхронизировать клиентов для всех inbounds этого сервера
             from sqlalchemy import select
+
             inbounds_result = await self.session.execute(
-                select(Inbound).where(
-                    Inbound.server_id == server.id,
-                    Inbound.is_active == True
-                )
+                select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active == True)
             )
             inbounds = inbounds_result.scalars().all()
 
             clients_synced = 0
-            logger.info(f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}")
+            logger.info(
+                f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}"
+            )
             for inbound in inbounds:
                 try:
-                    logger.info(f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})")
+                    logger.info(
+                        f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})"
+                    )
                     synced = await self._sync_inbound_clients(inbound, xui_client)
                     clients_synced += synced
                     logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
@@ -246,22 +257,17 @@ class SyncService:
 
         # Получить все активные inbounds с серверами
         result = await self.session.execute(
-            select(Inbound)
-            .where(Inbound.is_active == True)
-            .options(selectinload(Inbound.server))
+            select(Inbound).where(Inbound.is_active == True).options(selectinload(Inbound.server))
         )
         inbounds = result.scalars().all()
 
         total_synced = 0
-        xui_service = None
 
         try:
-            xui_service = XUIService(self.session)
-
             for inbound in inbounds:
                 try:
                     # Получить XUI клиент для сервера
-                    xui_client = await xui_service._get_client(inbound.server)
+                    xui_client = await self._xui_service._get_client(inbound.server)
 
                     # Синхронизировать клиентов для этого inbound
                     synced = await self._sync_inbound_clients(inbound, xui_client)
@@ -303,17 +309,15 @@ class SyncService:
 
         # Получить все активные inbounds этого сервера
         result = await self.session.execute(
-            select(Inbound)
-            .where(Inbound.server_id == server_id, Inbound.is_active == True)
+            select(Inbound).where(Inbound.server_id == server_id, Inbound.is_active == True)
         )
         inbounds = result.scalars().all()
 
         total_synced = 0
-        xui_service = None
 
         try:
-            xui_service = XUIService(self.session)
-            xui_client = await xui_service._get_client(server)
+            # Получить XUI клиент для сервера
+            xui_client = await self._xui_service._get_client(server)
 
             for inbound in inbounds:
                 try:
@@ -368,9 +372,7 @@ class SyncService:
 
         return False
 
-    async def _sync_server_inbounds(
-        self, server: Server, xui_client: object
-    ) -> None:
+    async def _sync_server_inbounds(self, server: Server, xui_client: object) -> None:
         """Синхронизировать inbounds сервера.
 
         Args:
@@ -386,9 +388,7 @@ class SyncService:
             .where(Inbound.server_id == server.id)
             .options(selectinload(Inbound.server))
         )
-        existing_map = {
-            ib.xui_id: ib for ib in existing_inbounds.scalars().all()
-        }
+        existing_map = {ib.xui_id: ib for ib in existing_inbounds.scalars().all()}
 
         # Обновить или создать inbounds
         for xui_ib in xui_inbounds:
@@ -396,6 +396,7 @@ class SyncService:
 
             # Parse settings JSON to get client count
             import json
+
             client_count = 0
             if xui_ib.settings:
                 try:
@@ -407,10 +408,7 @@ class SyncService:
             if xui_id in existing_map:
                 # Обновить существующий
                 db_ib = existing_map[xui_id]
-                if (
-                    xui_ib.settings != db_ib.settings_json
-                    or xui_ib.remark != db_ib.remark
-                ):
+                if xui_ib.settings != db_ib.settings_json or xui_ib.remark != db_ib.remark:
                     db_ib.settings_json = xui_ib.settings or "{}"
                     db_ib.remark = xui_ib.remark
                     db_ib.client_count = client_count
@@ -441,9 +439,7 @@ class SyncService:
 
         await self.session.flush()
 
-    async def _sync_inbound_clients(
-        self, inbound: Inbound, xui_client: object
-    ) -> int:
+    async def _sync_inbound_clients(self, inbound: Inbound, xui_client: object) -> int:
         """Синхронизировать клиентов inbound из XUI.
 
         Args:
@@ -453,7 +449,9 @@ class SyncService:
         Returns:
             Количество синхронизированных клиентов
         """
-        logger.info(f"[LOG] _sync_inbound_clients: начало для inbound {inbound.id} (xui_id: {inbound.xui_id}, remark: {inbound.remark})")
+        logger.info(
+            f"[LOG] _sync_inbound_clients: начало для inbound {inbound.id} (xui_id: {inbound.xui_id}, remark: {inbound.remark})"
+        )
 
         # Получить inbound с клиентами из settings
         xui_inbound = await xui_client.get_inbound(inbound.xui_id)
@@ -468,6 +466,7 @@ class SyncService:
 
         # Парсим settings для получения клиентов
         import json
+
         try:
             settings_dict = json.loads(xui_inbound.settings)
             xui_clients = settings_dict.get("clients", [])
@@ -475,7 +474,9 @@ class SyncService:
             logger.error(f"Ошибка парсинга settings для inbound {inbound.id}: {e}")
             return 0
 
-        logger.info(f"[LOG] _sync_inbound_clients: получено {len(xui_clients)} клиентов из inbound {inbound.id} ({inbound.remark})")
+        logger.info(
+            f"[LOG] _sync_inbound_clients: получено {len(xui_clients)} клиентов из inbound {inbound.id} ({inbound.remark})"
+        )
         if xui_clients:
             logger.debug(f"Пример данных клиента: {xui_clients[0]}")
 
@@ -483,14 +484,12 @@ class SyncService:
         existing_connections = await self.session.execute(
             select(InboundConnection)
             .where(InboundConnection.inbound_id == inbound.id)
-            .options(
-                selectinload(InboundConnection.subscription).selectinload(Subscription.client)
-            )
+            .options(selectinload(InboundConnection.subscription).selectinload(Subscription.client))
         )
-        existing_map = {
-            conn.uuid: conn for conn in existing_connections.scalars().all()
-        }
-        logger.info(f"[LOG] _sync_inbound_clients: в базе найдено {len(existing_map)} подключений для inbound {inbound.id}")
+        existing_map = {conn.uuid: conn for conn in existing_connections.scalars().all()}
+        logger.info(
+            f"[LOG] _sync_inbound_clients: в базе найдено {len(existing_map)} подключений для inbound {inbound.id}"
+        )
 
         synced_count = 0
         for xui_client_data in xui_clients:
@@ -505,16 +504,22 @@ class SyncService:
 
                 # Получить данные клиента
                 xui_enable = xui_client_data.get("enable", True)
-                xui_total_gb = xui_client_data.get("totalGB", 0) // (1024 * 1024 * 1024)  # bytes to GB
+                xui_total_gb = xui_client_data.get("totalGB", 0) // (
+                    1024 * 1024 * 1024
+                )  # bytes to GB
                 xui_expiry_time = xui_client_data.get("expiryTime", 0)  # ms timestamp
 
-                logger.debug(f"Синхронизация клиента {conn.uuid}: enable={xui_enable}, totalGB={xui_total_gb}, expiry={xui_expiry_time}")
+                logger.debug(
+                    f"Синхронизация клиента {conn.uuid}: enable={xui_enable}, totalGB={xui_total_gb}, expiry={xui_expiry_time}"
+                )
 
                 # Обновить статус подключения
                 if conn.is_enabled != xui_enable:
                     old_status = conn.is_enabled
                     conn.is_enabled = xui_enable
-                    logger.info(f"[SYNC] Подключение {conn.id} ({conn.uuid}): is_enabled={old_status} → {xui_enable}")
+                    logger.info(
+                        f"[SYNC] Подключение {conn.id} ({conn.uuid}): is_enabled={old_status} → {xui_enable}"
+                    )
 
                 # Обновить per-connection total_gb и expiry_date
                 if conn.total_gb != xui_total_gb:
@@ -561,7 +566,9 @@ class SyncService:
                 conn.last_sync_at = datetime.now(timezone.utc)
                 synced_count += 1
             else:
-                logger.info(f"[NEW] Клиент {xui_uuid} найден на панели, но не в базе (создан вручную)")
+                logger.info(
+                    f"[NEW] Клиент {xui_uuid} найден на панели, но не в базе (создан вручную)"
+                )
 
         await self.session.flush()
         logger.info(f"[OK] Синхронизировано {synced_count} клиентов для inbound {inbound.id}")
@@ -592,32 +599,20 @@ class SyncService:
 
             # Дополнительная проверка: клиент существует в XUI?
             if status == "synced":
-                xui_service = None
                 try:
                     inbound = connection.inbound
                     if inbound and hasattr(inbound, "server"):
-                        xui_service = XUIService(self.session)
-                        xui_client = await xui_service._get_client(inbound.server)
-                        xui_data = await xui_client.get_client(
-                            inbound.xui_id, connection.uuid
-                        )
+                        xui_client = await self._xui_service._get_client(inbound.server)
+                        xui_data = await xui_client.get_client(inbound.xui_id, connection.uuid)
 
                         if not xui_data:
                             stats["error"] += 1
                             connection.sync_status = "error"
-                            connection.sync_error = (
-                                "Client missing in XUI (deleted manually?)"
-                            )
-                            logger.warning(
-                                f"[WARN] Клиент {connection.uuid} не найден в XUI"
-                            )
+                            connection.sync_error = "Client missing in XUI (deleted manually?)"
+                            logger.warning(f"[WARN] Клиент {connection.uuid} не найден в XUI")
 
                 except Exception as e:
                     logger.debug(f"Не удалось проверить {connection.uuid}: {e}")
-                # Don't close clients - keep them cached for reuse
-                # finally:
-                #     if xui_service:
-                #         await xui_service.close_all_clients()
 
         await self.session.flush()
         logger.info(f"[STATS] Статистика целостности: {stats}")
@@ -625,9 +620,7 @@ class SyncService:
 
     # === MANUAL SYNC ===
 
-    async def manual_sync(
-        self, entity_type: str, entity_id: int | None = None
-    ) -> dict:
+    async def manual_sync(self, entity_type: str, entity_id: int | None = None) -> dict:
         """Ручная синхронизация по запросу админа.
 
         Args:
@@ -639,21 +632,32 @@ class SyncService:
         """
         results = {"synced": 0, "errors": 0, "details": []}
 
-        logger.info(f"[LOG] manual_sync вызван с параметрами: entity_type={entity_type}, entity_id={entity_id}")
+        logger.info(
+            f"[LOG] manual_sync вызван с параметрами: entity_type={entity_type}, entity_id={entity_id}"
+        )
+
+        if entity_type == "all":
+            # Полная синхронизация
+            logger.info("[LOG] Запуск _sync_cycle с force=True")
+            sync_result = await self._sync_cycle(force=True)
+            results["synced"] = sync_result.get("servers", 0)
+            logger.info(f"[LOG] _sync_cycle завершен, sync_result={sync_result}")
+            return results
+
+        if self._sync_lock.locked():
+            logger.warning(
+                "[PAUSE] Пропуск ручной синхронизации - другая синхронизация уже выполняется"
+            )
+            results["errors"] += 1
+            results["details"].append("Синхронизация уже выполняется")
+            return results
 
         # Использовать блокировку для предотвращения конфликтов с фоновой синхронизацией
         logger.info(f"[LOG] Попытка получить блокировку для manual_sync")
         async with self._sync_lock:
             logger.info(f"[LOG] Блокировка получена, начало обработки entity_type={entity_type}")
             try:
-                if entity_type == "all":
-                    # Полная синхронизация
-                    logger.info("[LOG] Запуск _sync_cycle с force=True")
-                    sync_result = await self._sync_cycle(force=True)
-                    results["synced"] = sync_result.get("servers", 0)
-                    logger.info(f"[LOG] _sync_cycle завершен, sync_result={sync_result}")
-
-                elif entity_type == "server":
+                if entity_type == "server":
                     if entity_id:
                         logger.info(f"[LOG] Синхронизация сервера {entity_id} (с клиентами)")
                         server = await self.session.get(Server, entity_id)

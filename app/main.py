@@ -38,16 +38,20 @@ async def background_sync_wrapper() -> None:
                 async with _global_db_lock:
                     async with async_session_factory() as session:
                         sync_service = SyncService(session)
-                        # Run one sync cycle with force=True to sync immediately
-                        await sync_service._sync_cycle(force=True)
-                        # Commit changes to make them persistent
-                        await session.commit()
-                        # Close XUI clients to prevent resource leaks
-                        await sync_service.close_xui_clients()
+                        try:
+                            # Run one sync cycle with force=True to sync immediately
+                            await sync_service._sync_cycle(force=True)
+                            # Commit changes to make them persistent
+                            await session.commit()
+                        finally:
+                            # Close XUI clients to prevent resource leaks
+                            await sync_service.close_xui_clients()
 
                 # Wait for SYNC_INTERVAL (5 minutes) between cycles
                 logger.debug("Waiting for next sync cycle...")
                 await asyncio.sleep(300)  # 5 minutes = 300 seconds
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Error in background sync cycle: {e}", exc_info=True)
                 await asyncio.sleep(60)  # Wait 1 minute on error
@@ -66,8 +70,6 @@ async def background_notification_wrapper() -> None:
     global _background_notification_running
     _background_notification_running = True
 
-    notification_checker = None
-
     try:
         logger.info("Starting background notification wrapper...")
         while _background_notification_running:
@@ -76,11 +78,16 @@ async def background_notification_wrapper() -> None:
                 async with _global_db_lock:
                     async with async_session_factory() as session:
                         notification_checker = NotificationChecker(session)
-                        await notification_checker.check_and_notify()
+                        try:
+                            await notification_checker.check_and_notify()
+                        finally:
+                            await notification_checker.close()
 
                 # Wait 10 minutes between checks
                 logger.debug("Waiting for next notification check...")
                 await asyncio.sleep(600)  # 10 minutes = 600 seconds
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Error in background notification cycle: {e}", exc_info=True)
                 await asyncio.sleep(60)  # Wait 1 minute on error
@@ -91,9 +98,6 @@ async def background_notification_wrapper() -> None:
         logger.error(f"Fatal error in background notification wrapper: {e}", exc_info=True)
     finally:
         _background_notification_running = False
-        # Close XUI clients only at the end
-        if notification_checker:
-            await notification_checker.close()
         logger.info("Background notification wrapper stopped")
 
 
@@ -165,12 +169,13 @@ async def main() -> None:
         # Create async tasks
         sync_task = asyncio.create_task(background_sync_wrapper())
         notification_task = asyncio.create_task(background_notification_wrapper())
-        polling_task = asyncio.create_task(dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()))
+        polling_task = asyncio.create_task(
+            dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        )
 
         # Wait for either task to complete (usually polling will run forever)
         done, pending = await asyncio.wait(
-            [sync_task, notification_task, polling_task],
-            return_when=asyncio.FIRST_COMPLETED
+            [sync_task, notification_task, polling_task], return_when=asyncio.FIRST_COMPLETED
         )
 
         # Cancel remaining tasks
