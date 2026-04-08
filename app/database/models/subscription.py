@@ -1,6 +1,6 @@
 """Subscription model for client subscriptions."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
@@ -44,14 +44,21 @@ class Subscription(Base, TimestampMixin):
     )
 
     def __repr__(self) -> str:
-        return f"<Subscription(id={self.id}, name='{self.name}', token='{self.subscription_token}')>"
+        return (
+            f"<Subscription(id={self.id}, name='{self.name}', token='{self.subscription_token}')>"
+        )
 
     @property
     def is_expired(self) -> bool:
         """Check if subscription has expired."""
         if self.expiry_date is None:
             return False
-        return datetime.now(timezone.utc) > self.expiry_date
+
+        expiry = self.expiry_date
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+
+        return datetime.now(UTC) > expiry
 
     @property
     def is_unlimited(self) -> bool:
@@ -63,8 +70,15 @@ class Subscription(Base, TimestampMixin):
         """Calculate remaining days until expiry."""
         if self.expiry_date is None:
             return None
-        delta = self.expiry_date - datetime.now(timezone.utc)
-        return max(0, delta.days)
+
+        import math
+
+        expiry = self.expiry_date
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+
+        delta = expiry - datetime.now(UTC)
+        return max(0, math.ceil(delta.total_seconds() / 86400))
 
     @property
     def active_connections_count(self) -> int:
