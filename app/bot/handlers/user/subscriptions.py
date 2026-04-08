@@ -1,15 +1,14 @@
 """User subscription management handlers."""
 
-from datetime import datetime, timezone, timedelta
-from aiogram import Router, F
-from aiogram.types import CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from collections import defaultdict
-from loguru import logger
 from urllib.parse import urljoin
 
+from aiogram import F, Router
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from loguru import logger
+
 from app.bot.keyboards import get_back_keyboard
-from app.bot.states import UserSubscription
 from app.database import async_session_factory
 from app.services.new_subscription_service import NewSubscriptionService
 
@@ -24,7 +23,6 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         return
 
     async with async_session_factory() as session:
-        from sqlalchemy.orm import selectinload
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
@@ -88,11 +86,11 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
         sub_id = url_info["subscription_id"]
         grouped_subs[sub_id].append(url_info)
 
-    MAX_LENGTH = 4096
+    max_length = 4096
     text = "🔗 Subscription URLs:\n\n"
 
     # Show subscription info with URLs
-    for sub_id, url_list in grouped_subs.items():
+    for _sub_id, url_list in grouped_subs.items():
         sub_name = url_list[0]["subscription_name"]
 
         section = f"<b>Подписка: {sub_name}</b>\n"
@@ -107,13 +105,13 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
                 url_map[url] = server_name
 
         # Add URLs as text (without code blocks)
-        for url, server_name in url_map.items():
+        for url, _server_name in url_map.items():
             section += f"{url}\n"
 
         section += "\n"
 
         # Check if adding this section would exceed limit
-        if len(text) + len(section) > MAX_LENGTH:
+        if len(text) + len(section) > max_length:
             section = "\n... (остальные подписки скрыты из-за ограничений Telegram)"
             text += section
             break
@@ -153,10 +151,10 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
         grouped_subs[sub_id].append(url_info)
 
     # Build text with all URLs
-    MAX_LENGTH = 4096 - 20  # Reserve space for markdown formatting
+    max_length = 4096 - 20  # Reserve space for markdown formatting
     text = ""
 
-    for sub_id, url_list in grouped_subs.items():
+    for _sub_id, url_list in grouped_subs.items():
         # Group unique URLs by server (same URL = same server)
         url_map = {}
         for url_info in url_list:
@@ -165,9 +163,9 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
             if url not in url_map:
                 url_map[url] = server_name
 
-        for url, server_name in url_map.items():
+        for url, _server_name in url_map.items():
             # Check if adding this URL would exceed limit
-            if len(text) + len(url) + 1 > MAX_LENGTH:  # +1 for newline
+            if len(text) + len(url) + 1 > max_length:  # +1 for newline
                 break
             text += f"{url}\n"
 
@@ -238,20 +236,9 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 traffic = "Безлимит" if conn.is_unlimited else f"{conn.total_gb} GB"
 
                 # Per-inbound expiry
-                if conn.expiry_date:
-                    expiry = conn.expiry_date.strftime("%d.%m.%Y")
-                    remaining = conn.remaining_days_with_sign
-                    if remaining is not None:
-                        if remaining > 0:
-                            expiry_info = f"{expiry} (осталось {remaining} дней)"
-                        elif remaining == 0:
-                            expiry_info = f"{expiry} (истекает сегодня)"
-                        else:
-                            expiry_info = f"{expiry} (истек {abs(remaining)} дней назад)"
-                    else:
-                        expiry_info = expiry
-                else:
-                    expiry_info = "Бессрочно"
+                from app.utils.date_utils import format_expiry_date
+
+                expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
 
                 # Add empty line before each inbound for better readability (except first)
                 if i > 0:
@@ -285,9 +272,10 @@ async def export_database(callback: CallbackQuery, client) -> None:
 
     try:
         # Get database file path from config
-        from app.config import get_settings
-        from pathlib import Path
         import shutil
+        from pathlib import Path
+
+        from app.config import get_settings
 
         settings = get_settings()
 
@@ -324,6 +312,7 @@ async def export_database(callback: CallbackQuery, client) -> None:
 
             # Send database file
             from datetime import datetime
+
             from aiogram.types import FSInputFile
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -384,26 +373,13 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
         if not enabled_connections:
             text += f"❌ <b>{sub.name}</b>\n"
-            text += f"   Нет активных подключений\n\n"
+            text += "   Нет активных подключений\n\n"
             continue
 
         # Subscription-level expiry (from subscription or from connections)
-        expiry_text = "Бессрочно"
-        if sub.expiry_date:
-            expiry_text = (sub.expiry_date + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
+        from app.utils.date_utils import format_expiry_date
 
-            # Handle timezone-aware vs naive datetimes
-            sub_expiry = sub.expiry_date
-            now = datetime.now(timezone.utc)
-            if sub_expiry.tzinfo is None:
-                sub_expiry = sub_expiry.replace(tzinfo=timezone.utc)
-
-            remaining_days = (sub_expiry - now).days if sub.expiry_date else None
-            if remaining_days is not None:
-                if remaining_days <= 1:
-                    expiry_text += " (истекает в течение 24 часов)"
-                elif remaining_days <= 7:
-                    expiry_text += f" (осталось {remaining_days} дн.)"
+        expiry_text = format_expiry_date(sub.expiry_date, include_time=True)
 
         text += f"📦 <b>{sub.name}</b>\n"
         text += f"   📅 Срок: {expiry_text}\n"
@@ -417,24 +393,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             server = inbound.server
 
             # Connection expiry
-            conn_expiry = "Бессрочно"
-            if conn.expiry_date:
-                conn_expiry = (conn.expiry_date + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
-
-                # Handle timezone-aware vs naive datetimes
-                conn_expiry_date = conn.expiry_date
-                now = datetime.now(timezone.utc)
-                if conn_expiry_date.tzinfo is None:
-                    conn_expiry_date = conn_expiry_date.replace(tzinfo=timezone.utc)
-
-                conn_remaining = (conn_expiry_date - now).days if conn.expiry_date else None
-                if conn_remaining is not None:
-                    if conn_remaining > 0:
-                        conn_expiry += f" (осталось {conn_remaining} дн.)"
-                    elif conn_remaining == 0:
-                        conn_expiry += " (истекает сегодня)"
-                    else:
-                        conn_expiry += f" (истек {abs(conn_remaining)} дн. назад)"
+            conn_expiry = format_expiry_date(conn.expiry_date, include_time=True)
 
             # Connection traffic
             if conn.is_unlimited:

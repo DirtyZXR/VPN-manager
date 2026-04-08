@@ -1,12 +1,12 @@
 """InboundConnection model for unique inbound connections."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database.models.base import Base, TimestampMixin, SyncMixin
+from app.database.models.base import Base, SyncMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound
@@ -65,15 +65,29 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
         """Check if connection has expired."""
         if self.expiry_date is None:
             return False
-        return datetime.now() > self.expiry_date
+
+
+        expiry = self.expiry_date
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+
+        return datetime.now(UTC) > expiry
 
     @property
     def remaining_days(self) -> int | None:
         """Calculate remaining days until expiry."""
         if self.expiry_date is None:
             return None
-        delta = self.expiry_date - datetime.now()
-        return max(0, delta.days)
+
+        import math
+
+        expiry = self.expiry_date
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+
+        now = datetime.now(UTC)
+        delta = expiry - now
+        return max(0, math.ceil(delta.total_seconds() / 86400))
 
     @property
     def is_connection_active(self) -> bool:
@@ -85,5 +99,13 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
         """Calculate remaining days until expiry (can be negative)."""
         if self.expiry_date is None:
             return None
-        delta = self.expiry_date - datetime.now()
-        return delta.days
+
+        import math
+
+        expiry = self.expiry_date
+        if expiry.tzinfo is None:
+            expiry = expiry.replace(tzinfo=UTC)
+
+        now = datetime.now(UTC)
+        delta = expiry - now
+        return math.ceil(delta.total_seconds() / 86400)
