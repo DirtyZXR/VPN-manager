@@ -3,7 +3,6 @@
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     ReplyKeyboardMarkup,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
@@ -328,7 +327,7 @@ def get_step_navigation_keyboard(current_step: int, total_steps: int) -> InlineK
     builder = InlineKeyboardBuilder()
 
     if current_step > 0:
-        builder.button(text="⬅️ Назад", callback_data=f"instruction_prev")
+        builder.button(text="⬅️ Назад", callback_data="instruction_prev")
     builder.button(
         text=f"📄 {current_step + 1}/{total_steps}", callback_data="instruction_page_current"
     )

@@ -1,8 +1,7 @@
 """Tests for utility functions."""
 
-import pytest
 
-from app.utils import generate_uuid, generate_subscription_token, generate_email
+from app.utils import generate_email, generate_subscription_token, generate_uuid
 
 
 def test_generate_uuid():

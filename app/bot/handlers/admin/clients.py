@@ -1,21 +1,22 @@
 """Admin client management handlers."""
 
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+import contextlib
+
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
-
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.bot.keyboards import (
     get_back_keyboard,
+    get_client_search_keyboard,
+    get_clients_keyboard,
+    get_clients_page_keyboard,
     get_confirm_keyboard,
     get_servers_keyboard,
-    get_clients_keyboard,
-    get_client_search_keyboard,
-    get_clients_page_keyboard,
 )
 from app.bot.states import ClientManagement, SubscriptionManagement
 from app.bot.states.admin import TemplateManagement
@@ -64,13 +65,11 @@ async def start_add_client(callback: CallbackQuery, state: FSMContext, is_admin:
         return
 
     await state.set_state(ClientManagement.waiting_for_name)
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "➕ Добавление нового клиента\n\nВведите имя клиента:",
             reply_markup=get_back_keyboard("admin_clients"),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -105,12 +104,11 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
     """Process client email input."""
     email = message.text.strip()
 
-    if email != "-":
-        if "@" not in email or "." not in email:
-            await message.answer(
-                "❌ Некорректный формат email.", reply_markup=get_back_keyboard("admin_clients")
-            )
-            return
+    if email != "-" and ("@" not in email or "." not in email):
+        await message.answer(
+            "❌ Некорректный формат email.", reply_markup=get_back_keyboard("admin_clients")
+        )
+        return
 
     await state.update_data(email=email if email != "-" else None)
     await state.set_state(ClientManagement.waiting_for_telegram_id)
@@ -201,7 +199,6 @@ async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
     if client.notes:
         text += f"\n📝 Заметки: {client.notes}"
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
     kb.button(text="📝 Подписки клиента", callback_data=f"client_subscriptions_{client_id}")
@@ -224,10 +221,8 @@ async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
     kb.button(text="🔙 Назад", callback_data="admin_clients")
     kb.adjust(1)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -257,7 +252,6 @@ async def show_client_subscriptions(
     else:
         text = "📝 Подписки клиента:\n\n"
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
 
@@ -302,11 +296,11 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
 
     subscription_id = int(callback.data.split("_")[-1])
 
-    from app.services.new_subscription_service import NewSubscriptionService
     from app.database.models import Subscription
+    from app.services.new_subscription_service import NewSubscriptionService
 
     async with async_session_factory() as session:
-        service = NewSubscriptionService(session)
+        NewSubscriptionService(session)
 
         result = await session.execute(
             select(Subscription)
@@ -342,7 +336,6 @@ async def show_client_subscription_detail(callback: CallbackQuery, is_admin: boo
     if subscription.notes:
         text += f"\n📝 Заметки: {subscription.notes}"
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     builder = InlineKeyboardBuilder()
     builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
@@ -390,15 +383,13 @@ async def start_create_subscription_for_client(
         return
 
     await state.set_state(SubscriptionManagement.waiting_for_server_selection)
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "Выберите сервер:",
             reply_markup=get_servers_keyboard(
                 servers, action="sub_select", back_target=f"client_subscriptions_{client_id}"
             ),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -432,7 +423,6 @@ async def start_create_subscription_from_template(
         f"Выберите шаблон:"
     )
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     builder = InlineKeyboardBuilder()
     for template in templates:
@@ -492,13 +482,11 @@ async def start_rename_client_name(
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.waiting_for_new_name)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "✏️ Изменение имени клиента\n\nВведите новое имя:",
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -541,13 +529,11 @@ async def start_rename_client_telegram(
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.waiting_for_new_telegram_id)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "📱 Изменение Telegram ID\n\nВведите новый Telegram ID (или '-' для удаления):",
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -571,7 +557,7 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
 
     async with async_session_factory() as session:
         service = ClientService(session)
-        client = await service.update_client(
+        await service.update_client(
             client_id,
             telegram_id=telegram_id,
         )
@@ -673,13 +659,11 @@ async def start_edit_client_notes(
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.waiting_for_notes)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "📝 Изменение заметок клиента\n\nВведите новые заметки (для удаления отправьте `-`):",
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -715,14 +699,12 @@ async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_a
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.confirm_delete)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "⚠️ Вы уверены, что хотите удалить этого клиента?\n\n"
             "Все его подписки и подключения будут также удалены!",
             reply_markup=get_confirm_keyboard(f"client_delete_{client_id}", "admin_clients"),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -838,14 +820,12 @@ async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page:
         clients, total_count = await service.get_clients_paginated(page=page, per_page=per_page)
 
     if not clients:
-        try:
+        with contextlib.suppress(Exception):
             await callback.message.edit_text(
                 "👥 Список клиентов пуст.\n\n"
                 "Нажмите '➕ Добавить клиента' для создания первого клиента.",
                 reply_markup=get_back_keyboard("admin_clients"),
             )
-        except Exception:
-            pass
         await callback.answer()
         return
 
@@ -866,10 +846,8 @@ async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page:
 
     keyboard = get_clients_page_keyboard(clients, page, total_count, per_page)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -883,13 +861,11 @@ async def start_client_search(callback: CallbackQuery, state: FSMContext, is_adm
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "🔍 Поиск клиентов\n\nВыберите критерий поиска:",
             reply_markup=get_client_search_keyboard(),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 
@@ -918,13 +894,11 @@ async def select_search_field(callback: CallbackQuery, state: FSMContext, is_adm
         "• Email из XUI inbound",
     }
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             f"🔍 {field_messages.get(field, 'Введите поисковый запрос:')}",
             reply_markup=get_back_keyboard("client_search"),
         )
-    except Exception:
-        pass
     await callback.answer()
 
 

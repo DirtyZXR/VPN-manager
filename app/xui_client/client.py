@@ -1,5 +1,6 @@
 """HTTP client for 3x-ui API."""
 
+import contextlib
 import json
 import ssl
 from datetime import datetime
@@ -17,7 +18,6 @@ from app.xui_client.exceptions import (
 from app.xui_client.models import (
     XUIAddClientRequest,
     XUIInbound,
-    XUIResponse,
 )
 
 
@@ -76,19 +76,17 @@ class XUIClient:
             try:
                 ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
                 ssl_context.maximum_version = ssl.TLSVersion.TLSv1_3
-            except:
+            except Exception:
                 pass
 
             # Try to set legacy cipher suites for OpenSSL 3.0
             try:
                 # More permissive cipher suites
                 ssl_context.set_ciphers('DEFAULT:@SECLEVEL=1')
-            except:
+            except Exception:
                 # Fallback to even more permissive settings
-                try:
+                with contextlib.suppress(BaseException):
                     ssl_context.set_ciphers('ALL:!aNULL:!eNULL')
-                except:
-                    pass
 
             connector_args['ssl'] = ssl_context
             logger.warning(f"SSL verification disabled for {self.base_url}")

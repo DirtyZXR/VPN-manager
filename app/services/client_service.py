@@ -1,11 +1,10 @@
 """Client service for managing VPN clients."""
 
-from typing import Sequence
-from loguru import logger
 import re
+from collections.abc import Sequence
 
+from loguru import logger
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -85,7 +84,7 @@ class ClientService:
         """
         result = await self.session.execute(
             select(Client)
-            .where(Client.is_active == True)
+            .where(Client.is_active)
             .options(selectinload(Client.subscriptions))
             .order_by(Client.created_at.desc())
         )
@@ -103,13 +102,13 @@ class ClientService:
         Returns:
             Tuple of (clients for this page, total client count)
         """
-        count_result = await self.session.execute(select(Client).where(Client.is_active == True))
+        count_result = await self.session.execute(select(Client).where(Client.is_active))
         total_count = len(count_result.scalars().all())
 
         offset = page * per_page
         result = await self.session.execute(
             select(Client)
-            .where(Client.is_active == True)
+            .where(Client.is_active)
             .options(selectinload(Client.subscriptions))
             .order_by(Client.created_at.desc())
             .offset(offset)
@@ -362,7 +361,8 @@ class ClientService:
         Returns:
             List of matching clients
         """
-        from sqlalchemy import or_, and_, text
+        from sqlalchemy import and_, or_
+
         from app.database.models import InboundConnection, Subscription
 
         conditions = []
@@ -407,10 +407,7 @@ class ClientService:
             )
 
         if conditions:
-            if xui_email:
-                query = query.where(and_(*conditions))
-            else:
-                query = query.where(or_(*conditions))
+            query = query.where(and_(*conditions)) if xui_email else query.where(or_(*conditions))
 
         query = query.order_by(Client.created_at.desc())
         query = query.distinct()
@@ -434,6 +431,7 @@ class ClientService:
             List of matching clients
         """
         from sqlalchemy import or_
+
         from app.database.models import InboundConnection, Subscription
 
         # If query is purely numeric, search only by telegram_id

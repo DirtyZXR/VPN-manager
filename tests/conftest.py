@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.database.models.base import Base
 
-
 # Database URL for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -55,14 +54,14 @@ def mock_settings():
     from unittest.mock import patch
 
     # Static Fernet key for consistent testing
-    STATIC_FERNET_KEY = "SpWH-ifTebQwpAlasE5SvZsgUwi0onGmILmSrm7G1BQ="
+    static_fernet_key = "SpWH-ifTebQwpAlasE5SvZsgUwi0onGmILmSrm7G1BQ="
 
     with patch("app.config.get_settings") as mock:
         settings = mock.return_value
         settings.bot_token = "test_token"
         settings.admin_telegram_ids = "123456789"
         settings.database_url = TEST_DATABASE_URL
-        settings.encryption_key = STATIC_FERNET_KEY
+        settings.encryption_key = static_fernet_key
         settings.log_level = "DEBUG"
         settings.xui_timeout = 30
         settings.admin_ids = {123456789}

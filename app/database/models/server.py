@@ -7,7 +7,7 @@ from sqlalchemy import Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import DateTime as SADateTime
 
-from app.database.models.base import Base, TimestampMixin, SyncMixin
+from app.database.models.base import Base, SyncMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound

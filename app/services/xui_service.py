@@ -1,8 +1,8 @@
 """XUI service for managing 3x-ui panel connections."""
 
 import json
-from datetime import datetime, timezone, timedelta
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from cryptography.fernet import Fernet
 from loguru import logger
@@ -108,10 +108,10 @@ class XUIService:
         try:
             cookies = client.get_session_cookies()
             if cookies:
-                from datetime import datetime, timezone
+                from datetime import datetime
                 cookies_json = json.dumps(cookies)
                 server.session_cookies_encrypted = self._encrypt_password(cookies_json)
-                server.session_created_at = datetime.now(timezone.utc)
+                server.session_created_at = datetime.now(UTC)
                 logger.debug(f"Saved session cookies for server {server.id}")
         except Exception as e:
             logger.warning(f"Failed to save session cookies for server {server.id}: {e}")
@@ -160,7 +160,7 @@ class XUIService:
             List of active servers
         """
         result = await self.session.execute(
-            select(Server).where(Server.is_active == True).order_by(Server.name)
+            select(Server).where(Server.is_active).order_by(Server.name)
         )
         return result.scalars().all()
 
@@ -373,7 +373,7 @@ class XUIService:
                 self.session.add(inbound)
             synced += 1
 
-        server.last_sync_at = datetime.now(timezone.utc)
+        server.last_sync_at = datetime.now(UTC)
         server.sync_status = "synced"
         await self.session.flush()
 
@@ -391,7 +391,7 @@ class XUIService:
         """
         result = await self.session.execute(
             select(Inbound)
-            .where(Inbound.server_id == server_id, Inbound.is_active == True)
+            .where(Inbound.server_id == server_id, Inbound.is_active)
             .order_by(Inbound.remark)
         )
         return result.scalars().all()
@@ -405,7 +405,7 @@ class XUIService:
         result = await self.session.execute(
             select(Inbound)
             .options(selectinload(Inbound.server))
-            .where(Inbound.is_active == True)
+            .where(Inbound.is_active)
             .order_by(Inbound.server_id, Inbound.remark)
         )
         return result.scalars().all()

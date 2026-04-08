@@ -1,7 +1,7 @@
 """Subscription service for managing client subscriptions."""
 
-from datetime import datetime, timedelta, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import select
@@ -12,7 +12,6 @@ from app.database.models import (
     Client,
     Inbound,
     InboundConnection,
-    Server,
     Subscription,
 )
 from app.utils import generate_subscription_token
@@ -101,7 +100,7 @@ class NewSubscriptionService:
         # Calculate expiry date
         expiry_date = None
         if expiry_days:
-            expiry_date = datetime.now(timezone.utc) + timedelta(days=expiry_days)
+            expiry_date = datetime.now(UTC) + timedelta(days=expiry_days)
 
         # Generate unique token
         subscription = Subscription(
@@ -209,7 +208,7 @@ class NewSubscriptionService:
                 total_gb=subscription.total_gb,  # Store per-connection traffic
                 expiry_date=subscription.expiry_date,  # Store per-connection expiry
                 sync_status="synced",
-                last_sync_at=datetime.now(timezone.utc),
+                last_sync_at=datetime.now(UTC),
             )
             self.session.add(connection)
             await self.session.flush()
@@ -223,7 +222,7 @@ class NewSubscriptionService:
             # Rollback on XUI error
             await self.session.rollback()
             logger.error(f"Failed to create XUI client: {e}", exc_info=True)
-            raise XUIError(f"Failed to create XUI client: {str(e)}")
+            raise XUIError(f"Failed to create XUI client: {str(e)}") from e
 
     async def remove_inbound_from_subscription(
         self,
@@ -386,7 +385,6 @@ class NewSubscriptionService:
             Number of connections updated in XUI
         """
         # Get client
-        from app.database.models import Client
 
         client = await self.session.get(Client, client_id)
         if not client:
@@ -473,10 +471,7 @@ class NewSubscriptionService:
         for attempt in range(max_attempts):
             if attempt == 0:
                 # First attempt, try base email
-                email = base_email
-            else:
-                # Subsequent attempts, add suffix
-                email = f"{base_name}_{attempt}@{domain_part}"
+                email = base_email if attempt == 0 else f"{base_name}_{attempt}@{domain_part}"
 
             # Check if email exists in this inbound
             existing = await self.session.execute(
@@ -520,9 +515,8 @@ class NewSubscriptionService:
                 del self._xui_clients[server.id]
 
         # Import here to avoid circular dependency
+
         from app.services.xui_service import XUIService
-        from cryptography.fernet import Fernet
-        from app.config import get_settings
 
         xui_service = XUIService(self.session)
         client = await xui_service._get_client(server)
@@ -646,9 +640,6 @@ class NewSubscriptionService:
         if expiry_days is not None:
             if expiry_days == 0:
                 subscription.expiry_date = None
-            else:
-                subscription.expiry_date = datetime.now(timezone.utc) + timedelta(days=expiry_days)
-        if notes is not None:
             subscription.notes = notes
         if is_active is not None:
             subscription.is_active = is_active
@@ -691,7 +682,7 @@ class NewSubscriptionService:
                     connection.total_gb = subscription.total_gb
                     connection.expiry_date = subscription.expiry_date
                     connection.sync_status = "synced"
-                    connection.last_sync_at = datetime.now(timezone.utc)
+                    connection.last_sync_at = datetime.now(UTC)
                 except Exception as e:
                     logger.warning(
                         f"Failed to update XUI client for connection {connection.id}: {e}"

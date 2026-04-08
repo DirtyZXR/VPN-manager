@@ -1,7 +1,8 @@
 """Service for synchronizing data between bot database and XUI panels."""
 
+
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import select
@@ -16,7 +17,6 @@ from app.database.models import (
 )
 from app.services.xui_service import XUIService
 from app.xui_client import XUIConnectionError, XUIError
-
 
 # Глобальная блокировка для предотвращения конфликтов между всеми экземплярами SyncService
 _global_sync_lock = asyncio.Lock()
@@ -92,7 +92,7 @@ class SyncService:
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(UTC)
             logger.info(f"[SYNC] Начало цикла синхронизации в {start_time} (force={force})")
 
             try:
@@ -107,7 +107,7 @@ class SyncService:
                 integrity_ok = await self.verify_connections_integrity()
 
                 # 4. Логировать результаты
-                duration = (datetime.now(timezone.utc) - start_time).total_seconds()
+                duration = (datetime.now(UTC) - start_time).total_seconds()
                 logger.info(
                     f"[OK] Цикл синхронизации завершен за {duration:.2f}s. "
                     f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
@@ -132,7 +132,7 @@ class SyncService:
         """
         from sqlalchemy import select
 
-        result = await self.session.execute(select(Server).where(Server.is_active == True))
+        result = await self.session.execute(select(Server).where(Server.is_active))
         servers = result.scalars().all()
 
         logger.info(
@@ -174,7 +174,6 @@ class SyncService:
         Returns:
             True если успешно, False если ошибка
         """
-        xui_service = None
         try:
             # Проверить, нужна ли синхронизация
             if not force and not self._needs_sync(server):
@@ -193,7 +192,7 @@ class SyncService:
             from sqlalchemy import select
 
             inbounds_result = await self.session.execute(
-                select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active == True)
+                select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active)
             )
             inbounds = inbounds_result.scalars().all()
 
@@ -216,7 +215,7 @@ class SyncService:
                     )
 
             # Обновить статус синхронизации
-            server.last_sync_at = datetime.now(timezone.utc)
+            server.last_sync_at = datetime.now(UTC)
             server.sync_status = "synced"
             server.sync_error = None
 
@@ -257,7 +256,7 @@ class SyncService:
 
         # Получить все активные inbounds с серверами
         result = await self.session.execute(
-            select(Inbound).where(Inbound.is_active == True).options(selectinload(Inbound.server))
+            select(Inbound).where(Inbound.is_active).options(selectinload(Inbound.server))
         )
         inbounds = result.scalars().all()
 
@@ -309,7 +308,7 @@ class SyncService:
 
         # Получить все активные inbounds этого сервера
         result = await self.session.execute(
-            select(Inbound).where(Inbound.server_id == server_id, Inbound.is_active == True)
+            select(Inbound).where(Inbound.server_id == server_id, Inbound.is_active)
         )
         inbounds = result.scalars().all()
 
@@ -360,12 +359,12 @@ class SyncService:
 
         # Если прошло больше интервала (с учетом timezone-aware и timezone-naive)
         if hasattr(model, "last_sync_at") and model.last_sync_at is not None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             last_sync = model.last_sync_at
 
             # Если last_sync не имеет timezone, добавим ему UTC timezone
             if last_sync.tzinfo is None:
-                last_sync = last_sync.replace(tzinfo=timezone.utc)
+                last_sync = last_sync.replace(tzinfo=UTC)
 
             if now - last_sync > self.SYNC_INTERVAL:
                 return True
@@ -412,14 +411,14 @@ class SyncService:
                     db_ib.settings_json = xui_ib.settings or "{}"
                     db_ib.remark = xui_ib.remark
                     db_ib.client_count = client_count
-                    db_ib.updated_at = datetime.now(timezone.utc)
+                    db_ib.updated_at = datetime.now(UTC)
                     db_ib.sync_status = "synced"
-                    db_ib.last_sync_at = datetime.now(timezone.utc)
+                    db_ib.last_sync_at = datetime.now(UTC)
                     logger.info(f"[SYNC] Inbound {db_ib.id} обновлен из XUI")
                 else:
                     logger.debug(f"✓ Inbound {db_ib.id} актуален")
                     db_ib.sync_status = "synced"
-                    db_ib.last_sync_at = datetime.now(timezone.utc)
+                    db_ib.last_sync_at = datetime.now(UTC)
             else:
                 # Создать новый inbound
                 new_ib = Inbound(
@@ -432,7 +431,7 @@ class SyncService:
                     client_count=client_count,
                     is_active=True,
                     sync_status="synced",
-                    last_sync_at=datetime.now(timezone.utc),
+                    last_sync_at=datetime.now(UTC),
                 )
                 self.session.add(new_ib)
                 logger.info(f"➕ Inbound {new_ib.id} создан из XUI")
@@ -532,7 +531,7 @@ class SyncService:
                 # Обновить per-connection expiry_date
                 new_expiry = None
                 if xui_expiry_time > 0:
-                    new_expiry = datetime.fromtimestamp(xui_expiry_time / 1000, tz=timezone.utc)
+                    new_expiry = datetime.fromtimestamp(xui_expiry_time / 1000, tz=UTC)
 
                 if conn.expiry_date != new_expiry:
                     old_expiry = conn.expiry_date
@@ -563,7 +562,7 @@ class SyncService:
 
                 # Обновить статус синхронизации
                 conn.sync_status = "synced"
-                conn.last_sync_at = datetime.now(timezone.utc)
+                conn.last_sync_at = datetime.now(UTC)
                 synced_count += 1
             else:
                 logger.info(
@@ -653,7 +652,7 @@ class SyncService:
             return results
 
         # Использовать блокировку для предотвращения конфликтов с фоновой синхронизацией
-        logger.info(f"[LOG] Попытка получить блокировку для manual_sync")
+        logger.info("[LOG] Попытка получить блокировку для manual_sync")
         async with self._sync_lock:
             logger.info(f"[LOG] Блокировка получена, начало обработки entity_type={entity_type}")
             try:
@@ -662,7 +661,7 @@ class SyncService:
                         logger.info(f"[LOG] Синхронизация сервера {entity_id} (с клиентами)")
                         server = await self.session.get(Server, entity_id)
                         if server:
-                            synced = await self.sync_server(server, force=True)
+                            await self.sync_server(server, force=True)
                             results["synced"] = 1  # Один сервер синхронизирован
                         else:
                             results["errors"] += 1
@@ -673,17 +672,16 @@ class SyncService:
                         results["synced"] = synced_servers
                         logger.info(f"[LOG] Синхронизировано {synced_servers} серверов с клиентами")
 
-                elif entity_type == "connection":
-                    if entity_id:
-                        logger.info(f"[LOG] Синхронизация подключения {entity_id}")
-                        connection = await self.session.get(InboundConnection, entity_id)
-                        if connection:
-                            # TODO: Реализовать двустороннюю синхронизацию подключений
-                            connection.sync_status = "synced"
-                            connection.last_sync_at = datetime.now(timezone.utc)
-                            results["synced"] += 1
-                        else:
-                            results["errors"] += 1
+                elif entity_type == "connection" and entity_id:
+                    logger.info(f"[LOG] Синхронизация подключения {entity_id}")
+                    connection = await self.session.get(InboundConnection, entity_id)
+                    if connection:
+                        # TODO: Реализовать двустороннюю синхронизацию подключений
+                        connection.sync_status = "synced"
+                        connection.last_sync_at = datetime.now(UTC)
+                        results["synced"] += 1
+                    else:
+                        results["errors"] += 1
 
             except Exception as e:
                 logger.error(f"[ERROR] Ошибка ручной синхронизации: {e}", exc_info=True)
@@ -695,4 +693,4 @@ class SyncService:
 
 
 # Импорт asyncio для использования в start_background_sync
-import asyncio
+

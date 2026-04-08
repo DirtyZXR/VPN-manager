@@ -1,9 +1,10 @@
 """Test sync service functionality."""
 
-import pytest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from app.database.models import Server, Inbound, InboundConnection, Subscription, Client
+import pytest
+
+from app.database.models import Client, Inbound, InboundConnection, Server, Subscription
 from app.services.sync_service import SyncService
 
 
@@ -47,7 +48,7 @@ async def test_needs_sync_recent_sync(test_session, mock_settings):
         username="admin",
         password_encrypted="encrypted",
         is_active=True,
-        last_sync_at=datetime.now(timezone.utc),
+        last_sync_at=datetime.now(UTC),
         sync_status="synced",
     )
     test_session.add(server)
@@ -63,7 +64,7 @@ async def test_needs_sync_stale_sync(test_session, mock_settings):
     service = SyncService(test_session)
 
     # Create server with old sync
-    old_sync_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+    old_sync_time = datetime.now(UTC) - timedelta(minutes=10)
     server = Server(
         name="TestServer",
         url="https://test.com",
@@ -92,7 +93,7 @@ async def test_needs_sync_error_status(test_session, mock_settings):
         username="admin",
         password_encrypted="encrypted",
         is_active=True,
-        last_sync_at=datetime.now(timezone.utc),
+        last_sync_at=datetime.now(UTC),
         sync_status="error",
         sync_error="Previous error",
     )
@@ -115,7 +116,7 @@ async def test_needs_sync_offline_status(test_session, mock_settings):
         username="admin",
         password_encrypted="encrypted",
         is_active=True,
-        last_sync_at=datetime.now(timezone.utc),
+        last_sync_at=datetime.now(UTC),
         sync_status="offline",
         sync_error="Connection failed",
     )
@@ -145,7 +146,6 @@ async def test_manual_sync_connection(test_session, mock_settings):
     )
     test_session.add(inbound)
 
-    from app.database.models import InboundConnection, Subscription, Client
 
     client = Client(
         id=1,
@@ -163,7 +163,7 @@ async def test_manual_sync_connection(test_session, mock_settings):
         name="TestSub",
         subscription_token="test_token",
         total_gb=100,
-        expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+        expiry_date=datetime.now(UTC) + timedelta(days=30),
         is_active=True,
     )
     test_session.add(subscription)

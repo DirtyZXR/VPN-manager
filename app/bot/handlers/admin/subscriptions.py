@@ -1,11 +1,11 @@
 """Admin subscription management handlers."""
 
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
-from typing import Set
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -13,7 +13,6 @@ from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
     get_servers_keyboard,
-    get_clients_keyboard,
 )
 from app.bot.states import SubscriptionManagement
 from app.database import async_session_factory
@@ -895,14 +894,12 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
 
     # Now perform the action using the service
     async with async_session_factory() as session:
-        from app.services.new_subscription_service import NewSubscriptionService
-        from app.xui_client import XUIClient
-        from app.services.xui_service import XUIService
-        from cryptography.fernet import Fernet
-        from app.config import get_settings
-        from app.database.models import InboundConnection
+
         from sqlalchemy.orm import selectinload
-        import asyncio
+
+        from app.database.models import InboundConnection
+        from app.services.new_subscription_service import NewSubscriptionService
+        from app.services.xui_service import XUIService
 
         # Get all connections with their inbound and server info in THIS session
         result = await session.execute(
@@ -1174,8 +1171,9 @@ async def delete_inbound_connection(
 
         try:
             # Get connection info
-            from app.database.models import InboundConnection
             from sqlalchemy.orm import selectinload
+
+            from app.database.models import InboundConnection
 
             result = await session.execute(
                 select(InboundConnection)
@@ -1192,7 +1190,7 @@ async def delete_inbound_connection(
             subscription_id = connection.subscription_id
 
             # Remove from subscription
-            success = await service.remove_inbound_from_subscription(
+            await service.remove_inbound_from_subscription(
                 subscription_id, connection.inbound_id
             )
             await session.commit()
@@ -1331,7 +1329,7 @@ async def process_edit_subscription_traffic(message, state: FSMContext) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        subscription = await service.update_subscription(subscription_id, total_gb=total_gb)
+        await service.update_subscription(subscription_id, total_gb=total_gb)
         await session.commit()
 
     await state.clear()
@@ -1362,7 +1360,7 @@ async def process_edit_subscription_expiry(message, state: FSMContext) -> None:
 
         service = NewSubscriptionService(session)
         expiry_days_param = expiry_days if expiry_days > 0 else 0
-        subscription = await service.update_subscription(
+        await service.update_subscription(
             subscription_id, expiry_days=expiry_days_param
         )
         await session.commit()
@@ -1456,7 +1454,7 @@ async def enable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        subscription = await service.update_subscription(subscription_id, is_active=True)
+        await service.update_subscription(subscription_id, is_active=True)
         await session.commit()
 
     await callback.answer("✅ Подписка включена.")
@@ -1476,7 +1474,7 @@ async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        subscription = await service.update_subscription(subscription_id, is_active=False)
+        await service.update_subscription(subscription_id, is_active=False)
         await session.commit()
 
     await callback.answer("✅ Подписка отключена.")

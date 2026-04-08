@@ -2,7 +2,6 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Set
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,7 +48,7 @@ class Settings(BaseSettings):
     )
 
     @property
-    def admin_ids(self) -> Set[int]:
+    def admin_ids(self) -> set[int]:
         """Parse admin Telegram IDs from comma-separated string."""
         if not self.admin_telegram_ids:
             return set()
@@ -88,7 +87,7 @@ def load_instructions() -> dict:
             "step_by_step": {"steps": []},
         }
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     _instructions_cache = data

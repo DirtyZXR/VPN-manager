@@ -1,16 +1,21 @@
 """NotificationLog model for tracking sent notifications."""
 
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, TimestampMixin
 
+if TYPE_CHECKING:
+    from app.database.models.client import Client
 
-class NotificationType(str, Enum):
+
+class NotificationType(StrEnum):
     """Notification type constants."""
+
     EXPIRY_24H = "expiry_24h"
     EXPIRY_12H = "expiry_12h"
     EXPIRY_1H = "expiry_1h"
@@ -22,8 +27,9 @@ class NotificationType(str, Enum):
         return list(cls)
 
 
-class NotificationLevel(str, Enum):
+class NotificationLevel(StrEnum):
     """Notification level constants."""
+
     PROFILE = "profile"
     SUBSCRIPTION = "subscription"
     USER = "user"
@@ -61,7 +67,7 @@ class NotificationLog(Base, TimestampMixin):
     )
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
         index=True,
     )
@@ -105,10 +111,8 @@ class NotificationLog(Base, TimestampMixin):
             True if notification should be sent
         """
         from datetime import timedelta
+
         cutoff_time = sent_at - timedelta(hours=cooldown_hours)
 
         # If sent_at is more recent than cutoff, we should NOT notify
-        if sent_at > cutoff_time:
-            return False
-
-        return True
+        return not sent_at > cutoff_time

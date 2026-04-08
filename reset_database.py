@@ -7,8 +7,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from app.database import init_db, engine, async_session_factory
-from app.database.models.base import Base
+from app.database import init_db
 
 
 async def reset_database():

@@ -1,9 +1,11 @@
 """Auth middleware for checking client permissions."""
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject, User as TgUser
+from aiogram.types import TelegramObject
+from aiogram.types import User as TgUser
 from loguru import logger
 
 from app.config import get_settings

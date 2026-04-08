@@ -1,6 +1,7 @@
 """Main entry point for VPN Manager bot."""
 
 import asyncio
+import contextlib
 import sys
 from pathlib import Path
 
@@ -9,13 +10,12 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from loguru import logger
 
-from app.config import get_settings
-from app.database import init_db, async_session_factory
 from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
+from app.config import get_settings
+from app.database import async_session_factory, init_db
 from app.services import SyncService
 from app.services.notification_checker import NotificationChecker
-
 
 # Flags to control background tasks
 _background_sync_running = False
@@ -35,17 +35,16 @@ async def background_sync_wrapper() -> None:
         while _background_sync_running:
             try:
                 # Use global lock to prevent concurrent database access
-                async with _global_db_lock:
-                    async with async_session_factory() as session:
-                        sync_service = SyncService(session)
-                        try:
-                            # Run one sync cycle with force=True to sync immediately
-                            await sync_service._sync_cycle(force=True)
-                            # Commit changes to make them persistent
-                            await session.commit()
-                        finally:
-                            # Close XUI clients to prevent resource leaks
-                            await sync_service.close_xui_clients()
+                async with _global_db_lock, async_session_factory() as session:
+                    sync_service = SyncService(session)
+                    try:
+                        # Run one sync cycle with force=True to sync immediately
+                        await sync_service._sync_cycle(force=True)
+                        # Commit changes to make them persistent
+                        await session.commit()
+                    finally:
+                        # Close XUI clients to prevent resource leaks
+                        await sync_service.close_xui_clients()
 
                 # Wait for SYNC_INTERVAL (5 minutes) between cycles
                 logger.debug("Waiting for next sync cycle...")
@@ -75,13 +74,12 @@ async def background_notification_wrapper() -> None:
         while _background_notification_running:
             try:
                 # Use global lock to prevent concurrent database access
-                async with _global_db_lock:
-                    async with async_session_factory() as session:
-                        notification_checker = NotificationChecker(session)
-                        try:
-                            await notification_checker.check_and_notify()
-                        finally:
-                            await notification_checker.close()
+                async with _global_db_lock, async_session_factory() as session:
+                    notification_checker = NotificationChecker(session)
+                    try:
+                        await notification_checker.check_and_notify()
+                    finally:
+                        await notification_checker.close()
 
                 # Wait 10 minutes between checks
                 logger.debug("Waiting for next notification check...")
@@ -181,10 +179,8 @@ async def main() -> None:
         # Cancel remaining tasks
         for task in pending:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
     finally:
         # Stop background tasks
         _background_sync_running = False

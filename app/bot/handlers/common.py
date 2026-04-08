@@ -1,20 +1,21 @@
 """Common handlers for bot."""
 
-from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, FSInputFile
-from aiogram.fsm.context import FSMContext
+import contextlib
 
-from app.database.models import Client
-from app.bot.filters import is_admin_user
+from aiogram import F, Router
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, FSInputFile, Message
 from loguru import logger
-from app.config import load_instructions, reload_instructions
+
 from app.bot.keyboards import (
-    get_main_menu_keyboard,
     get_instruction_menu_keyboard,
+    get_main_menu_keyboard,
     get_step_navigation_keyboard,
 )
 from app.bot.states.user import InstructionViewing
+from app.config import load_instructions, reload_instructions
+from app.database.models import Client
 
 router = Router()
 
@@ -26,7 +27,7 @@ async def cmd_start(
     """Handle /start command."""
     await state.clear()
 
-    text = f"👋 Добро пожаловать в VPN Manager!\n\nЭтот бот помогает управлять VPN подписками.\n\n"
+    text = "👋 Добро пожаловать в VPN Manager!\n\nЭтот бот помогает управлять VPN подписками.\n\n"
 
     if client is None:
         text += "Для начала работы, пожалуйста, зарегистрируйтесь:"
@@ -153,10 +154,8 @@ async def instruction_prev_step(callback: CallbackQuery, state: FSMContext) -> N
 async def instruction_done(callback: CallbackQuery, state: FSMContext) -> None:
     """Finish step-by-step instruction, return to menu."""
     await state.clear()
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.delete()
-    except Exception:
-        pass
     await callback.message.answer(
         "✅ <b>Настройка завершена!</b>\n\nЕсли возникли проблемы — обратитесь к админу.",
         reply_markup=get_instruction_menu_keyboard(),
@@ -189,10 +188,8 @@ async def _render_step(callback: CallbackQuery, step_index: int, steps: list) ->
     media_path = step.get("media")
     total = len(steps)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.delete()
-    except Exception:
-        pass
 
     keyboard = get_step_navigation_keyboard(step_index, total)
 

@@ -1,5 +1,6 @@
 """Notification checker for subscription expiry and traffic warnings."""
 
+import contextlib
 import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -112,10 +113,8 @@ class NotificationChecker:
                 except Exception as e:
                     logger.error(f"Error checking user {user_id}: {e}", exc_info=True)
                     # Rollback on error to avoid leaving pending transaction
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.session.rollback()
-                    except Exception:
-                        pass
 
         except Exception as e:
             logger.error(f"Error in notification checker: {e}", exc_info=True)
@@ -131,10 +130,8 @@ class NotificationChecker:
             logger.info("Cleaned up notification logs older than 7 days")
         except Exception as e:
             logger.error(f"Failed to clean up old logs: {e}", exc_info=True)
-            try:
+            with contextlib.suppress(Exception):
                 await self.session.rollback()
-            except Exception:
-                pass
 
     async def _check_expiry_notifications(
         self,
