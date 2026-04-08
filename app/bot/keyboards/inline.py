@@ -52,12 +52,15 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
     return builder.as_markup()
 
 
-def get_servers_keyboard(servers: list, action: str = "select") -> InlineKeyboardMarkup:
+def get_servers_keyboard(
+    servers: list, action: str = "select", back_target: str = "admin_menu"
+) -> InlineKeyboardMarkup:
     """Get servers list keyboard.
 
     Args:
         servers: List of Server objects
         action: Action prefix for callback data
+        back_target: Callback data for back button
 
     Returns:
         Inline keyboard markup
@@ -72,7 +75,7 @@ def get_servers_keyboard(servers: list, action: str = "select") -> InlineKeyboar
         )
 
     builder.button(text="Добавить сервер", callback_data="server_add")
-    builder.button(text="Назад", callback_data="admin_menu")
+    builder.button(text="Назад", callback_data=back_target)
     builder.adjust(1)
     return builder.as_markup()
 

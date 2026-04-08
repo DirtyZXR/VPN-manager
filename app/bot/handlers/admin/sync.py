@@ -55,15 +55,17 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
         await callback.answer("⏳ Синхронизация запущена...")
 
         await callback.message.edit_text(
-            "🔄 Синхронизация серверов...\n"
-            "⏳ Пожалуйста, подождите.",
+            "🔄 Синхронизация серверов...\n⏳ Пожалуйста, подождите.",
             reply_markup=get_back_keyboard("admin_sync"),
         )
 
         async with async_session_factory() as session:
             sync_service = SyncService(session)
-            results = await sync_service.manual_sync("server")
-            await session.commit()  # Сохранить изменения в базу данных
+            try:
+                results = await sync_service.manual_sync("server")
+                await session.commit()  # Сохранить изменения в базу данных
+            finally:
+                await sync_service.close_xui_clients()
 
         status_emoji = "✅" if results["errors"] == 0 else "⚠️"
         await callback.message.edit_text(
@@ -98,14 +100,16 @@ async def check_integrity(callback: CallbackQuery, is_admin: bool) -> None:
         await callback.answer("⏳ Проверка целостности запущена...")
 
         await callback.message.edit_text(
-            "🔍 Проверка целостности данных...\n"
-            "⏳ Пожалуйста, подождите.",
+            "🔍 Проверка целостности данных...\n⏳ Пожалуйста, подождите.",
             reply_markup=get_back_keyboard("admin_sync"),
         )
 
         async with async_session_factory() as session:
             sync_service = SyncService(session)
-            integrity_ok = await sync_service.verify_connections_integrity()
+            try:
+                integrity_ok = await sync_service.verify_connections_integrity()
+            finally:
+                await sync_service.close_xui_clients()
 
         status_emoji = "✅" if integrity_ok else "⚠️"
         status_text = "Все данные актуальны" if integrity_ok else "Обнаружены расхождения"
