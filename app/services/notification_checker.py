@@ -59,21 +59,24 @@ class NotificationChecker:
             # Clean up old logs first
             await self._cleanup_old_logs()
 
-            # Get all users with telegram_id and their subscriptions
+            # Get all user IDs with telegram_id to avoid expiration issues on rollback
             users_result = await self.session.execute(
-                select(Client)
-                .where(Client.telegram_id.isnot(None))
-                .where(Client.is_active == True)
+                select(Client.id).where(Client.telegram_id.isnot(None)).where(Client.is_active)
             )
-            users = list(users_result.scalars())
+            user_ids = list(users_result.scalars())
 
-            for user in users:
+            for user_id in user_ids:
                 try:
+                    # Fetch the user fresh for each iteration
+                    user = await self.session.get(Client, user_id)
+                    if not user:
+                        continue
+
                     # Load subscriptions for this user with eager loading
                     subs_result = await self.session.execute(
                         select(Subscription)
                         .where(Subscription.client_id == user.id)
-                        .where(Subscription.is_active == True)
+                        .where(Subscription.is_active)
                         .options(
                             selectinload(Subscription.inbound_connections)
                             .selectinload(InboundConnection.inbound)
@@ -89,20 +92,19 @@ class NotificationChecker:
                     subs_with_conns = []
                     for sub in subscriptions:
                         connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
-                        subs_with_conns.append({
-                            "subscription": sub,
-                            "connections": connections
-                        })
+                        subs_with_conns.append({"subscription": sub, "connections": connections})
 
                     # Check expiry notifications
                     for notification_type, threshold in self.EXPIRY_THRESHOLDS.items():
-                        await self._check_expiry_notifications(user, subs_with_conns, notification_type, threshold)
+                        await self._check_expiry_notifications(
+                            user, subs_with_conns, notification_type, threshold
+                        )
 
                     # Check traffic notifications
                     await self._check_traffic_notifications(user, subs_with_conns)
 
                 except Exception as e:
-                    logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
+                    logger.error(f"Error checking user {user_id}: {e}", exc_info=True)
                     # Rollback on error to avoid leaving pending transaction
                     try:
                         await self.session.rollback()
@@ -128,43 +130,6 @@ class NotificationChecker:
             except Exception:
                 pass
 
-    async def _get_active_users(self) -> list[Client]:
-        """Get all active users with telegram_id.
-
-        Returns:
-            List of users
-        """
-        result = await self.session.execute(
-            select(Client)
-            .where(Client.telegram_id.isnot(None))
-            .where(Client.is_active == True)
-        )
-        return list(result.scalars())
-
-    async def _check_user(self, user: Client) -> None:
-        """Check user's subscriptions for expiry/traffic notifications.
-
-        Args:
-            user: User to check
-        """
-        # Load subscriptions manually to avoid lazy loading in async context
-        result = await self.session.execute(
-            select(Subscription)
-            .where(Subscription.client_id == user.id)
-            .where(Subscription.is_active == True)
-        )
-        subscriptions = list(result.scalars())
-
-        if not subscriptions:
-            return
-
-        # Check expiry notifications
-        for notification_type, threshold in self.EXPIRY_THRESHOLDS.items():
-            await self._check_expiry_notifications(user, subscriptions, notification_type, threshold)
-
-        # Check traffic notifications
-        await self._check_traffic_notifications(user, subscriptions)
-
     async def _check_expiry_notifications(
         self,
         user: Client,
@@ -181,12 +146,16 @@ class NotificationChecker:
             threshold: Time threshold for notification
         """
         # Group subscriptions by expiry time
-        expiry_groups = await self._group_subscriptions_by_expiry(subs_with_conns, threshold)
+        expiry_groups = await self._group_subscriptions_by_expiry(
+            subs_with_conns, threshold, notification_type
+        )
 
         for group in expiry_groups:
             # Check if notification already sent
             # notification_type is already a string constant from NotificationType
-            if await self._notification_sent(user.id, notification_type, group["level"], group["key"]):
+            if await self._notification_sent(
+                user.id, notification_type, group["level"], group["key"]
+            ):
                 continue
 
             # Send notification
@@ -233,6 +202,7 @@ class NotificationChecker:
         self,
         subs_with_conns: list[dict],
         threshold: timedelta,
+        notification_type: str,
     ) -> list[dict]:
         """Group subscriptions by expiry time.
 
@@ -291,9 +261,12 @@ class NotificationChecker:
 
                 # Find connections for this subscription
                 connections = next(
-                    (sub_data["connections"] for sub_data in subs_with_conns
-                     if sub_data["subscription"].id == subscription.id),
-                    []
+                    (
+                        sub_data["connections"]
+                        for sub_data in subs_with_conns
+                        if sub_data["subscription"].id == subscription.id
+                    ),
+                    [],
                 )
 
                 if len(connections) == 1:
@@ -308,7 +281,7 @@ class NotificationChecker:
             else:
                 # Multiple subscriptions -> user level
                 level = NotificationLevel.USER
-                key = self._get_group_key([s.id for s in group["subscriptions"]])
+                key = self._get_group_key([s.id for s in group["subscriptions"]], notification_type)
 
             group["level"] = level
             group["key"] = key
@@ -334,7 +307,9 @@ class NotificationChecker:
             subscription = sub_data["subscription"]
 
             # Get traffic info for subscription using connections
-            traffic_info = await self._get_subscription_traffic_info(subscription, sub_data["connections"])
+            traffic_info = await self._get_subscription_traffic_info(
+                subscription, sub_data["connections"]
+            )
 
             if not traffic_info or traffic_info["remaining_gb"] > self.TRAFFIC_THRESHOLD_GB:
                 continue
@@ -342,7 +317,10 @@ class NotificationChecker:
             # Find matching group
             matching_group = None
             for group in groups:
-                if abs(group["remaining_gb"] - traffic_info["remaining_gb"]) <= self.TRAFFIC_TOLERANCE_GB:
+                if (
+                    abs(group["remaining_gb"] - traffic_info["remaining_gb"])
+                    <= self.TRAFFIC_TOLERANCE_GB
+                ):
                     matching_group = group
                     break
 
@@ -368,7 +346,9 @@ class NotificationChecker:
                 key = self._get_group_key([subscription.id], NotificationType.TRAFFIC_5GB.value)
             else:
                 level = NotificationLevel.USER
-                key = self._get_group_key([s.id for s in group["subscriptions"]], NotificationType.TRAFFIC_5GB.value)
+                key = self._get_group_key(
+                    [s.id for s in group["subscriptions"]], NotificationType.TRAFFIC_5GB.value
+                )
 
             group["level"] = level
             group["key"] = key
@@ -378,9 +358,7 @@ class NotificationChecker:
         return result
 
     async def _get_subscription_traffic_info(
-        self,
-        subscription: Subscription,
-        connections: list[InboundConnection]
+        self, subscription: Subscription, connections: list[InboundConnection]
     ) -> dict | None:
         """Get traffic information for subscription.
 
@@ -430,13 +408,13 @@ class NotificationChecker:
         from app.xui_client import XUIClient
 
         # Use eager loaded relationships
-        if not hasattr(conn, 'inbound') or not conn.inbound:
+        if not hasattr(conn, "inbound") or not conn.inbound:
             logger.warning(f"Connection {conn.id} has no eager loaded inbound")
             return None
 
         inbound = conn.inbound
 
-        if not hasattr(inbound, 'server') or not inbound.server:
+        if not hasattr(inbound, "server") or not inbound.server:
             logger.warning(f"Inbound {inbound.id} has no eager loaded server")
             return None
 
@@ -446,6 +424,7 @@ class NotificationChecker:
             # Get or create XUI client using the cache
             if server.id not in self._xui_clients:
                 from app.services.xui_service import XUIService
+
                 xui_service = XUIService(self.session)
                 self._xui_clients[server.id] = await xui_service._get_client(server)
 
@@ -596,7 +575,9 @@ class NotificationChecker:
         """
         try:
             # Build message
-            message = self._build_expiry_message(notification_type, subscriptions, level, subs_with_conns)
+            message = self._build_expiry_message(
+                notification_type, subscriptions, level, subs_with_conns
+            )
 
             # Send notification
             await self._notification_service.notify_expiry_warning(
@@ -625,8 +606,7 @@ class NotificationChecker:
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send expiry notification to user {user.id}: {e}",
-                exc_info=True
+                f"❌ Failed to send expiry notification to user {user.id}: {e}", exc_info=True
             )
             raise
 
@@ -677,8 +657,7 @@ class NotificationChecker:
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send traffic notification to user {user.id}: {e}",
-                exc_info=True
+                f"❌ Failed to send traffic notification to user {user.id}: {e}", exc_info=True
             )
             raise
 
@@ -715,12 +694,16 @@ class NotificationChecker:
             if subs_with_conns:
                 # Find connections for the first subscription
                 sub_data = next(
-                    (item for item in subs_with_conns if item["subscription"].id == subscriptions[0].id),
-                    None
+                    (
+                        item
+                        for item in subs_with_conns
+                        if item["subscription"].id == subscriptions[0].id
+                    ),
+                    None,
                 )
                 if sub_data and sub_data["connections"]:
                     conn = sub_data["connections"][0]
-                    inbound = conn.inbound if hasattr(conn, 'inbound') else None
+                    inbound = conn.inbound if hasattr(conn, "inbound") else None
                     server = inbound.server if inbound else None
 
                     message = (
@@ -749,8 +732,7 @@ class NotificationChecker:
             if not expiry and subs_with_conns:
                 # Try to get expiry from connections
                 sub_data = next(
-                    (item for item in subs_with_conns if item["subscription"].id == sub.id),
-                    None
+                    (item for item in subs_with_conns if item["subscription"].id == sub.id), None
                 )
                 if sub_data and sub_data["connections"]:
                     expiry = sub_data["connections"][0].expiry_date
@@ -764,26 +746,25 @@ class NotificationChecker:
             )
         else:  # USER
             # Multiple subscriptions
-            message = (
-                f"⚠️ <b>Ваши подписки истекают {time_text}!</b>\n\n"
-                f"<b>Подписки:</b>\n"
-            )
+            message = f"⚠️ <b>Ваши подписки истекают {time_text}!</b>\n\n<b>Подписки:</b>\n"
             for sub in subscriptions:
                 expiry = sub.expiry_date
                 if not expiry and subs_with_conns:
                     sub_data = next(
                         (item for item in subs_with_conns if item["subscription"].id == sub.id),
-                        None
+                        None,
                     )
                     if sub_data and sub_data["connections"]:
                         expiry = sub_data["connections"][0].expiry_date
 
-                expiry_text = (expiry + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if expiry else "Не указано"
+                expiry_text = (
+                    (expiry + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
+                    if expiry
+                    else "Не указано"
+                )
                 message += f"• 📦 {sub.name} - {expiry_text}\n"
 
-            message += (
-                f"\nЕсли хотите продлить подписки, обратитесь к администратору."
-            )
+            message += "\nЕсли хотите продлить подписки, обратитесь к администратору."
 
         return message
 
@@ -823,9 +804,7 @@ class NotificationChecker:
             for sub in subscriptions:
                 message += f"• 📦 {sub.name}\n"
 
-            message += (
-                f"\nЕсли хотите увеличить лимит, обратитесь к администратору."
-            )
+            message += "\nЕсли хотите увеличить лимит, обратитесь к администратору."
 
         return message
 
