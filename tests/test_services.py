@@ -3,8 +3,7 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.database.models import Client, Server, Subscription
-from app.services import ClientService, XUIService
+from app.services import ClientService
 
 
 @pytest.mark.asyncio

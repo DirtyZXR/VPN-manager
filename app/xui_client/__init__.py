@@ -10,8 +10,10 @@ from app.xui_client.exceptions import (
 )
 from app.xui_client.models import (
     XUIAddClientRequest,
-    XUIClient as XUIClientModel,
     XUIInbound,
+)
+from app.xui_client.models import (
+    XUIClient as XUIClientModel,
 )
 
 __all__ = [

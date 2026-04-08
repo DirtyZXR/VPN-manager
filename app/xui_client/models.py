@@ -93,11 +93,11 @@ class XUIAddClientRequest(BaseModel):
     email: str
     enable: bool = True
     flow: str = ""
-    totalGB: int = 0
-    expiryTime: int = 0
-    subId: str = ""
-    limitIp: int = 0
-    tgId: int = 0
+    totalGB: int = 0  # noqa: N815
+    expiryTime: int = 0  # noqa: N815
+    subId: str = ""  # noqa: N815
+    limitIp: int = 0  # noqa: N815
+    tgId: int = 0  # noqa: N815
     reset: int = 0
 
     # Aliases for backwards compatibility

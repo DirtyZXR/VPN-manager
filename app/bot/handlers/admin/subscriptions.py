@@ -1,11 +1,11 @@
 """Admin subscription management handlers."""
 
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
-from typing import Set
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -13,7 +13,6 @@ from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
     get_servers_keyboard,
-    get_clients_keyboard,
 )
 from app.bot.states import SubscriptionManagement
 from app.database import async_session_factory
@@ -24,69 +23,7 @@ from app.services.xui_service import XUIService
 router = Router()
 
 
-@router.callback_query(F.data == "admin_create_subscription")
-async def start_create_subscription(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
-) -> None:
-    """Start subscription creation flow."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    async with async_session_factory() as session:
-        service = ClientService(session)
-        clients = await service.get_active_clients()
-
-    if not clients:
-        await callback.answer("❌ Нет клиентов. Сначала создайте клиента.", show_alert=True)
-        return
-
-    await state.set_state(SubscriptionManagement.waiting_for_client_selection)
-    await callback.message.edit_text(
-        "📝 Создание подписки\n\nВыберите клиента:",
-        reply_markup=await get_clients_keyboard(clients),
-    )
-    await callback.answer()
-
-
-async def get_clients_keyboard(clients: list) -> str:
-    """Get clients selection keyboard."""
-    builder = InlineKeyboardBuilder()
-
-    for client in clients:
-        status = "✅" if client.is_active else "❌"
-        admin_badge = "👑" if client.is_admin else ""
-        builder.button(
-            text=f"{status} {admin_badge} {client.name}",
-            callback_data=f"sub_client_select_{client.id}",
-        )
-
-    builder.adjust(1)
-    return builder.as_markup()
-
-
-@router.callback_query(
-    SubscriptionManagement.waiting_for_client_selection, F.data.startswith("sub_client_select_")
-)
-async def select_client_for_subscription(callback: CallbackQuery, state: FSMContext) -> None:
-    """Handle client selection for subscription."""
-    client_id = int(callback.data.split("_")[-1])
-    await state.update_data(client_id=client_id)
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        servers = await service.get_active_servers()
-
-    if not servers:
-        await callback.answer("❌ Нет активных серверов. Сначала добавьте сервер.", show_alert=True)
-        return
-
-    await state.set_state(SubscriptionManagement.waiting_for_server_selection)
-    await callback.message.edit_text(
-        "Выберите сервер:",
-        reply_markup=get_servers_keyboard(servers, action="sub_select"),
-    )
-    await callback.answer()
+# Handlers starting from select_server_for_subscription
 
 
 @router.callback_query(
@@ -178,9 +115,11 @@ async def confirm_inbound_selection(callback: CallbackQuery, state: FSMContext) 
         return
 
     await state.set_state(SubscriptionManagement.waiting_for_subscription_name)
+    client_id = data.get("client_id")
+    back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
     await callback.message.edit_text(
         f"Выбрано {len(selected_inbounds)} inbounds\n\nВведите название подписки:",
-        reply_markup=get_back_keyboard("admin_create_subscription"),
+        reply_markup=get_back_keyboard(back_target),
     )
     await callback.answer()
 
@@ -225,9 +164,11 @@ async def process_subscription_name(message: Message, state: FSMContext) -> None
 
     await state.update_data(subscription_name=name)
     await state.set_state(SubscriptionManagement.waiting_for_traffic_limit)
+    client_id = data.get("client_id")
+    back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
     await message.answer(
         "Введите лимит трафика в GB (0 для безлимита):",
-        reply_markup=get_back_keyboard("admin_create_subscription"),
+        reply_markup=get_back_keyboard(back_target),
     )
 
 
@@ -268,9 +209,11 @@ async def process_traffic_limit(message: Message, state: FSMContext) -> None:
     await state.update_data(total_gb=total_gb)
 
     await state.set_state(SubscriptionManagement.waiting_for_expiry_days)
+    client_id = data.get("client_id")
+    back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
     await message.answer(
         "Введите срок действия в днях (0 для бессрочной):",
-        reply_markup=get_back_keyboard("admin_create_subscription"),
+        reply_markup=get_back_keyboard(back_target),
     )
 
 
@@ -353,9 +296,11 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
     )
 
     await state.set_state(SubscriptionManagement.confirm_creation)
+    client_id = data.get("client_id")
+    back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
     await message.answer(
         text,
-        reply_markup=get_confirm_keyboard("create_subscription", "admin_create_subscription"),
+        reply_markup=get_confirm_keyboard("create_subscription", back_target),
     )
 
 
@@ -414,6 +359,8 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
             traffic_str = f"{data['total_gb']} GB" if data["total_gb"] > 0 else "Безлимит"
             expiry_str = f"{data['expiry_days']} дней" if data["expiry_days"] else "Бессрочно"
 
+            client_id = data.get("client_id")
+            back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
             await callback.message.edit_text(
                 f"✅ Подписка успешно создана!\n\n"
                 f"📝 Название: {subscription.name}\n"
@@ -424,17 +371,18 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                 f"⏰ Срок: {expiry_str}\n"
                 f"🔑 Токен: {subscription.subscription_token}\n"
                 f"📝 Создано подключений: {len(created_connections)}",
-                reply_markup=get_back_keyboard("admin_menu"),
+                reply_markup=get_back_keyboard(back_target),
             )
 
         except Exception as e:
             logger.error(f"Error creating subscription: {e}", exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+            client_id = data.get("client_id")
+            back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
             await callback.message.edit_text(
                 f"❌ Ошибка при создании подписки: {e}",
-                reply_markup=get_back_keyboard("admin_create_subscription"),
+                reply_markup=get_back_keyboard(back_target),
             )
-
         finally:
             await xui_service.close_all_clients()
 
@@ -443,56 +391,6 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
 
 
 # Additional subscription management handlers
-async def list_all_subscriptions(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show all subscriptions for admin."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    async with async_session_factory() as session:
-        from app.services.new_subscription_service import NewSubscriptionService
-
-        service = NewSubscriptionService(session)
-        subscriptions = await service.get_all_subscriptions()
-
-    logger.info(
-        f"Loading subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions"
-    )
-
-    if not subscriptions:
-        await callback.message.edit_text(
-            "📝 Список подписок пуст.\n\nСоздайте первую подписку через 'Создать подписку'.",
-            reply_markup=get_back_keyboard("admin_menu"),
-        )
-        await callback.answer()
-        return
-
-    text = f"📝 Все подписки ({len(subscriptions)}):\n\n"
-
-    builder = InlineKeyboardBuilder()
-
-    for sub in subscriptions:
-        status = "✅" if sub.is_active else "❌"
-        expiry = sub.expiry_date.strftime("%d.%m.%Y") if sub.expiry_date else "Бессрочно"
-        traffic = "Безлимит" if sub.is_unlimited else f"{sub.total_gb} GB"
-
-        text += (
-            f"{status} <b>{sub.name}</b>\n"
-            f"   Клиент: {sub.client.name}\n"
-            f"   Трафик: {traffic}\n"
-            f"   Срок: {expiry}\n"
-            f"   Подключений: {len(sub.inbound_connections)}\n\n"
-        )
-
-        # Add button for each subscription
-        builder.button(text=f"📝 {sub.name}", callback_data=f"admin_sub_detail_{sub.id}")
-
-    builder.button(text="➕ Создать подписку", callback_data="admin_create_subscription")
-    builder.button(text="🔙 Назад", callback_data="admin_menu")
-    builder.adjust(1)
-
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("admin_sub_detail_"))
@@ -543,7 +441,9 @@ async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> 
     else:
         builder.button(text="✅ Включить", callback_data=f"admin_sub_enable_{subscription_id}")
     builder.button(text="🗑️ Удалить", callback_data=f"admin_sub_delete_{subscription_id}")
-    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.button(
+        text="🔙 Назад к клиенту", callback_data=f"client_subscriptions_{subscription.client_id}"
+    )
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -994,14 +894,12 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
 
     # Now perform the action using the service
     async with async_session_factory() as session:
-        from app.services.new_subscription_service import NewSubscriptionService
-        from app.xui_client import XUIClient
-        from app.services.xui_service import XUIService
-        from cryptography.fernet import Fernet
-        from app.config import get_settings
-        from app.database.models import InboundConnection
+
         from sqlalchemy.orm import selectinload
-        import asyncio
+
+        from app.database.models import InboundConnection
+        from app.services.new_subscription_service import NewSubscriptionService
+        from app.services.xui_service import XUIService
 
         # Get all connections with their inbound and server info in THIS session
         result = await session.execute(
@@ -1273,8 +1171,9 @@ async def delete_inbound_connection(
 
         try:
             # Get connection info
-            from app.database.models import InboundConnection
             from sqlalchemy.orm import selectinload
+
+            from app.database.models import InboundConnection
 
             result = await session.execute(
                 select(InboundConnection)
@@ -1291,7 +1190,7 @@ async def delete_inbound_connection(
             subscription_id = connection.subscription_id
 
             # Remove from subscription
-            success = await service.remove_inbound_from_subscription(
+            await service.remove_inbound_from_subscription(
                 subscription_id, connection.inbound_id
             )
             await session.commit()
@@ -1430,7 +1329,7 @@ async def process_edit_subscription_traffic(message, state: FSMContext) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        subscription = await service.update_subscription(subscription_id, total_gb=total_gb)
+        await service.update_subscription(subscription_id, total_gb=total_gb)
         await session.commit()
 
     await state.clear()
@@ -1461,7 +1360,7 @@ async def process_edit_subscription_expiry(message, state: FSMContext) -> None:
 
         service = NewSubscriptionService(session)
         expiry_days_param = expiry_days if expiry_days > 0 else 0
-        subscription = await service.update_subscription(
+        await service.update_subscription(
             subscription_id, expiry_days=expiry_days_param
         )
         await session.commit()
@@ -1555,7 +1454,7 @@ async def enable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        subscription = await service.update_subscription(subscription_id, is_active=True)
+        await service.update_subscription(subscription_id, is_active=True)
         await session.commit()
 
     await callback.answer("✅ Подписка включена.")
@@ -1575,7 +1474,7 @@ async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        subscription = await service.update_subscription(subscription_id, is_active=False)
+        await service.update_subscription(subscription_id, is_active=False)
         await session.commit()
 
     await callback.answer("✅ Подписка отключена.")
@@ -1596,7 +1495,9 @@ async def confirm_delete_subscription(
 
     await callback.message.edit_text(
         "⚠️ Вы уверены, что хотите удалить эту подписку?\n\nВсе подключения в XUI будут удалены!",
-        reply_markup=get_confirm_keyboard(f"admin_sub_delete_{subscription_id}", "admin_menu"),
+        reply_markup=get_confirm_keyboard(
+            f"admin_sub_delete_{subscription_id}", f"admin_sub_detail_{subscription_id}"
+        ),
     )
     await callback.answer()
 
@@ -1616,13 +1517,32 @@ async def delete_subscription(callback: CallbackQuery, state: FSMContext, is_adm
 
         service = NewSubscriptionService(session)
 
+        # Get subscription to know client_id for redirect
+        subscription = await service.get_subscription(subscription_id)
+        if not subscription:
+            await callback.answer("❌ Подписка не найдена.", show_alert=True)
+            await state.clear()
+            return
+
+        client_id = subscription.client_id
+
         try:
             await service.delete_subscription(subscription_id)
             await session.commit()
 
             await state.clear()
+
+            # Redirect to client subscriptions
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text="🔙 К подпискам клиента", callback_data=f"client_subscriptions_{client_id}"
+            )
+            builder.adjust(1)
+
+            await callback.message.edit_text(
+                "✅ Подписка успешно удалена.", reply_markup=builder.as_markup()
+            )
             await callback.answer("✅ Подписка удалена.")
-            await list_all_subscriptions(callback, is_admin)
 
         except Exception as e:
             logger.error(f"Error deleting subscription: {e}", exc_info=True)

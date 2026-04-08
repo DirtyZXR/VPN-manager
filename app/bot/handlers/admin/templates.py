@@ -1,29 +1,28 @@
 """Template management handlers for subscription templates."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
-from app.bot.states.admin import TemplateManagement
 from app.bot.keyboards import (
-    get_templates_keyboard,
+    get_back_keyboard,
+    get_confirm_keyboard,
+    get_inbound_selection_for_template,
+    get_servers_keyboard_for_template_edit,
     get_template_actions_keyboard,
     get_template_edit_inbounds_keyboard,
     get_template_edit_menu_keyboard,
     get_template_inbounds_keyboard,
-    get_template_multi_select_keyboard,
     get_template_multi_select_confirm_keyboard,
-    get_inbound_selection_for_template,
-    get_servers_keyboard,
-    get_servers_keyboard_for_template_edit,
-    get_back_keyboard,
-    get_confirm_keyboard,
+    get_template_multi_select_keyboard,
+    get_templates_keyboard,
 )
+from app.bot.states.admin import TemplateManagement
 from app.database import async_session_factory
-from app.services.subscription_template_service import SubscriptionTemplateService
 from app.services.client_service import ClientService
+from app.services.subscription_template_service import SubscriptionTemplateService
 from app.xui_client.exceptions import XUIError
 
 router = Router()
@@ -177,8 +176,7 @@ async def handle_default_expiry(message: Message, state: FSMContext):
     await state.set_state(TemplateManagement.waiting_for_template_notes)
 
     data = await state.get_data()
-    traffic = data.get("default_traffic")
-    traffic_text = f"{traffic} ГБ {'(безлимитный)' if traffic == 0 else ''}"
+    data.get("default_traffic")
     expiry_text = f"{expiry} дн." if expiry else "Бессрочный"
 
     text = (
@@ -472,7 +470,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
         )
 
         if client.telegram_id:
-            text += f"\n📱 <b>Уведомление отправлено:</b> Да"
+            text += "\n📱 <b>Уведомление отправлено:</b> Да"
 
         keyboard = get_back_keyboard("admin_menu")
 
@@ -484,7 +482,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
     except Exception as e:
         await state.clear()
         logger.error(f"Error creating subscription from template: {e}", exc_info=True)
-        await message.answer(f"❌ Произошла ошибка при создании подписки")
+        await message.answer("❌ Произошла ошибка при создании подписки")
 
 
 @router.callback_query(F.data.startswith("template_add_inbound_"))
@@ -527,6 +525,8 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
                 "⚠️ Все доступные подключения уже добавлены в шаблон", show_alert=True
             )
             # Show current inbounds instead
+            template_service = SubscriptionTemplateService(session2)
+            template_inbounds = await template_service.get_template_inbounds(template_id)
             keyboard = get_template_inbounds_keyboard(template_id, template_inbounds)
             await callback.message.edit_text(
                 f"🔄 <b>Управление подключениями шаблона</b>\n\n"
@@ -582,7 +582,7 @@ async def toggle_inbound_selection_for_template(callback: CallbackQuery, state: 
 
         # Get template info
         template_service = SubscriptionTemplateService(session)
-        template = await template_service.get_template(template_id)
+        await template_service.get_template(template_id)
 
     # Update keyboard with selection state
     builder = InlineKeyboardBuilder()
@@ -649,7 +649,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
 
             # Get updated template info
             template = await template_service.get_template(template_id)
-            template_inbounds = await template_service.get_template_inbounds(template_id)
+            await template_service.get_template_inbounds(template_id)
 
             logger.info(f"✅ Added {added_count} inbounds to template {template.name}")
 
@@ -861,7 +861,7 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
         "traffic": f"Текущий лимит трафика: <b>{template.default_total_gb} ГБ {'(безлимитный)' if template.default_total_gb == 0 else ''}</b>",
         "expiry": f"Текущий срок действия: <b>{template.default_expiry_days} дн.</b>"
         if template.default_expiry_days
-        else f"<b>Бессрочный</b>",
+        else "<b>Бессрочный</b>",
         "notes": f"Текущие заметки: <b>{template.notes or 'Нет заметок'}</b>",
     }
 
@@ -1522,7 +1522,7 @@ async def cancel_template_multi_action(callback: CallbackQuery, state: FSMContex
 
     async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
-        template_inbound_ids = await get_template_inbounds(template_id, session)
+        await get_template_inbounds(template_id, session)
         template_inbounds = await template_service.get_template_inbounds(template_id)
 
     selected_inbound_ids = data.get("selected_inbound_ids", set())
@@ -1553,7 +1553,7 @@ async def exit_template_multi_select_mode(callback: CallbackQuery, state: FSMCon
     async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
         template = await template_service.get_template(template_id)
-        template_inbounds = await template_service.get_template_inbounds(template_id)
+        await template_service.get_template_inbounds(template_id)
 
     traffic_limit = (
         f"{template.default_total_gb} ГБ" if template.default_total_gb > 0 else "Безлимитный"
@@ -1657,7 +1657,7 @@ async def select_server_for_template_edit(callback: CallbackQuery, state: FSMCon
             servers = await xui_service.get_active_servers()
         await state.set_state(TemplateManagement.waiting_for_server_selection)
         await callback.message.edit_text(
-            f"✏️ <b>Редактирование подключений шаблона</b>\n\nВыберите сервер:",
+            "✏️ <b>Редактирование подключений шаблона</b>\n\nВыберите сервер:",
             reply_markup=get_servers_keyboard_for_template_edit(servers, template_id),
         )
         return
@@ -1797,7 +1797,7 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
 
             # Get updated template info
             template = await template_service.get_template(template_id)
-            template_inbounds = await template_service.get_template_inbounds(template_id)
+            await template_service.get_template_inbounds(template_id)
 
             logger.info(f"✅ Added {added_count} inbounds to template {template.name}")
 
@@ -1868,7 +1868,7 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
 
             # Get updated template info
             template = await template_service.get_template(template_id)
-            template_inbounds = await template_service.get_template_inbounds(template_id)
+            await template_service.get_template_inbounds(template_id)
 
             logger.info(f"✅ Removed {removed_count} inbounds from template {template.name}")
 

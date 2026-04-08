@@ -1,8 +1,8 @@
 """Admin synchronization handlers."""
 
-import asyncio
+import contextlib
 
-from aiogram import Router, F
+from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
@@ -27,7 +27,7 @@ async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
     keyboard.button(text="🔙 Назад", callback_data="admin_menu")
     keyboard.adjust(1)
 
-    try:
+    with contextlib.suppress(Exception):
         await callback.message.edit_text(
             "🔄 Управление синхронизацией данных\n\n"
             "Выберите действие для синхронизации данных между ботом и 3x-ui панелями.\n\n"
@@ -37,9 +37,6 @@ async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
             "• 📊 Проверить целостность - Только проверка, без синхронизации",
             reply_markup=keyboard.as_markup(),
         )
-    except Exception:
-        # Message hasn't changed, skip edit
-        pass
     await callback.answer()
 
 
@@ -55,15 +52,17 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
         await callback.answer("⏳ Синхронизация запущена...")
 
         await callback.message.edit_text(
-            "🔄 Синхронизация серверов...\n"
-            "⏳ Пожалуйста, подождите.",
+            "🔄 Синхронизация серверов...\n⏳ Пожалуйста, подождите.",
             reply_markup=get_back_keyboard("admin_sync"),
         )
 
         async with async_session_factory() as session:
             sync_service = SyncService(session)
-            results = await sync_service.manual_sync("server")
-            await session.commit()  # Сохранить изменения в базу данных
+            try:
+                results = await sync_service.manual_sync("server")
+                await session.commit()  # Сохранить изменения в базу данных
+            finally:
+                await sync_service.close_xui_clients()
 
         status_emoji = "✅" if results["errors"] == 0 else "⚠️"
         await callback.message.edit_text(
@@ -77,13 +76,11 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
 
     except Exception as e:
         logger.error(f"Ошибка синхронизации серверов: {e}", exc_info=True)
-        try:
+        with contextlib.suppress(Exception):
             await callback.message.edit_text(
                 f"❌ Ошибка при синхронизации: {e}",
                 reply_markup=get_back_keyboard("admin_sync"),
             )
-        except Exception:
-            pass  # Если сообщение уже истекло, игнорируем ошибку
 
 
 @router.callback_query(F.data == "sync_integrity")
@@ -98,14 +95,16 @@ async def check_integrity(callback: CallbackQuery, is_admin: bool) -> None:
         await callback.answer("⏳ Проверка целостности запущена...")
 
         await callback.message.edit_text(
-            "🔍 Проверка целостности данных...\n"
-            "⏳ Пожалуйста, подождите.",
+            "🔍 Проверка целостности данных...\n⏳ Пожалуйста, подождите.",
             reply_markup=get_back_keyboard("admin_sync"),
         )
 
         async with async_session_factory() as session:
             sync_service = SyncService(session)
-            integrity_ok = await sync_service.verify_connections_integrity()
+            try:
+                integrity_ok = await sync_service.verify_connections_integrity()
+            finally:
+                await sync_service.close_xui_clients()
 
         status_emoji = "✅" if integrity_ok else "⚠️"
         status_text = "Все данные актуальны" if integrity_ok else "Обнаружены расхождения"
@@ -120,10 +119,8 @@ async def check_integrity(callback: CallbackQuery, is_admin: bool) -> None:
 
     except Exception as e:
         logger.error(f"Ошибка проверки целостности: {e}", exc_info=True)
-        try:
+        with contextlib.suppress(Exception):
             await callback.message.edit_text(
                 f"❌ Ошибка при проверке: {e}",
                 reply_markup=get_back_keyboard("admin_sync"),
             )
-        except Exception:
-            pass  # Если сообщение уже истекло, игнорируем ошибку

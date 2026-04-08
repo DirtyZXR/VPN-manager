@@ -1,13 +1,13 @@
 """Test email uniqueness in subscription inbound connections."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
-from datetime import datetime, timedelta, timezone
 
 from app.database.models import (
     Client,
     Inbound,
     InboundConnection,
-    Server,
     Subscription,
 )
 from app.services.new_subscription_service import NewSubscriptionService
@@ -49,7 +49,7 @@ async def test_generate_unique_email_with_duplicate(test_session, mock_settings)
         name="TestSub",
         subscription_token="test_token",
         total_gb=100,
-        expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+        expiry_date=datetime.now(UTC) + timedelta(days=30),
         is_active=True,
     )
     test_session.add(subscription)
@@ -123,7 +123,7 @@ async def test_generate_unique_email_multiple_duplicates(test_session, mock_sett
             name=f"TestSub{i}",
             subscription_token=f"test_token_{i}",
             total_gb=100,
-            expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+            expiry_date=datetime.now(UTC) + timedelta(days=30),
             is_active=True,
         )
         test_session.add(subscription)
@@ -188,7 +188,7 @@ async def test_generate_unique_email_max_attempts_exceeded(test_session, mock_se
             name=f"TestSub{i}",
             subscription_token=f"test_token_{i}",
             total_gb=100,
-            expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+            expiry_date=datetime.now(UTC) + timedelta(days=30),
             is_active=True,
         )
         test_session.add(subscription)
@@ -223,7 +223,6 @@ async def test_generate_unique_email_max_attempts_exceeded(test_session, mock_se
 @pytest.mark.asyncio
 async def test_add_inbound_creates_unique_email(test_session, mock_settings):
     """Test that add_inbound_to_subscription creates unique email with XUI mock."""
-    from unittest.mock import AsyncMock, MagicMock, patch
 
     # Skip this test as it requires proper encryption setup
     # The core functionality is tested in the other tests

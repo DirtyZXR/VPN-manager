@@ -1,15 +1,14 @@
 """Registration handlers for user self-registration."""
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message
 from loguru import logger
 
+from app.bot.keyboards import get_back_keyboard, get_registration_keyboard
 from app.bot.states.user import UserRegistration
-from app.bot.keyboards import get_registration_keyboard, get_back_keyboard
 from app.database import async_session_factory
 from app.services.client_service import ClientService
-from app.config import get_settings
 
 router = Router()
 

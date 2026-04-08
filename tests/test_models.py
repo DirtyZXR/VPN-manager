@@ -1,9 +1,10 @@
 """Tests for database models."""
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
-from app.database.models import Client, Server, Subscription, Inbound, InboundConnection
+import pytest
+
+from app.database.models import Client, Inbound, InboundConnection, Server, Subscription
 
 
 @pytest.mark.asyncio
@@ -74,7 +75,7 @@ async def test_subscription_model(test_session):
         name="Test Subscription",
         subscription_token="test_token_123",
         total_gb=100,
-        expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+        expiry_date=datetime.now(UTC) + timedelta(days=30),
         is_active=True,
     )
     test_session.add(subscription)
@@ -211,7 +212,7 @@ async def test_subscription_expiry(test_session):
         name="Expired Subscription",
         subscription_token="expired_token",
         total_gb=100,
-        expiry_date=datetime.now(timezone.utc) - timedelta(days=1),
+        expiry_date=datetime.now(UTC) - timedelta(days=1),
         is_active=True,
     )
     test_session.add(expired_sub)
@@ -225,7 +226,7 @@ async def test_subscription_expiry(test_session):
         name="Active Subscription",
         subscription_token="active_token",
         total_gb=100,
-        expiry_date=datetime.now(timezone.utc) + timedelta(days=30),
+        expiry_date=datetime.now(UTC) + timedelta(days=30),
         is_active=True,
     )
     test_session.add(active_sub)

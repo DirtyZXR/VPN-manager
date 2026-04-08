@@ -2,10 +2,9 @@
 
 from aiogram import Router
 
-from app.bot.handlers.admin import servers, clients, subscriptions, sync, templates
-from app.bot.handlers import common
+from app.bot.handlers import common, registration
+from app.bot.handlers.admin import clients, servers, subscriptions, sync, templates
 from app.bot.handlers.user import subscriptions as user_subscriptions
-from app.bot.handlers import registration
 
 
 def create_router() -> Router:

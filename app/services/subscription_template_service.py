@@ -1,6 +1,7 @@
 """Subscription template service for managing subscription templates."""
 
-from typing import Sequence
+from collections.abc import Sequence
+
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,10 +9,10 @@ from sqlalchemy.orm import selectinload
 
 from app.database.models import (
     Inbound,
+    InboundConnection,
+    Subscription,
     SubscriptionTemplate,
     SubscriptionTemplateInbound,
-    Subscription,
-    InboundConnection,
 )
 from app.xui_client.exceptions import XUIError
 
@@ -42,7 +43,7 @@ class SubscriptionTemplateService:
                 .selectinload(SubscriptionTemplateInbound.inbound)
                 .selectinload(Inbound.server)
             )
-            .where(SubscriptionTemplate.is_active == True)
+            .where(SubscriptionTemplate.is_active)
             .order_by(SubscriptionTemplate.created_at.desc())
         )
         return result.scalars().all()

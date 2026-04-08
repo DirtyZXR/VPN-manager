@@ -1,8 +1,8 @@
 """Base model class for SQLAlchemy models."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
-from sqlalchemy import DateTime, func, String, Text
+from sqlalchemy import DateTime, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 

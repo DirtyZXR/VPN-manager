@@ -4,8 +4,8 @@ from aiogram import Bot
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import Client, Subscription, InboundConnection
 from app.config import get_settings
+from app.database.models import Client, InboundConnection, Subscription
 
 
 class NotificationService:
@@ -99,7 +99,7 @@ class NotificationService:
                     urls.append(url)
 
                 if urls:
-                    message += f"\n🔗 <b>Все URL подписки:</b>\n"
+                    message += "\n🔗 <b>Все URL подписки:</b>\n"
                     message += "\n".join([f"<code>{u}</code>" for u in urls])
 
             await bot.send_message(

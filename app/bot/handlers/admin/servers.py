@@ -1,11 +1,11 @@
 """Admin server management handlers."""
 
-from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message as TgMessage
+
+from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery
+from aiogram.types import Message as TgMessage
 from loguru import logger
-from typing import Any
 
 from app.bot.keyboards import (
     get_back_keyboard,
@@ -232,7 +232,7 @@ async def process_server_username(message: TgMessage, state: FSMContext) -> None
 @router.message(ServerManagement.waiting_for_password)
 async def process_server_password(message: TgMessage, state: FSMContext) -> None:
     """Process server password input and ask for SSL verification."""
-    data = await state.get_data()
+    await state.get_data()
     password = message.text
 
     if not password:
@@ -273,8 +273,9 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
 
         try:
             # Create temporary client to test connection
-            from app.xui_client import XUIClient, XUIError
             from urllib.parse import urljoin
+
+            from app.xui_client import XUIClient, XUIError
 
             # Build full URL with panel path for testing
             panel_path = data.get("panel_path", "/")
@@ -375,8 +376,9 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
         service = XUIService(session)
 
         try:
-            from app.xui_client import XUIClient, XUIError
             from urllib.parse import urljoin
+
+            from app.xui_client import XUIClient, XUIError
 
             # Build full URL with panel path for testing
             panel_path = data.get("panel_path", "/")
@@ -533,15 +535,14 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
         sync_service = SyncService(session)
         try:
             # Sync inbounds and clients
-            from sqlalchemy import select
             from app.database.models import Server
             server = await session.get(Server, server_id)
             if server:
                 await sync_service.sync_server(server, force=True)
                 await session.commit()
-                await callback.answer(f"✅ Синхронизация завершена! Inbounds и клиенты синхронизированы", show_alert=True)
+                await callback.answer("✅ Синхронизация завершена! Inbounds и клиенты синхронизированы", show_alert=True)
             else:
-                await callback.answer(f"❌ Сервер не найден", show_alert=True)
+                await callback.answer("❌ Сервер не найден", show_alert=True)
         except Exception as e:
             logger.error(f"Error syncing server {server_id}: {e}", exc_info=True)
             await callback.answer(f"❌ Ошибка при синхронизации: {e}", show_alert=True)
@@ -1170,8 +1171,8 @@ async def start_edit_password(callback: CallbackQuery, state: FSMContext) -> Non
 
     await state.set_state(ServerManagement.waiting_for_edit_password)
     await callback.message.edit_text(
-        f"✏️ Редактирование пароля\n\n"
-        f"Введите новый пароль (или /skip чтобы оставить текущий):",
+        "✏️ Редактирование пароля\n\n"
+        "Введите новый пароль (или /skip чтобы оставить текущий):",
         reply_markup=get_back_keyboard(f"server_select_{server_id}"),
         parse_mode="HTML",
     )
