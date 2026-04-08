@@ -1,11 +1,11 @@
 """Notification checker for subscription expiry and traffic warnings."""
 
 import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from sqlalchemy import and_, delete, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,11 +29,11 @@ if TYPE_CHECKING:
 class NotificationChecker:
     """Service for checking subscriptions and sending expiry/traffic notifications."""
 
-    # Time thresholds for expiry notifications
+    # Time thresholds for expiry notifications (min_time, max_time)
     EXPIRY_THRESHOLDS = {
-        NotificationType.EXPIRY_24H: timedelta(hours=24),
-        NotificationType.EXPIRY_12H: timedelta(hours=12),
-        NotificationType.EXPIRY_1H: timedelta(hours=1),
+        NotificationType.EXPIRY_24H: (timedelta(hours=12), timedelta(hours=24)),
+        NotificationType.EXPIRY_12H: (timedelta(hours=1), timedelta(hours=12)),
+        NotificationType.EXPIRY_1H: (timedelta(hours=0), timedelta(hours=1)),
     }
 
     # Traffic threshold (GB)
@@ -51,7 +51,7 @@ class NotificationChecker:
         """
         self.session = session
         self._notification_service = NotificationService(session)
-        self._xui_clients: dict[int, "XUIClient"] = {}
+        self._xui_clients: dict[int, XUIClient] = {}
 
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
@@ -95,13 +95,19 @@ class NotificationChecker:
                         subs_with_conns.append({"subscription": sub, "connections": connections})
 
                     # Check expiry notifications
-                    for notification_type, threshold in self.EXPIRY_THRESHOLDS.items():
+                    for notification_type, (
+                        window_min,
+                        window_max,
+                    ) in self.EXPIRY_THRESHOLDS.items():
                         await self._check_expiry_notifications(
-                            user, subs_with_conns, notification_type, threshold
+                            user, subs_with_conns, notification_type.value, window_min, window_max
                         )
 
                     # Check traffic notifications
                     await self._check_traffic_notifications(user, subs_with_conns)
+
+                    # Commit all notification logs for this user
+                    await self.session.commit()
 
                 except Exception as e:
                     logger.error(f"Error checking user {user_id}: {e}", exc_info=True)
@@ -117,7 +123,7 @@ class NotificationChecker:
     async def _cleanup_old_logs(self) -> None:
         """Delete notification logs older than 7 days."""
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            cutoff = datetime.now(UTC) - timedelta(days=7)
             await self.session.execute(
                 delete(NotificationLog).where(NotificationLog.sent_at < cutoff)
             )
@@ -135,7 +141,8 @@ class NotificationChecker:
         user: Client,
         subs_with_conns: list[dict],
         notification_type: str,
-        threshold: timedelta,
+        window_min: timedelta,
+        window_max: timedelta,
     ) -> None:
         """Check and send expiry notifications.
 
@@ -143,11 +150,12 @@ class NotificationChecker:
             user: User to check
             subs_with_conns: List of dictionaries with subscription and connections
             notification_type: Type of expiry notification
-            threshold: Time threshold for notification
+            window_min: Minimum time left for notification
+            window_max: Maximum time left for notification
         """
         # Group subscriptions by expiry time
         expiry_groups = await self._group_subscriptions_by_expiry(
-            subs_with_conns, threshold, notification_type
+            subs_with_conns, window_min, window_max, notification_type
         )
 
         for group in expiry_groups:
@@ -164,6 +172,7 @@ class NotificationChecker:
                 notification_type,
                 group["subscriptions"],
                 group["level"],
+                group["key"],
                 subs_with_conns,
             )
 
@@ -183,37 +192,41 @@ class NotificationChecker:
 
         for group in traffic_groups:
             # Check if notification already sent
-            # NotificationType.TRAFFIC_5GB is already a string constant
+            # NotificationType.TRAFFIC_5GB is an Enum, use .value
             if await self._notification_sent(
-                user.id, NotificationType.TRAFFIC_5GB, group["level"], group["key"]
+                user.id, NotificationType.TRAFFIC_5GB.value, group["level"], group["key"]
             ):
                 continue
 
             # Send notification
             await self._send_traffic_notification(
                 user,
-                NotificationType.TRAFFIC_5GB,
+                NotificationType.TRAFFIC_5GB.value,
                 group["subscriptions"],
                 group["level"],
+                group["key"],
                 group["traffic_info"],
             )
 
     async def _group_subscriptions_by_expiry(
         self,
         subs_with_conns: list[dict],
-        threshold: timedelta,
+        window_min: timedelta,
+        window_max: timedelta,
         notification_type: str,
     ) -> list[dict]:
         """Group subscriptions by expiry time.
 
         Args:
             subs_with_conns: List of dictionaries with subscription and connections
-            threshold: Time tolerance for grouping
+            window_min: Minimum time left for notification
+            window_max: Maximum time left for notification
+            notification_type: Type of notification for grouping key
 
         Returns:
             List of groups with subscriptions and metadata
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         groups = []
 
         for sub_data in subs_with_conns:
@@ -226,10 +239,10 @@ class NotificationChecker:
             # Handle timezone-aware vs naive datetimes
             expiry_date = subscription.expiry_date
             if expiry_date.tzinfo is None:
-                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+                expiry_date = expiry_date.replace(tzinfo=UTC)
 
-            # Check if within threshold
-            if expiry_date < now or expiry_date > now + threshold:
+            # Check if within threshold window
+            if expiry_date <= now + window_min or expiry_date > now + window_max:
                 continue
 
             # Find matching group
@@ -238,7 +251,7 @@ class NotificationChecker:
                 if self._expiry_times_in_range(
                     subscription.expiry_date,
                     group["expiry_times"],
-                    threshold,
+                    timedelta(minutes=self.TIME_TOLERANCE_MINUTES),
                 ):
                     matching_group = group
                     break
@@ -405,7 +418,6 @@ class NotificationChecker:
         Returns:
             Traffic info or None
         """
-        from app.xui_client import XUIClient
 
         # Use eager loaded relationships
         if not hasattr(conn, "inbound") or not conn.inbound:
@@ -460,13 +472,13 @@ class NotificationChecker:
         """
         # Ensure expiry has timezone
         if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=timezone.utc)
+            expiry = expiry.replace(tzinfo=UTC)
 
         for other_expiry in expiry_times:
             # Ensure other_expiry has timezone
             other_expiry_tz = other_expiry
             if other_expiry_tz.tzinfo is None:
-                other_expiry_tz = other_expiry_tz.replace(tzinfo=timezone.utc)
+                other_expiry_tz = other_expiry_tz.replace(tzinfo=UTC)
 
             if abs(expiry - other_expiry_tz) <= tolerance:
                 return True
@@ -525,7 +537,7 @@ class NotificationChecker:
             return False
 
         # Check cooldown based on notification type
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Define expiry notification types (as strings)
         expiry_types = {
@@ -552,7 +564,7 @@ class NotificationChecker:
         # Handle timezone-aware vs naive datetimes
         sent_at = last_log.sent_at
         if sent_at.tzinfo is None:
-            sent_at = sent_at.replace(tzinfo=timezone.utc)
+            sent_at = sent_at.replace(tzinfo=UTC)
 
         return sent_at > cutoff
 
@@ -562,6 +574,7 @@ class NotificationChecker:
         notification_type: str,
         subscriptions: list[Subscription],
         level: str,
+        group_key: str,
         subs_with_conns: list[dict] | None = None,
     ) -> None:
         """Send expiry notification.
@@ -571,6 +584,7 @@ class NotificationChecker:
             notification_type: Type of notification (already string)
             subscriptions: Subscriptions in group
             level: Notification level
+            group_key: Pre-calculated group key for logging
             subs_with_conns: Optional mapping of subscriptions to their connections
         """
         try:
@@ -587,16 +601,12 @@ class NotificationChecker:
             )
 
             # Log notification
-            group_key = self._get_group_key([s.id for s in subscriptions], notification_type)
             await self._log_notification(
                 user.id,
                 notification_type,
                 level,
                 group_key,
             )
-
-            # Commit immediately to ensure duplicate prevention works
-            await self.session.commit()
 
             logger.info(
                 f"✅ Sent expiry notification to user {user.id} "
@@ -616,6 +626,7 @@ class NotificationChecker:
         notification_type: str,
         subscriptions: list[Subscription],
         level: str,
+        group_key: str,
         traffic_info: float,
     ) -> None:
         """Send traffic notification.
@@ -625,6 +636,7 @@ class NotificationChecker:
             notification_type: Type of notification (already string)
             subscriptions: Subscriptions in group
             level: Notification level
+            group_key: Pre-calculated group key for logging
             traffic_info: Remaining traffic in GB
         """
         try:
@@ -638,16 +650,12 @@ class NotificationChecker:
             )
 
             # Log notification
-            group_key = self._get_group_key([s.id for s in subscriptions], notification_type)
             await self._log_notification(
                 user.id,
                 notification_type,
                 level,
                 group_key,
             )
-
-            # Commit immediately to ensure duplicate prevention works
-            await self.session.commit()
 
             logger.info(
                 f"✅ Sent traffic notification to user {user.id} "
@@ -689,6 +697,8 @@ class NotificationChecker:
         else:  # EXPIRY_1H
             time_text = "через 1 час"
 
+        from app.utils.date_utils import format_expiry_date
+
         if level == NotificationLevel.PROFILE:
             # Single connection - use eager loaded data
             if subs_with_conns:
@@ -710,7 +720,7 @@ class NotificationChecker:
                         f"⚠️ <b>Ваше подключение истекает {time_text}!</b>\n\n"
                         f"🔌 <b>Подключение:</b> {inbound.remark if inbound else 'Не указано'}\n"
                         f"🖥️ <b>Сервер:</b> {server.name if server else 'Не указано'}\n"
-                        f"📅 <b>Дата истечения:</b> {(conn.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if conn.expiry_date else 'Не указано'}\n\n"
+                        f"📅 <b>Срок:</b> {format_expiry_date(conn.expiry_date, include_time=True)}\n\n"
                         f"Если хотите продлить подписку, обратитесь к администратору."
                     )
                 else:
@@ -721,7 +731,7 @@ class NotificationChecker:
                 message = (
                     f"⚠️ <b>Ваше подключение истекает {time_text}!</b>\n\n"
                     f"📦 <b>Подписка:</b> {sub.name}\n"
-                    f"📅 <b>Дата истечения:</b> {(sub.expiry_date + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if sub.expiry_date else 'Не указано'}\n\n"
+                    f"📅 <b>Срок:</b> {format_expiry_date(sub.expiry_date, include_time=True)}\n\n"
                     f"Если хотите продлить подписку, обратитесь к администратору."
                 )
         elif level == NotificationLevel.SUBSCRIPTION:
@@ -741,7 +751,7 @@ class NotificationChecker:
                 f"⚠️ <b>Ваша подписка истекает {time_text}!</b>\n\n"
                 f"📦 <b>Подписка:</b> {sub.name}\n"
                 f"🔌 <b>Подключений:</b> {len(sub.inbound_connections) if hasattr(sub, 'inbound_connections') else 1}\n"
-                f"📅 <b>Дата истечения:</b> {(expiry + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M') if expiry else 'Не указано'}\n\n"
+                f"📅 <b>Срок:</b> {format_expiry_date(expiry, include_time=True)}\n\n"
                 f"Если хотите продлить подписку, обратитесь к администратору."
             )
         else:  # USER
@@ -757,11 +767,7 @@ class NotificationChecker:
                     if sub_data and sub_data["connections"]:
                         expiry = sub_data["connections"][0].expiry_date
 
-                expiry_text = (
-                    (expiry + timedelta(hours=3)).strftime("%d.%m.%Y %H:%M")
-                    if expiry
-                    else "Не указано"
-                )
+                expiry_text = format_expiry_date(expiry, include_time=True)
                 message += f"• 📦 {sub.name} - {expiry_text}\n"
 
             message += "\nЕсли хотите продлить подписки, обратитесь к администратору."
@@ -834,8 +840,8 @@ class NotificationChecker:
                 group_key=group_key,
             )
             self.session.add(log)
-            # Note: Not committing here to avoid transaction conflicts
-            # The caller should commit after all operations
+            # Flush to ensure the log is visible to subsequent checks within the same transaction
+            await self.session.flush()
         except Exception as e:
             logger.error(f"Failed to log notification: {e}", exc_info=True)
             # Don't rollback - let the caller handle it

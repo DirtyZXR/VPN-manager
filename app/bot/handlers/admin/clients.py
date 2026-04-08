@@ -168,12 +168,13 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
 
 
 @router.callback_query(F.data.startswith("client_select_"))
-async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
+async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Show client details and actions."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
+    await state.clear()
     client_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -231,12 +232,15 @@ async def select_client(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("client_subscriptions_"))
-async def show_client_subscriptions(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_client_subscriptions(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
     """Show client subscriptions."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
 
+    await state.clear()
     client_id = int(callback.data.split("_")[-1])
 
     from app.services.new_subscription_service import NewSubscriptionService
@@ -389,7 +393,9 @@ async def start_create_subscription_for_client(
     try:
         await callback.message.edit_text(
             "Выберите сервер:",
-            reply_markup=get_servers_keyboard(servers, action="sub_select"),
+            reply_markup=get_servers_keyboard(
+                servers, action="sub_select", back_target=f"client_subscriptions_{client_id}"
+            ),
         )
     except Exception:
         pass
