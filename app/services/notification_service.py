@@ -1,5 +1,7 @@
 """Notification service for sending Telegram notifications."""
 
+import html
+
 from aiogram import Bot
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -456,35 +458,41 @@ class NotificationService:
             client: The newly registered client
         """
         settings = get_settings()
-        if not settings.admin_telegram_ids:
+        admin_ids = settings.admin_ids
+        if not admin_ids:
             logger.warning("No admin Telegram IDs configured, skipping new user notification.")
             return
+
+        safe_name = html.escape(client.name) if client.name else "Не указан"
+        safe_email = html.escape(client.email) if client.email else "Не указан"
 
         message = (
             f"👤 <b>Новый пользователь зарегистрирован!</b>\n\n"
             f"<b>ID:</b> {client.id}\n"
-            f"<b>Имя:</b> {client.name}\n"
+            f"<b>Имя:</b> {safe_name}\n"
             f"<b>Telegram ID:</b> {client.telegram_id}\n"
-            f"<b>Email:</b> {client.email or 'Не указан'}"
+            f"<b>Email:</b> {safe_email}"
         )
 
         try:
             bot = await self._get_bot()
-            for admin_id in settings.admin_telegram_ids:
-                try:
-                    await bot.send_message(
-                        chat_id=admin_id,
-                        text=message,
-                        parse_mode="HTML",
-                    )
-                    logger.info(
-                        f"✅ Admin notification sent to {admin_id} for new user {client.name}"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"❌ Failed to send admin notification to {admin_id} for new user {client.name}: {e}"
-                    )
-            await bot.session.close()
+            try:
+                for admin_id in admin_ids:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=message,
+                            parse_mode="HTML",
+                        )
+                        logger.info(
+                            f"✅ Admin notification sent to {admin_id} for new user {safe_name}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"❌ Failed to send admin notification to {admin_id} for new user {safe_name}: {e}"
+                        )
+            finally:
+                await bot.session.close()
         except Exception as e:
             logger.error(
                 f"❌ Failed to send admin notifications for new user {client.name}: {e}",
