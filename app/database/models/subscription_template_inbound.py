@@ -31,7 +31,9 @@ class SubscriptionTemplateInbound(Base, TimestampMixin):
     order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # For ordering inbounds
 
     # Relationships
-    template: Mapped["SubscriptionTemplate"] = relationship("SubscriptionTemplate", back_populates="template_inbounds")
+    template: Mapped["SubscriptionTemplate"] = relationship(
+        "SubscriptionTemplate", back_populates="template_inbounds"
+    )
     inbound: Mapped["Inbound"] = relationship("Inbound")
 
     def __repr__(self) -> str:

@@ -110,10 +110,10 @@ class SubscriptionTemplateService:
         await self.session.flush()
 
         # Reload with relationships
-        result = await self.get_template(template.id)
-        if result is None:
+        reloaded = await self.get_template(template.id)
+        if reloaded is None:
             raise RuntimeError("Template not found after creation")
-        return result
+        return reloaded
 
     async def update_template(
         self,
@@ -240,13 +240,13 @@ class SubscriptionTemplateService:
         Returns:
             True if removed, False if not found
         """
-        template_inbound = await self.session.execute(
+        result = await self.session.execute(
             select(SubscriptionTemplateInbound).where(
                 SubscriptionTemplateInbound.template_id == template_id,
                 SubscriptionTemplateInbound.inbound_id == inbound_id,
             )
         )
-        template_inbound = template_inbound.scalar_one_or_none()
+        template_inbound = result.scalar_one_or_none()
         if not template_inbound:
             return False
 
@@ -324,42 +324,45 @@ class SubscriptionTemplateService:
 
         sub_service = NewSubscriptionService(self.session)
 
-        # Create subscription
-        subscription, _ = await sub_service.create_subscription(
-            client_id=client_id,
-            name=subscription_name,
-            total_gb=total_gb,
-            expiry_days=expiry_days,
-            notes=notes,
-            template_id=template_id,
-        )
+        try:
+            # Create subscription
+            subscription, _ = await sub_service.create_subscription(
+                client_id=client_id,
+                name=subscription_name,
+                total_gb=total_gb,
+                expiry_days=expiry_days,
+                notes=notes,
+                template_id=template_id,
+            )
 
-        # Add all inbounds from template
-        connections = []
-        for template_inbound in template.template_inbounds:
-            try:
-                connection = await sub_service.add_inbound_to_subscription(
-                    subscription_id=subscription.id,
-                    inbound_id=template_inbound.inbound_id,
-                )
-                connections.append(connection)
-                logger.info(
-                    f"✅ Added inbound {template_inbound.inbound.remark} "
-                    f"to subscription {subscription.name} from template {template.name}"
-                )
-            except Exception as e:
-                logger.error(
-                    f"❌ Failed to add inbound {template_inbound.inbound.remark} "
-                    f"to subscription {subscription.name}: {e}"
-                )
-                # Continue with other inbounds even if one fails
+            # Add all inbounds from template
+            connections = []
+            for template_inbound in template.template_inbounds:
+                try:
+                    connection = await sub_service.add_inbound_to_subscription(
+                        subscription_id=subscription.id,
+                        inbound_id=template_inbound.inbound_id,
+                    )
+                    connections.append(connection)
+                    logger.info(
+                        f"✅ Added inbound {template_inbound.inbound.remark} "
+                        f"to subscription {subscription.name} from template {template.name}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"❌ Failed to add inbound {template_inbound.inbound.remark} "
+                        f"to subscription {subscription.name}: {e}"
+                    )
+                    # Continue with other inbounds even if one fails
 
-        if not connections:
-            # If all inbounds failed, delete the subscription
-            await sub_service.delete_subscription(subscription.id)
-            raise XUIError("Failed to create any connections from template")
+            if not connections:
+                # If all inbounds failed, delete the subscription
+                await sub_service.delete_subscription(subscription.id)
+                raise XUIError("Failed to create any connections from template")
 
-        return subscription, connections
+            return subscription, connections
+        finally:
+            await sub_service.close_all_clients()
 
     # Helper methods
 
@@ -414,6 +417,9 @@ class SubscriptionTemplateService:
 
         Returns:
             True if deleted, False if not found
+
+        Raises:
+            XUIError: If failed to cascade delete any of the linked subscriptions
         """
         template = await self.session.get(SubscriptionTemplate, template_id)
         if not template:
@@ -423,24 +429,32 @@ class SubscriptionTemplateService:
 
         sub_service = NewSubscriptionService(self.session)
 
-        # Get all subscriptions linked to this template
-        result = await self.session.execute(
-            select(Subscription).where(Subscription.template_id == template_id)
-        )
-        subscriptions = result.scalars().all()
+        try:
+            # Get all subscriptions linked to this template
+            result = await self.session.execute(
+                select(Subscription).where(Subscription.template_id == template_id)
+            )
+            subscriptions = result.scalars().all()
 
-        # Delete all linked subscriptions (removes clients from XUI panels)
-        for sub in subscriptions:
-            try:
-                await sub_service.delete_subscription(sub.id)
-                logger.info(f"✅ Cascade deleted subscription {sub.name} (ID: {sub.id})")
-            except Exception as e:
-                logger.error(f"❌ Failed to cascade delete subscription {sub.name}: {e}")
-                # We continue to delete other subscriptions even if one fails
+            has_error = False
 
-        await self.session.delete(template)
-        await self.session.flush()
-        return True
+            # Delete all linked subscriptions (removes clients from XUI panels)
+            for sub in subscriptions:
+                try:
+                    await sub_service.delete_subscription(sub.id)
+                    logger.info(f"✅ Cascade deleted subscription {sub.name} (ID: {sub.id})")
+                except Exception as e:
+                    logger.error(f"❌ Failed to cascade delete subscription {sub.name}: {e}")
+                    has_error = True
+
+            if has_error:
+                raise XUIError(f"Не удалось удалить все подписки для шаблона '{template.name}'")
+
+            await self.session.delete(template)
+            await self.session.flush()
+            return True
+        finally:
+            await sub_service.close_all_clients()
 
     async def _apply_template_limits_change(
         self,
@@ -465,70 +479,73 @@ class SubscriptionTemplateService:
 
         sub_service = NewSubscriptionService(self.session)
 
-        # Normalize None to 0 for logic
-        old_gb_val = old_gb or 0
-        new_gb_val = new_gb or 0
-        old_days_val = old_days or 0
-        new_days_val = new_days or 0
+        try:
+            # Normalize None to 0 for logic
+            old_gb_val = old_gb or 0
+            new_gb_val = new_gb or 0
+            old_days_val = old_days or 0
+            new_days_val = new_days or 0
 
-        # Get all subscriptions linked to this template
-        result = await self.session.execute(
-            select(Subscription).where(Subscription.template_id == template_id)
-        )
-        subscriptions = result.scalars().all()
+            # Get all subscriptions linked to this template
+            result = await self.session.execute(
+                select(Subscription).where(Subscription.template_id == template_id)
+            )
+            subscriptions = result.scalars().all()
 
-        for sub in subscriptions:
-            try:
-                # Calculate new total GB
-                new_total: int | None = None
-                if old_gb_val == 0 and new_gb_val > 0:
-                    new_total = new_gb_val
-                elif old_gb_val > 0 and new_gb_val == 0:
-                    new_total = 0
-                elif old_gb_val > 0 and new_gb_val > 0 and old_gb_val != new_gb_val:
-                    delta_gb = new_gb_val - old_gb_val
-                    new_total = sub.total_gb + delta_gb
-                    if new_total <= 0:
-                        new_total = (
-                            1  # 0 means unlimited, we don't want to accidentally make it unlimited
-                        )
+            for sub in subscriptions:
+                try:
+                    # Calculate new total GB
+                    new_total: int | None = None
+                    if old_gb_val == 0 and new_gb_val > 0:
+                        new_total = new_gb_val
+                    elif old_gb_val > 0 and new_gb_val == 0:
+                        new_total = 0
+                    elif old_gb_val > 0 and new_gb_val > 0 and old_gb_val != new_gb_val:
+                        delta_gb = new_gb_val - old_gb_val
+                        new_total = sub.total_gb + delta_gb
+                        if new_total <= 0:
+                            new_total = 1  # 0 means unlimited, we don't want to accidentally make it unlimited
 
-                # Calculate new expiry date
-                new_expiry_date: datetime | None = None
-                new_expiry_days: float | None = None
+                    # Calculate new expiry date
+                    new_expiry_date: datetime | None = None
+                    new_expiry_days: float | None = None
 
-                if old_days_val == 0 and new_days_val > 0:
-                    new_expiry_days = float(new_days_val)
-                elif old_days_val > 0 and new_days_val == 0:
-                    new_expiry_days = 0.0
-                elif old_days_val > 0 and new_days_val > 0 and old_days_val != new_days_val:
-                    delta_days = new_days_val - old_days_val
-                    if sub.expiry_date:
-                        sub_expiry = (
-                            sub.expiry_date.replace(tzinfo=UTC)
-                            if sub.expiry_date.tzinfo is None
-                            else sub.expiry_date
-                        )
-                        new_expiry_date = sub_expiry + timedelta(days=delta_days)
-                    else:
+                    if old_days_val == 0 and new_days_val > 0:
                         new_expiry_days = float(new_days_val)
+                    elif old_days_val > 0 and new_days_val == 0:
+                        new_expiry_days = 0.0
+                    elif old_days_val > 0 and new_days_val > 0 and old_days_val != new_days_val:
+                        delta_days = new_days_val - old_days_val
+                        if sub.expiry_date:
+                            sub_expiry = (
+                                sub.expiry_date.replace(tzinfo=UTC)
+                                if sub.expiry_date.tzinfo is None
+                                else sub.expiry_date
+                            )
+                            new_expiry_date = sub_expiry + timedelta(days=delta_days)
+                        else:
+                            new_expiry_days = float(new_days_val)
 
-                if (
-                    new_total is not None
-                    or new_expiry_days is not None
-                    or new_expiry_date is not None
-                ):
-                    await sub_service.update_subscription(
-                        subscription_id=sub.id,
-                        total_gb=new_total if new_total is not None else None,
-                        expiry_days=new_expiry_days,
-                        exact_expiry_date=new_expiry_date,
+                    if (
+                        new_total is not None
+                        or new_expiry_days is not None
+                        or new_expiry_date is not None
+                    ):
+                        await sub_service.update_subscription(
+                            subscription_id=sub.id,
+                            total_gb=new_total if new_total is not None else None,
+                            expiry_days=new_expiry_days,
+                            exact_expiry_date=new_expiry_date,
+                        )
+                        logger.info(
+                            f"✅ Mass updated limits for subscription {sub.name} (ID: {sub.id})"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"❌ Failed to mass update limits for subscription {sub.name}: {e}"
                     )
-                    logger.info(
-                        f"✅ Mass updated limits for subscription {sub.name} (ID: {sub.id})"
-                    )
-            except Exception as e:
-                logger.error(f"❌ Failed to mass update limits for subscription {sub.name}: {e}")
+        finally:
+            await sub_service.close_all_clients()
 
     async def _apply_template_inbounds_change(
         self,
@@ -553,40 +570,43 @@ class SubscriptionTemplateService:
 
         sub_service = NewSubscriptionService(self.session)
 
-        # Get all subscriptions linked to this template
-        result = await self.session.execute(
-            select(Subscription).where(Subscription.template_id == template_id)
-        )
-        subscriptions = result.scalars().all()
+        try:
+            # Get all subscriptions linked to this template
+            result = await self.session.execute(
+                select(Subscription).where(Subscription.template_id == template_id)
+            )
+            subscriptions = result.scalars().all()
 
-        for sub in subscriptions:
-            # Handle additions
-            for inbound_id in added:
-                try:
-                    await sub_service.add_inbound_to_subscription(
-                        subscription_id=sub.id,
-                        inbound_id=inbound_id,
-                    )
-                    logger.info(
-                        f"✅ Mass added inbound {inbound_id} to subscription {sub.name} (ID: {sub.id})"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️ Failed to add inbound {inbound_id} to subscription {sub.name}: {e}"
-                    )
-
-            # Handle removals
-            for inbound_id in removed:
-                try:
-                    removed_ok = await sub_service.remove_inbound_from_subscription(
-                        subscription_id=sub.id,
-                        inbound_id=inbound_id,
-                    )
-                    if removed_ok:
-                        logger.info(
-                            f"✅ Mass removed inbound {inbound_id} from subscription {sub.name} (ID: {sub.id})"
+            for sub in subscriptions:
+                # Handle additions
+                for inbound_id in added:
+                    try:
+                        await sub_service.add_inbound_to_subscription(
+                            subscription_id=sub.id,
+                            inbound_id=inbound_id,
                         )
-                except Exception as e:
-                    logger.warning(
-                        f"⚠️ Failed to remove inbound {inbound_id} from subscription {sub.name}: {e}"
-                    )
+                        logger.info(
+                            f"✅ Mass added inbound {inbound_id} to subscription {sub.name} (ID: {sub.id})"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Failed to add inbound {inbound_id} to subscription {sub.name}: {e}"
+                        )
+
+                # Handle removals
+                for inbound_id in removed:
+                    try:
+                        removed_ok = await sub_service.remove_inbound_from_subscription(
+                            subscription_id=sub.id,
+                            inbound_id=inbound_id,
+                        )
+                        if removed_ok:
+                            logger.info(
+                                f"✅ Mass removed inbound {inbound_id} from subscription {sub.name} (ID: {sub.id})"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"⚠️ Failed to remove inbound {inbound_id} from subscription {sub.name}: {e}"
+                        )
+        finally:
+            await sub_service.close_all_clients()

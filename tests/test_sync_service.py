@@ -140,12 +140,11 @@ async def test_manual_sync_connection(test_session, mock_settings):
         remark="TestInbound",
         protocol="vless",
         port=443,
-        settings_json='{}',
+        settings_json="{}",
         client_count=0,
         is_active=True,
     )
     test_session.add(inbound)
-
 
     client = Client(
         id=1,

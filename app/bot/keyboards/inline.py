@@ -594,3 +594,45 @@ def get_template_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="❌ Отмена", callback_data="template_multi_cancel")
     builder.adjust(1)
     return builder.as_markup()
+
+
+def get_subscription_details_keyboard(
+    subscription_id: int, is_active: bool, client_id: int, is_template: bool = False
+) -> InlineKeyboardMarkup:
+    """Get keyboard for subscription details.
+
+    Args:
+        subscription_id: Subscription ID
+        is_active: Whether subscription is active
+        client_id: Client ID
+        is_template: Whether subscription is managed by a template
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
+    builder.button(text="✏️ Редактировать", callback_data=f"admin_sub_edit_{subscription_id}")
+
+    builder.button(text="🔄 Сбросить подписку", callback_data=f"sub_reset:{subscription_id}")
+    builder.button(text="⏳ Добавить время", callback_data=f"sub_add_time:{subscription_id}")
+
+    if not is_template:
+        builder.button(
+            text="⚙️ Изменить лимит трафика", callback_data=f"sub_edit_traffic:{subscription_id}"
+        )
+        builder.button(
+            text="📅 Изменить дату окончания", callback_data=f"sub_edit_expiry:{subscription_id}"
+        )
+
+    if is_active:
+        builder.button(text="❌ Отключить", callback_data=f"admin_sub_disable_{subscription_id}")
+    else:
+        builder.button(text="✅ Включить", callback_data=f"admin_sub_enable_{subscription_id}")
+
+    builder.button(text="🗑️ Удалить", callback_data=f"admin_sub_delete_{subscription_id}")
+    builder.button(text="🔙 Назад к клиенту", callback_data=f"client_subscriptions_{client_id}")
+
+    builder.adjust(1)
+    return builder.as_markup()

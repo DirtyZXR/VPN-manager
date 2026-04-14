@@ -84,6 +84,7 @@ class SubscriptionManagement(StatesGroup):
     editing_traffic = State()
     editing_expiry = State()
     editing_notes = State()
+    waiting_for_add_days = State()
 
 
 class ExportData(StatesGroup):

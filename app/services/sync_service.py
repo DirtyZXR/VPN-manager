@@ -1,6 +1,5 @@
 """Service for synchronizing data between bot database and XUI panels."""
 
-
 import asyncio
 from datetime import UTC, datetime, timedelta
 
@@ -693,4 +692,3 @@ class SyncService:
 
 
 # Импорт asyncio для использования в start_background_sync
-

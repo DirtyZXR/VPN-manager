@@ -1,6 +1,5 @@
 """Tests for utility functions."""
 
-
 from app.utils import generate_email, generate_subscription_token, generate_uuid
 
 
