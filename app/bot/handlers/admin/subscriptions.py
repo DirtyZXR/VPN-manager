@@ -1,7 +1,7 @@
 """Admin subscription management handlers."""
 
-
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -147,7 +147,7 @@ async def process_subscription_name(message: Message, state: FSMContext) -> None
         traffic_str = f"{traffic} GB" if traffic > 0 else "Безлимит"
         await message.answer(
             f"Текущий трафик: {traffic_str}\nВведите новый лимит трафика в GB (0 для безлимита):",
-            reply_markup=get_back_keyboard("admin_sub_edit"),
+            reply_markup=get_back_keyboard(f"admin_sub_edit_{data.get('subscription_id', '')}"),
         )
         return
 
@@ -193,7 +193,7 @@ async def process_traffic_limit(message: Message, state: FSMContext) -> None:
         expiry_str = f"{expiry_date.strftime('%d.%m.%Y')}" if expiry_date else "Бессрочно"
         await message.answer(
             f"Текущий срок: {expiry_str}\nВведите новый срок действия в днях (0 для бессрочной):",
-            reply_markup=get_back_keyboard("admin_sub_edit"),
+            reply_markup=get_back_keyboard(f"admin_sub_edit_{data.get('subscription_id', '')}"),
         )
         return
 
@@ -394,6 +394,7 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
 
 
 @router.callback_query(F.data.startswith("admin_sub_detail_"))
+@router.callback_query(F.data.startswith("client_sub_detail_"))
 async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> None:
     """Show detailed subscription information."""
     if not is_admin:
@@ -418,8 +419,12 @@ async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> 
     )
     traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
 
+    template_text = (
+        f"[Шаблон: {subscription.template.name}]" if subscription.template else "[Индивидуальная]"
+    )
+
     text = (
-        f"📝 Подписка: <b>{subscription.name}</b>\n\n"
+        f"📝 Подписка: <b>{subscription.name}</b> {template_text}\n\n"
         f"ID: {subscription.id}\n"
         f"Клиент: {subscription.client.name} (ID: {subscription.client_id})\n"
         f"Токен: <code>{subscription.subscription_token}</code>\n"
@@ -433,20 +438,39 @@ async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> 
     if subscription.notes:
         text += f"📝 Заметки: {subscription.notes}\n\n"
 
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
-    builder.button(text="✏️ Редактировать", callback_data=f"admin_sub_edit_{subscription_id}")
-    if subscription.is_active:
-        builder.button(text="❌ Отключить", callback_data=f"admin_sub_disable_{subscription_id}")
-    else:
-        builder.button(text="✅ Включить", callback_data=f"admin_sub_enable_{subscription_id}")
-    builder.button(text="🗑️ Удалить", callback_data=f"admin_sub_delete_{subscription_id}")
-    builder.button(
-        text="🔙 Назад к клиенту", callback_data=f"client_subscriptions_{subscription.client_id}"
-    )
-    builder.adjust(1)
+    from app.bot.keyboards.inline import get_subscription_details_keyboard
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    keyboard = get_subscription_details_keyboard(
+        subscription_id=subscription.id,
+        is_active=subscription.is_active,
+        client_id=subscription.client_id,
+        is_template=bool(subscription.template_id),
+    )
+
+    try:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            logger.warning(f"Failed to edit message in show_subscription_details: {e}")
+            # Try to edit reply_markup only as fallback
+            try:
+                await callback.message.edit_reply_markup(reply_markup=keyboard)
+            except TelegramBadRequest as e2:
+                if "message is not modified" in str(e2).lower():
+                    pass
+                else:
+                    logger.error(f"Failed to edit reply_markup: {e2}")
+            except Exception as e2:
+                logger.error(f"Failed to edit reply_markup: {e2}")
+    except Exception as e:
+        logger.warning(f"Failed to edit message in show_subscription_details: {e}")
+        # Try to edit reply_markup only as fallback
+        try:
+            await callback.message.edit_reply_markup(reply_markup=keyboard)
+        except Exception as e2:
+            logger.error(f"Failed to edit reply_markup: {e2}")
     await callback.answer()
 
 
@@ -515,6 +539,21 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
     try:
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            logger.warning(f"Failed to edit message in show_subscription_inbounds: {e}")
+            # Try to edit reply_markup only as fallback
+            try:
+                await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+            except TelegramBadRequest as e2:
+                if "message is not modified" in str(e2).lower():
+                    pass
+                else:
+                    logger.error(f"Failed to edit reply_markup: {e2}")
+            except Exception as e2:
+                logger.error(f"Failed to edit reply_markup: {e2}")
     except Exception as e:
         logger.warning(f"Failed to edit message in show_subscription_inbounds: {e}")
         # Try to edit reply_markup only as fallback
@@ -894,7 +933,6 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
 
     # Now perform the action using the service
     async with async_session_factory() as session:
-
         from sqlalchemy.orm import selectinload
 
         from app.database.models import InboundConnection
@@ -1190,9 +1228,7 @@ async def delete_inbound_connection(
             subscription_id = connection.subscription_id
 
             # Remove from subscription
-            await service.remove_inbound_from_subscription(
-                subscription_id, connection.inbound_id
-            )
+            await service.remove_inbound_from_subscription(subscription_id, connection.inbound_id)
             await session.commit()
 
             await state.clear()
@@ -1272,9 +1308,11 @@ async def process_edit_subscription_field(callback: CallbackQuery, state: FSMCon
     elif field == "notes":
         await state.set_state(SubscriptionManagement.editing_notes)
 
+    data = await state.get_data()
+    sub_id = data.get("subscription_id")
     await callback.message.edit_text(
         prompts[field],
-        reply_markup=get_back_keyboard("admin_sub_edit"),
+        reply_markup=get_back_keyboard(f"admin_sub_edit_{sub_id}"),
     )
     await callback.answer()
 
@@ -1329,8 +1367,11 @@ async def process_edit_subscription_traffic(message, state: FSMContext) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        await service.update_subscription(subscription_id, total_gb=total_gb)
-        await session.commit()
+        try:
+            await service.update_subscription(subscription_id, total_gb=total_gb)
+            await session.commit()
+        finally:
+            await service.close_all_clients()
 
     await state.clear()
     traffic_str = f"{total_gb} GB" if total_gb > 0 else "Безлимит"
@@ -1360,10 +1401,11 @@ async def process_edit_subscription_expiry(message, state: FSMContext) -> None:
 
         service = NewSubscriptionService(session)
         expiry_days_param = expiry_days if expiry_days > 0 else 0
-        await service.update_subscription(
-            subscription_id, expiry_days=expiry_days_param
-        )
-        await session.commit()
+        try:
+            await service.update_subscription(subscription_id, expiry_days=expiry_days_param)
+            await session.commit()
+        finally:
+            await service.close_all_clients()
 
     await state.clear()
     expiry_str = f"{expiry_days} дней" if expiry_days > 0 else "Бессрочно"
@@ -1436,7 +1478,7 @@ async def start_edit_all_subscription_params(
         "✏️ Редактирование всех параметров подписки\n\n"
         f"Текущее название: {subscription.name}\n"
         f"Введите новое название:",
-        reply_markup=get_back_keyboard("admin_sub_edit"),
+        reply_markup=get_back_keyboard(f"admin_sub_edit_{subscription_id}"),
     )
     await callback.answer()
 
@@ -1454,8 +1496,11 @@ async def enable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        await service.update_subscription(subscription_id, is_active=True)
-        await session.commit()
+        try:
+            await service.update_subscription(subscription_id, is_active=True)
+            await session.commit()
+        finally:
+            await service.close_all_clients()
 
     await callback.answer("✅ Подписка включена.")
     await show_subscription_details(callback, is_admin)
@@ -1474,8 +1519,11 @@ async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         from app.services.new_subscription_service import NewSubscriptionService
 
         service = NewSubscriptionService(session)
-        await service.update_subscription(subscription_id, is_active=False)
-        await session.commit()
+        try:
+            await service.update_subscription(subscription_id, is_active=False)
+            await session.commit()
+        finally:
+            await service.close_all_clients()
 
     await callback.answer("✅ Подписка отключена.")
     await show_subscription_details(callback, is_admin)
@@ -1553,3 +1601,244 @@ async def delete_subscription(callback: CallbackQuery, state: FSMContext, is_adm
             )
         finally:
             await service.close_all_clients()
+
+
+@router.callback_query(F.data.startswith("sub_reset:"))
+async def reset_subscription_handler(callback: CallbackQuery, is_admin: bool) -> None:
+    """Reset subscription traffic and time."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    subscription_id = int(callback.data.split(":")[1])
+
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        service = NewSubscriptionService(session)
+
+        try:
+            await service.reset_subscription(subscription_id)
+            await session.commit()
+            await callback.answer("✅ Подписка сброшена", show_alert=True)
+        except Exception as e:
+            logger.error(f"Error resetting subscription: {e}", exc_info=True)
+            await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+            return
+        finally:
+            await service.close_all_clients()
+
+    # Refresh details
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        service = NewSubscriptionService(session)
+        subscription = await service.get_subscription(subscription_id)
+        if not subscription:
+            return
+
+        status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
+        expiry = (
+            subscription.expiry_date.strftime("%d.%m.%Y")
+            if subscription.expiry_date
+            else "Бессрочно"
+        )
+        traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
+
+        template_text = (
+            f"[Шаблон: {subscription.template.name}]"
+            if subscription.template
+            else "[Индивидуальная]"
+        )
+
+        text = (
+            f"📝 Подписка: <b>{subscription.name}</b> {template_text}\n\n"
+            f"ID: {subscription.id}\n"
+            f"Клиент: {subscription.client.name} (ID: {subscription.client_id})\n"
+            f"Токен: <code>{subscription.subscription_token}</code>\n"
+            f"Статус: {status}\n"
+            f"Трафик: {traffic}\n"
+            f"Срок: {expiry}\n"
+            f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"Подключений: {len(subscription.inbound_connections)}\n\n"
+        )
+
+        if subscription.notes:
+            text += f"📝 Заметки: {subscription.notes}\n\n"
+
+        from app.bot.keyboards.inline import get_subscription_details_keyboard
+
+        keyboard = get_subscription_details_keyboard(
+            subscription_id=subscription.id,
+            is_active=subscription.is_active,
+            client_id=subscription.client_id,
+            is_template=bool(subscription.template_id),
+        )
+
+        try:
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e).lower():
+                pass
+            else:
+                logger.warning(f"Failed to edit message in reset_subscription_handler: {e}")
+                try:
+                    await callback.message.edit_reply_markup(reply_markup=keyboard)
+                except TelegramBadRequest as e2:
+                    if "message is not modified" in str(e2).lower():
+                        pass
+                    else:
+                        logger.error(f"Failed to edit reply_markup: {e2}")
+                except Exception as e2:
+                    logger.error(f"Failed to edit reply_markup: {e2}")
+        except Exception as e:
+            logger.warning(f"Failed to edit message in reset_subscription_handler: {e}")
+            try:
+                await callback.message.edit_reply_markup(reply_markup=keyboard)
+            except Exception as e2:
+                logger.error(f"Failed to edit reply_markup: {e2}")
+
+
+@router.callback_query(F.data.startswith("sub_edit_traffic:"))
+async def start_quick_edit_traffic(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
+    """Start quick edit of subscription traffic limit."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    subscription_id = int(callback.data.split(":")[1])
+    await state.update_data(subscription_id=subscription_id)
+    await state.set_state(SubscriptionManagement.editing_traffic)
+
+    await callback.message.edit_text(
+        "Введите новый лимит трафика в GB (0 для безлимита):",
+        reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sub_edit_expiry:"))
+async def start_quick_edit_expiry(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
+    """Start quick edit of subscription expiry date."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    subscription_id = int(callback.data.split(":")[1])
+    await state.update_data(subscription_id=subscription_id)
+    await state.set_state(SubscriptionManagement.editing_expiry)
+
+    await callback.message.edit_text(
+        "Введите новый срок в днях (0 для бессрочной):",
+        reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("sub_add_time:"))
+async def add_time_to_subscription_handler(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
+    """Start process to add time to subscription."""
+    if not is_admin:
+        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        return
+
+    subscription_id = int(callback.data.split(":")[1])
+    await state.update_data(subscription_id=subscription_id)
+    await state.set_state(SubscriptionManagement.waiting_for_add_days)
+
+    await callback.message.edit_text(
+        "⏳ Введите количество дней для добавления к подписке:",
+        reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+    )
+    await callback.answer()
+
+
+@router.message(SubscriptionManagement.waiting_for_add_days)
+async def process_add_time_days(message: Message, state: FSMContext) -> None:
+    """Process days to add to subscription."""
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError("Must be positive")
+    except ValueError:
+        await message.answer("❌ Введите положительное целое число.")
+        return
+
+    data = await state.get_data()
+    subscription_id = data.get("subscription_id")
+    if not subscription_id:
+        await message.answer("❌ Ошибка: ID подписки не найден.")
+        await state.clear()
+        return
+
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        service = NewSubscriptionService(session)
+
+        try:
+            await service.add_time_to_subscription(subscription_id, days)
+            await session.commit()
+            await message.answer(f"✅ Успешно добавлено {days} дней к подписке.")
+        except Exception as e:
+            logger.error(f"Error adding time to subscription: {e}", exc_info=True)
+            await message.answer(f"❌ Ошибка: {e}")
+        finally:
+            await service.close_all_clients()
+
+    await state.clear()
+
+    # Get updated subscription info to show it back
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        service = NewSubscriptionService(session)
+        subscription = await service.get_subscription(subscription_id)
+        if not subscription:
+            return
+
+        status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
+        expiry = (
+            subscription.expiry_date.strftime("%d.%m.%Y")
+            if subscription.expiry_date
+            else "Бессрочно"
+        )
+        traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
+
+        template_text = (
+            f"[Шаблон: {subscription.template.name}]"
+            if subscription.template
+            else "[Индивидуальная]"
+        )
+
+        text = (
+            f"📝 Подписка: <b>{subscription.name}</b> {template_text}\n\n"
+            f"ID: {subscription.id}\n"
+            f"Клиент: {subscription.client.name} (ID: {subscription.client_id})\n"
+            f"Токен: <code>{subscription.subscription_token}</code>\n"
+            f"Статус: {status}\n"
+            f"Трафик: {traffic}\n"
+            f"Срок: {expiry}\n"
+            f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
+            f"Подключений: {len(subscription.inbound_connections)}\n\n"
+        )
+
+        if subscription.notes:
+            text += f"📝 Заметки: {subscription.notes}\n\n"
+
+        from app.bot.keyboards.inline import get_subscription_details_keyboard
+
+        keyboard = get_subscription_details_keyboard(
+            subscription_id=subscription.id,
+            is_active=subscription.is_active,
+            client_id=subscription.client_id,
+            is_template=bool(subscription.template_id),
+        )
+
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")

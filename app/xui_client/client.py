@@ -82,22 +82,22 @@ class XUIClient:
             # Try to set legacy cipher suites for OpenSSL 3.0
             try:
                 # More permissive cipher suites
-                ssl_context.set_ciphers('DEFAULT:@SECLEVEL=1')
+                ssl_context.set_ciphers("DEFAULT:@SECLEVEL=1")
             except Exception:
                 # Fallback to even more permissive settings
                 with contextlib.suppress(BaseException):
-                    ssl_context.set_ciphers('ALL:!aNULL:!eNULL')
+                    ssl_context.set_ciphers("ALL:!aNULL:!eNULL")
 
-            connector_args['ssl'] = ssl_context
+            connector_args["ssl"] = ssl_context
             logger.warning(f"SSL verification disabled for {self.base_url}")
             logger.info(f"Connecting to {self.base_url}/login with SSL verification disabled")
         else:
             # Use default SSL settings
-            connector_args['ssl'] = True
+            connector_args["ssl"] = True
 
         # Additional connection options for problematic servers
-        connector_args['force_close'] = True
-        connector_args['enable_cleanup_closed'] = True
+        connector_args["force_close"] = True
+        connector_args["enable_cleanup_closed"] = True
 
         connector = aiohttp.TCPConnector(**connector_args)
         self._session = aiohttp.ClientSession(
@@ -430,6 +430,7 @@ class XUIClient:
         # First get current client data from inbound
         inbound = await self.get_inbound(inbound_id)
         import json
+
         settings_data = json.loads(inbound.settings)
         clients_list = settings_data.get("clients", [])
 

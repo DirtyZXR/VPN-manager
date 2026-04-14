@@ -23,12 +23,14 @@ from app.bot.keyboards.inline import (
     get_templates_keyboard,
     get_user_actions_keyboard,
     get_user_keyboard,
+    get_subscription_details_keyboard,
     get_users_keyboard,
 )
 
 __all__ = [
     "get_main_menu_keyboard",
     "get_user_keyboard",
+    "get_subscription_details_keyboard",
     "get_servers_keyboard",
     "get_servers_keyboard_for_template_edit",
     "get_clients_keyboard",

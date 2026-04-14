@@ -52,7 +52,9 @@ class NotificationService:
         try:
             async with await self._get_bot() as bot:
                 safe_client_name = html.escape(client.name) if client.name else "Не указан"
-                safe_sub_name = html.escape(subscription.name) if subscription.name else "Не указана"
+                safe_sub_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
+                )
 
                 # Build message
                 message = (
@@ -79,7 +81,9 @@ class NotificationService:
                     f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
                 )
                 expiry_text = (
-                    f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочная"
+                    f"{subscription.remaining_days} дн."
+                    if subscription.expiry_date
+                    else "Бессрочная"
                 )
 
                 message += (
@@ -150,7 +154,9 @@ class NotificationService:
         try:
             async with await self._get_bot() as bot:
                 safe_client_name = html.escape(client.name) if client.name else "Не указан"
-                safe_sub_name = html.escape(subscription.name) if subscription.name else "Не указана"
+                safe_sub_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
+                )
 
                 # Build message
                 message = (
@@ -165,7 +171,9 @@ class NotificationService:
                     f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
                 )
                 expiry_text = (
-                    f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочная"
+                    f"{subscription.remaining_days} дн."
+                    if subscription.expiry_date
+                    else "Бессрочная"
                 )
 
                 message += (
@@ -215,7 +223,9 @@ class NotificationService:
         try:
             async with await self._get_bot() as bot:
                 safe_client_name = html.escape(client.name) if client.name else "Не указан"
-                safe_sub_name = html.escape(subscription_name) if subscription_name else "Не указана"
+                safe_sub_name = (
+                    html.escape(subscription_name) if subscription_name else "Не указана"
+                )
 
                 message = (
                     f"❌ <b>Подписка удалена</b>\n\n"
@@ -271,7 +281,9 @@ class NotificationService:
                 server = inbound.server
 
                 safe_client_name = html.escape(client.name) if client.name else "Не указан"
-                safe_sub_name = html.escape(subscription.name) if subscription.name else "Не указана"
+                safe_sub_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
+                )
                 safe_remark = html.escape(inbound.remark) if inbound.remark else "Без названия"
                 safe_server_name = html.escape(server.name) if server.name else "Неизвестный"
 
@@ -341,7 +353,9 @@ class NotificationService:
         try:
             async with await self._get_bot() as bot:
                 safe_client_name = html.escape(client.name) if client.name else "Не указан"
-                safe_sub_name = html.escape(subscription_name) if subscription_name else "Не указана"
+                safe_sub_name = (
+                    html.escape(subscription_name) if subscription_name else "Не указана"
+                )
                 safe_remark = html.escape(inbound_remark) if inbound_remark else "Без названия"
 
                 message = (

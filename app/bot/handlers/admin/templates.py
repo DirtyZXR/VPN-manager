@@ -1,5 +1,7 @@
 """Template management handlers for subscription templates."""
 
+import asyncio
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -647,6 +649,22 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
 
             await session.commit()
 
+            async def run_bg():
+                try:
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        await bg_service._apply_template_inbounds_change(
+                            template_id,
+                            added_inbound_ids=selected_inbound_ids,
+                            removed_inbound_ids=set(),
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Background task failed: {e}")
+
+            asyncio.create_task(run_bg())
+
             # Get updated template info
             template = await template_service.get_template(template_id)
             await template_service.get_template_inbounds(template_id)
@@ -666,6 +684,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
 
         await callback.message.edit_text(
             f"✅ <b>Успешно добавлено {added_count} подключений</b>\n\n"
+            f"✅ Шаблон изменен. Запущено фоновое обновление всех привязанных подписок...\n\n"
             f"📝 Шаблон: <b>{template.name}</b>\n"
             f"🔌 Всего подключений: {len(template.template_inbounds)}\n\n"
             f"Выберите сервер для продолжения редактирования:",
@@ -753,7 +772,7 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
     try:
         async with async_session_factory() as session:
             template_service = SubscriptionTemplateService(session)
-            deleted = await template_service.delete_template(template_id)
+            deleted = await template_service.delete_template_safely(template_id)
             await session.commit()
 
         if deleted:
@@ -1029,16 +1048,41 @@ async def process_edit_default_traffic(message: Message, state: FSMContext):
     try:
         async with async_session_factory() as session:
             template_service = SubscriptionTemplateService(session)
+
+            old_template = await template_service.get_template(template_id)
+            if not old_template:
+                await message.answer("⚠️ Шаблон не найден")
+                await show_template_details_edit_menu(message, state)
+                return
+            old_gb = old_template.default_total_gb
+            old_days = old_template.default_expiry_days
+
             template = await template_service.update_template(
                 template_id=template_id,
                 default_total_gb=traffic,
             )
             await session.commit()
 
+            async def run_bg():
+                try:
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        await bg_service._apply_template_limits_change(
+                            template_id, old_gb, traffic, old_days, old_days
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Background task failed: {e}")
+
+            asyncio.create_task(run_bg())
+
         logger.info(f"✅ Template traffic updated: {template.name}")
 
         traffic_text = f"{traffic} ГБ {'(безлимитный)' if traffic == 0 else ''}"
-        await message.answer(f"✅ Лимит трафика изменен на: {traffic_text}")
+        await message.answer(
+            f"✅ Лимит трафика изменен на: {traffic_text}\n\n✅ Шаблон изменен. Запущено фоновое обновление всех привязанных подписок..."
+        )
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
@@ -1076,16 +1120,41 @@ async def process_edit_default_expiry(message: Message, state: FSMContext):
     try:
         async with async_session_factory() as session:
             template_service = SubscriptionTemplateService(session)
+
+            old_template = await template_service.get_template(template_id)
+            if not old_template:
+                await message.answer("⚠️ Шаблон не найден")
+                await show_template_details_edit_menu(message, state)
+                return
+            old_gb = old_template.default_total_gb
+            old_days = old_template.default_expiry_days
+
             template = await template_service.update_template(
                 template_id=template_id,
                 default_expiry_days=expiry,
             )
             await session.commit()
 
+            async def run_bg():
+                try:
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        await bg_service._apply_template_limits_change(
+                            template_id, old_gb, old_gb, old_days, expiry
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Background task failed: {e}")
+
+            asyncio.create_task(run_bg())
+
         logger.info(f"✅ Template expiry updated: {template.name}")
 
         expiry_text = f"{expiry} дн." if expiry else "Бессрочный"
-        await message.answer(f"✅ Срок действия изменен на: {expiry_text}")
+        await message.answer(
+            f"✅ Срок действия изменен на: {expiry_text}\n\n✅ Шаблон изменен. Запущено фоновое обновление всех привязанных подписок..."
+        )
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
@@ -1213,6 +1282,21 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
             await session.commit()
 
         if removed:
+
+            async def run_bg():
+                try:
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        await bg_service._apply_template_inbounds_change(
+                            template_id, added_inbound_ids=set(), removed_inbound_ids={inbound_id}
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Background task failed: {e}")
+
+            asyncio.create_task(run_bg())
+
             logger.info(f"✅ Inbound {inbound_id} removed from template {template_id}")
 
         await state.clear()
@@ -1245,10 +1329,16 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
             if template.notes:
                 text += f"\n📌 <b>Заметки:</b> {template.notes}"
 
+            text += (
+                "\n\n✅ Шаблон изменен. Запущено фоновое обновление всех привязанных подписок..."
+            )
+
             keyboard = get_template_actions_keyboard(template.id)
 
         await callback.message.edit_text(text, reply_markup=keyboard)
-        await callback.answer("✅ Подключение удалено")
+        await callback.answer(
+            "✅ Подключение удалено. Запущено фоновое обновление...", show_alert=True
+        )
 
     except Exception as e:
         await state.clear()
