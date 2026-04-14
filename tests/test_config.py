@@ -1,6 +1,5 @@
 """Tests for configuration."""
 
-
 from app.config import Settings
 
 

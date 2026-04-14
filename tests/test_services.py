@@ -49,7 +49,7 @@ async def test_client_service_create_client_auto_email(test_session):
 
     client = await service.create_client(
         name="Auto Client",
-    # email=None will generate automatically
+        # email=None will generate automatically
     )
 
     assert client.id is not None

@@ -66,7 +66,6 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
         if self.expiry_date is None:
             return False
 
-
         expiry = self.expiry_date
         if expiry.tzinfo is None:
             expiry = expiry.replace(tzinfo=UTC)

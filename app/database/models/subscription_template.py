@@ -19,7 +19,9 @@ class SubscriptionTemplate(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    default_total_gb: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0 = unlimited
+    default_total_gb: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # 0 = unlimited
     default_expiry_days: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None = never
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

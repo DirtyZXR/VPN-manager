@@ -66,11 +66,12 @@ class XUIService:
 
         password = self._decrypt_password(server.password_encrypted)
         # Use verify_ssl from server model, default to True for existing servers
-        verify_ssl = getattr(server, 'verify_ssl', True)
+        verify_ssl = getattr(server, "verify_ssl", True)
 
         # Build full URL for API requests using server URL + panel path
-        panel_path = getattr(server, 'panel_path', '/')
+        panel_path = getattr(server, "panel_path", "/")
         from urllib.parse import urljoin
+
         base_url = urljoin(server.url, panel_path)
 
         # Try to load saved cookies
@@ -109,6 +110,7 @@ class XUIService:
             cookies = client.get_session_cookies()
             if cookies:
                 from datetime import datetime
+
                 cookies_json = json.dumps(cookies)
                 server.session_cookies_encrypted = self._encrypt_password(cookies_json)
                 server.session_created_at = datetime.now(UTC)
@@ -148,9 +150,7 @@ class XUIService:
         Returns:
             List of all servers
         """
-        result = await self.session.execute(
-            select(Server).order_by(Server.name)
-        )
+        result = await self.session.execute(select(Server).order_by(Server.name))
         return result.scalars().all()
 
     async def get_active_servers(self) -> Sequence[Server]:
@@ -173,9 +173,7 @@ class XUIService:
         Returns:
             Server or None if not found
         """
-        result = await self.session.execute(
-            select(Server).where(Server.id == server_id)
-        )
+        result = await self.session.execute(select(Server).where(Server.id == server_id))
         return result.scalar_one_or_none()
 
     async def create_server(
@@ -344,9 +342,7 @@ class XUIService:
         xui_inbounds = await client.get_inbounds()
 
         # Get existing inbounds
-        result = await self.session.execute(
-            select(Inbound).where(Inbound.server_id == server_id)
-        )
+        result = await self.session.execute(select(Inbound).where(Inbound.server_id == server_id))
         existing = {i.xui_id: i for i in result.scalars().all()}
 
         synced = 0
@@ -420,9 +416,7 @@ class XUIService:
             Inbound or None if not found
         """
         result = await self.session.execute(
-            select(Inbound)
-            .options(selectinload(Inbound.server))
-            .where(Inbound.id == inbound_id)
+            select(Inbound).options(selectinload(Inbound.server)).where(Inbound.id == inbound_id)
         )
         return result.scalar_one_or_none()
 
@@ -460,7 +454,7 @@ class XUIService:
             "enabled_clients": 0,
             "disabled_clients": 0,
             "total_used_gb": 0,
-            "clients": []
+            "clients": [],
         }
 
         for client in clients:
@@ -474,13 +468,17 @@ class XUIService:
             used_gb = client.get("up", 0) + client.get("down", 0)
             stats["total_used_gb"] += used_gb / (1024**3)
 
-            stats["clients"].append({
-                "email": client.get("email", "N/A"),
-                "uuid": client.get("id", "N/A"),
-                "enabled": is_enabled,
-                "used_gb": used_gb / (1024**3),
-                "total_gb": client.get("totalGB", 0) / (1024**3) if client.get("totalGB") else 0,
-                "expiry_time": client.get("expiryTime", 0),
-            })
+            stats["clients"].append(
+                {
+                    "email": client.get("email", "N/A"),
+                    "uuid": client.get("id", "N/A"),
+                    "enabled": is_enabled,
+                    "used_gb": used_gb / (1024**3),
+                    "total_gb": client.get("totalGB", 0) / (1024**3)
+                    if client.get("totalGB")
+                    else 0,
+                    "expiry_time": client.get("expiryTime", 0),
+                }
+            )
 
         return stats

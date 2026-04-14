@@ -50,73 +50,80 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
-
-            # Build message
-            message = (
-                f"🎉 <b>Новая подписка создана!</b>\n\n"
-                f"👤 <b>Клиент:</b> {client.name}\n"
-                f"📦 <b>Подписка:</b> {subscription.name}\n\n"
-                f"<b>Подключения:</b>\n"
-            )
-
-            for i, conn in enumerate(connections, 1):
-                inbound = conn.inbound
-                server = inbound.server
-                status = "✅" if conn.is_enabled else "❌"
-                message += (
-                    f"{i}. {status} <b>{inbound.remark}</b>\n"
-                    f"   Сервер: {server.name}\n"
-                    f"   Протокол: {inbound.protocol}\n"
+            async with await self._get_bot() as bot:
+                safe_client_name = html.escape(client.name) if client.name else "Не указан"
+                safe_sub_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
                 )
 
-            # Add subscription details
-            traffic_limit = (
-                f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
-            )
-            expiry_text = (
-                f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочная"
-            )
+                # Build message
+                message = (
+                    f"🎉 <b>Новая подписка создана!</b>\n\n"
+                    f"👤 <b>Клиент:</b> {safe_client_name}\n"
+                    f"📦 <b>Подписка:</b> {safe_sub_name}\n\n"
+                    f"<b>Подключения:</b>\n"
+                )
 
-            message += (
-                f"\n📊 <b>Лимит трафика:</b> {traffic_limit}\n"
-                f"📅 <b>Срок действия:</b> {expiry_text}\n"
-            )
-
-            # Add subscription URLs
-            if connections:
-                from urllib.parse import urljoin
-
-                servers = {conn.inbound.server for conn in connections}
-                urls = []
-                for server in servers:
-                    # Prioritize JSON URL, fallback to standard URL
-                    subscription_path = getattr(server, "subscription_json_path", None)
-                    if not subscription_path:
-                        subscription_path = getattr(server, "subscription_path", "/sub/")
-
-                    url = urljoin(
-                        server.url, f"{subscription_path}{subscription.subscription_token}"
+                for i, conn in enumerate(connections, 1):
+                    inbound = conn.inbound
+                    server = inbound.server
+                    status = "✅" if conn.is_enabled else "❌"
+                    safe_remark = html.escape(inbound.remark) if inbound.remark else "Без названия"
+                    safe_server_name = html.escape(server.name) if server.name else "Неизвестный"
+                    message += (
+                        f"{i}. {status} <b>{safe_remark}</b>\n"
+                        f"   Сервер: {safe_server_name}\n"
+                        f"   Протокол: {inbound.protocol}\n"
                     )
-                    urls.append(url)
 
-                if urls:
-                    message += "\n🔗 <b>Все URL подписки:</b>\n"
-                    message += "\n".join([f"<code>{u}</code>" for u in urls])
+                # Add subscription details
+                traffic_limit = (
+                    f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
+                )
+                expiry_text = (
+                    f"{subscription.remaining_days} дн."
+                    if subscription.expiry_date
+                    else "Бессрочная"
+                )
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                message += (
+                    f"\n📊 <b>Лимит трафика:</b> {traffic_limit}\n"
+                    f"📅 <b>Срок действия:</b> {expiry_text}\n"
+                )
 
-            logger.info(
-                f"✅ Notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription.name}"
-            )
+                # Add subscription URLs
+                if connections:
+                    from urllib.parse import urljoin
 
-            await bot.session.close()
+                    servers = {conn.inbound.server for conn in connections}
+                    urls = []
+                    for server in servers:
+                        # Prioritize JSON URL, fallback to standard URL
+                        subscription_path = getattr(server, "subscription_json_path", None)
+                        if not subscription_path:
+                            subscription_path = getattr(server, "subscription_path", "/sub/")
+
+                        url = urljoin(
+                            server.url, f"{subscription_path}{subscription.subscription_token}"
+                        )
+                        urls.append(url)
+
+                    if urls:
+                        message += "\n🔗 <b>Все URL подписки:</b>\n"
+                        message += "\n".join([f"<code>{u}</code>" for u in urls])
+
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
+
+                logger.info(
+                    f"✅ Notification sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id}) "
+                    f"for subscription {subscription.name}"
+                )
+
             return True
 
         except Exception as e:
@@ -145,42 +152,47 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
+            async with await self._get_bot() as bot:
+                safe_client_name = html.escape(client.name) if client.name else "Не указан"
+                safe_sub_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
+                )
 
-            # Build message
-            message = (
-                f"🔄 <b>Подписка обновлена!</b>\n\n"
-                f"👤 <b>Клиент:</b> {client.name}\n"
-                f"📦 <b>Подписка:</b> {subscription.name}\n"
-                f"✅ <b>Статус:</b> {'Активна' if subscription.is_active else 'Отключена'}\n"
-            )
+                # Build message
+                message = (
+                    f"🔄 <b>Подписка обновлена!</b>\n\n"
+                    f"👤 <b>Клиент:</b> {safe_client_name}\n"
+                    f"📦 <b>Подписка:</b> {safe_sub_name}\n"
+                    f"✅ <b>Статус:</b> {'Активна' if subscription.is_active else 'Отключена'}\n"
+                )
 
-            # Add subscription details
-            traffic_limit = (
-                f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
-            )
-            expiry_text = (
-                f"{subscription.remaining_days} дн." if subscription.expiry_date else "Бессрочная"
-            )
+                # Add subscription details
+                traffic_limit = (
+                    f"{subscription.total_gb} ГБ" if subscription.total_gb > 0 else "Безлимитный"
+                )
+                expiry_text = (
+                    f"{subscription.remaining_days} дн."
+                    if subscription.expiry_date
+                    else "Бессрочная"
+                )
 
-            message += (
-                f"📊 <b>Лимит трафика:</b> {traffic_limit}\n"
-                f"📅 <b>Срок действия:</b> {expiry_text}\n"
-            )
+                message += (
+                    f"📊 <b>Лимит трафика:</b> {traffic_limit}\n"
+                    f"📅 <b>Срок действия:</b> {expiry_text}\n"
+                )
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
 
-            logger.info(
-                f"✅ Update notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription.name}"
-            )
+                logger.info(
+                    f"✅ Update notification sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id}) "
+                    f"for subscription {subscription.name}"
+                )
 
-            await bot.session.close()
             return True
 
         except Exception as e:
@@ -209,28 +221,31 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
+            async with await self._get_bot() as bot:
+                safe_client_name = html.escape(client.name) if client.name else "Не указан"
+                safe_sub_name = (
+                    html.escape(subscription_name) if subscription_name else "Не указана"
+                )
 
-            message = (
-                f"❌ <b>Подписка удалена</b>\n\n"
-                f"👤 <b>Клиент:</b> {client.name}\n"
-                f"📦 <b>Подписка:</b> {subscription_name}\n\n"
-                f"Если это ошибка, обратитесь к администратору."
-            )
+                message = (
+                    f"❌ <b>Подписка удалена</b>\n\n"
+                    f"👤 <b>Клиент:</b> {safe_client_name}\n"
+                    f"📦 <b>Подписка:</b> {safe_sub_name}\n\n"
+                    f"Если это ошибка, обратитесь к администратору."
+                )
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
 
-            logger.info(
-                f"✅ Deletion notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription_name}"
-            )
+                logger.info(
+                    f"✅ Deletion notification sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id}) "
+                    f"for subscription {subscription_name}"
+                )
 
-            await bot.session.close()
             return True
 
         except Exception as e:
@@ -261,46 +276,51 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
+            async with await self._get_bot() as bot:
+                inbound = connection.inbound
+                server = inbound.server
 
-            inbound = connection.inbound
-            server = inbound.server
+                safe_client_name = html.escape(client.name) if client.name else "Не указан"
+                safe_sub_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
+                )
+                safe_remark = html.escape(inbound.remark) if inbound.remark else "Без названия"
+                safe_server_name = html.escape(server.name) if server.name else "Неизвестный"
 
-            message = (
-                f"➕ <b>Новое подключение добавлено!</b>\n\n"
-                f"👤 <b>Клиент:</b> {client.name}\n"
-                f"📦 <b>Подписка:</b> {subscription.name}\n\n"
-                f"🔌 <b>Подключение:</b> {inbound.remark}\n"
-                f"🖥️ <b>Сервер:</b> {server.name}\n"
-                f"⚙️ <b>Протокол:</b> {inbound.protocol}\n"
-                f"📡 <b>Порт:</b> {inbound.port}\n"
-            )
+                message = (
+                    f"➕ <b>Новое подключение добавлено!</b>\n\n"
+                    f"👤 <b>Клиент:</b> {safe_client_name}\n"
+                    f"📦 <b>Подписка:</b> {safe_sub_name}\n\n"
+                    f"🔌 <b>Подключение:</b> {safe_remark}\n"
+                    f"🖥️ <b>Сервер:</b> {safe_server_name}\n"
+                    f"⚙️ <b>Протокол:</b> {inbound.protocol}\n"
+                    f"📡 <b>Порт:</b> {inbound.port}\n"
+                )
 
-            # Add subscription URL
-            from urllib.parse import urljoin
+                # Add subscription URL
+                from urllib.parse import urljoin
 
-            # Prioritize JSON URL, fallback to standard URL
-            subscription_path = getattr(server, "subscription_json_path", None)
-            if not subscription_path:
-                subscription_path = getattr(server, "subscription_path", "/sub/")
+                # Prioritize JSON URL, fallback to standard URL
+                subscription_path = getattr(server, "subscription_json_path", None)
+                if not subscription_path:
+                    subscription_path = getattr(server, "subscription_path", "/sub/")
 
-            url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
+                url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
 
-            message += f"\n🔗 <b>URL подписки:</b>\n<code>{url}</code>"
+                message += f"\n🔗 <b>URL подписки:</b>\n<code>{url}</code>"
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
 
-            logger.info(
-                f"✅ Inbound added notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription.name}"
-            )
+                logger.info(
+                    f"✅ Inbound added notification sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id}) "
+                    f"for subscription {subscription.name}"
+                )
 
-            await bot.session.close()
             return True
 
         except Exception as e:
@@ -331,29 +351,33 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
+            async with await self._get_bot() as bot:
+                safe_client_name = html.escape(client.name) if client.name else "Не указан"
+                safe_sub_name = (
+                    html.escape(subscription_name) if subscription_name else "Не указана"
+                )
+                safe_remark = html.escape(inbound_remark) if inbound_remark else "Без названия"
 
-            message = (
-                f"➖ <b>Подключение удалено</b>\n\n"
-                f"👤 <b>Клиент:</b> {client.name}\n"
-                f"📦 <b>Подписка:</b> {subscription_name}\n"
-                f"🔌 <b>Удалено подключение:</b> {inbound_remark}\n\n"
-                f"Если это ошибка, обратитесь к администратору."
-            )
+                message = (
+                    f"➖ <b>Подключение удалено</b>\n\n"
+                    f"👤 <b>Клиент:</b> {safe_client_name}\n"
+                    f"📦 <b>Подписка:</b> {safe_sub_name}\n"
+                    f"🔌 <b>Удалено подключение:</b> {safe_remark}\n\n"
+                    f"Если это ошибка, обратитесь к администратору."
+                )
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
 
-            logger.info(
-                f"✅ Inbound removed notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription_name}"
-            )
+                logger.info(
+                    f"✅ Inbound removed notification sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id}) "
+                    f"for subscription {subscription_name}"
+                )
 
-            await bot.session.close()
             return True
 
         except Exception as e:
@@ -384,21 +408,19 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
+            async with await self._get_bot() as bot:
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                logger.info(
+                    f"✅ Expiry warning sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id}) "
+                    f"type: {notification_type}"
+                )
 
-            logger.info(
-                f"✅ Expiry warning sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"type: {notification_type}"
-            )
-
-            await bot.session.close()
             return True
 
         except Exception as e:
@@ -427,20 +449,18 @@ class NotificationService:
             return False
 
         try:
-            bot = await self._get_bot()
+            async with await self._get_bot() as bot:
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
 
-            await bot.send_message(
-                chat_id=client.telegram_id,
-                text=message,
-                parse_mode="HTML",
-            )
+                logger.info(
+                    f"✅ Traffic warning sent to client {client.name} "
+                    f"(Telegram ID: {client.telegram_id})"
+                )
 
-            logger.info(
-                f"✅ Traffic warning sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id})"
-            )
-
-            await bot.session.close()
             return True
 
         except Exception as e:
@@ -475,8 +495,7 @@ class NotificationService:
         )
 
         try:
-            bot = await self._get_bot()
-            try:
+            async with await self._get_bot() as bot:
                 for admin_id in admin_ids:
                     try:
                         await bot.send_message(
@@ -491,8 +510,6 @@ class NotificationService:
                         logger.error(
                             f"❌ Failed to send admin notification to {admin_id} for new user {safe_name}: {e}"
                         )
-            finally:
-                await bot.session.close()
         except Exception as e:
             logger.error(
                 f"❌ Failed to send admin notifications for new user {client.name}: {e}",

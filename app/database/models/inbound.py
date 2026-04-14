@@ -29,7 +29,9 @@ class Inbound(Base, TimestampMixin, SyncMixin):
     protocol: Mapped[str] = mapped_column(String(50), nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     settings_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
-    client_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # Number of XUI clients
+    client_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # Number of XUI clients
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships

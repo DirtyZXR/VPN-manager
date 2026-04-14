@@ -1,6 +1,5 @@
 """Admin server management handlers."""
 
-
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
@@ -53,8 +52,7 @@ async def start_add_server(callback: CallbackQuery, state: FSMContext, is_admin:
 
     await state.set_state(ServerManagement.waiting_for_name)
     await callback.message.edit_text(
-        "➕ Добавление нового сервера\n\n"
-        "Введите название сервера (например, 'NL-Server-1'):",
+        "➕ Добавление нового сервера\n\nВведите название сервера (например, 'NL-Server-1'):",
         reply_markup=get_back_keyboard("admin_servers"),
     )
     await callback.answer()
@@ -66,11 +64,16 @@ async def process_server_name(message: TgMessage, state: FSMContext) -> None:
     name = message.text.strip()
 
     if not name:
-        await message.answer("❌ Название не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ Название не может быть пустым.", reply_markup=get_back_keyboard("admin_servers")
+        )
         return
 
     if len(name) > 100:
-        await message.answer("❌ Название не должно превышать 100 символов.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ Название не должно превышать 100 символов.",
+            reply_markup=get_back_keyboard("admin_servers"),
+        )
         return
 
     await state.update_data(name=name)
@@ -87,15 +90,23 @@ async def process_server_base_url(message: TgMessage, state: FSMContext) -> None
     url = message.text.strip()
 
     if not url:
-        await message.answer("❌ URL не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ URL не может быть пустым.", reply_markup=get_back_keyboard("admin_servers")
+        )
         return
 
     if not url.startswith(("http://", "https://")):
-        await message.answer("❌ URL должен начинаться с http:// или https://", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ URL должен начинаться с http:// или https://",
+            reply_markup=get_back_keyboard("admin_servers"),
+        )
         return
 
     if len(url) > 500:
-        await message.answer("❌ URL не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ URL не должен превышать 500 символов.",
+            reply_markup=get_back_keyboard("admin_servers"),
+        )
         return
 
     await state.update_data(url=url)
@@ -121,7 +132,10 @@ async def process_server_panel_path(message: TgMessage, state: FSMContext) -> No
         panel_path = message.text.strip()
         if panel_path:
             if len(panel_path) > 500:
-                await message.answer("❌ Путь не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
+                await message.answer(
+                    "❌ Путь не должен превышать 500 символов.",
+                    reply_markup=get_back_keyboard("admin_servers"),
+                )
                 return
             # Ensure path starts with /
             if not panel_path.startswith("/"):
@@ -155,7 +169,10 @@ async def process_server_subscription_path(message: TgMessage, state: FSMContext
         subscription_path = message.text.strip()
         if subscription_path:
             if len(subscription_path) > 500:
-                await message.answer("❌ Путь не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
+                await message.answer(
+                    "❌ Путь не должен превышать 500 символов.",
+                    reply_markup=get_back_keyboard("admin_servers"),
+                )
                 return
             # Ensure path starts with /
             if not subscription_path.startswith("/"):
@@ -189,7 +206,10 @@ async def process_server_subscription_json_path(message: TgMessage, state: FSMCo
         subscription_json_path = message.text.strip()
         if subscription_json_path:
             if len(subscription_json_path) > 500:
-                await message.answer("❌ Путь не должен превышать 500 символов.", reply_markup=get_back_keyboard("admin_servers"))
+                await message.answer(
+                    "❌ Путь не должен превышать 500 символов.",
+                    reply_markup=get_back_keyboard("admin_servers"),
+                )
                 return
             # Ensure path starts with /
             if not subscription_json_path.startswith("/"):
@@ -214,11 +234,17 @@ async def process_server_username(message: TgMessage, state: FSMContext) -> None
     username = message.text.strip()
 
     if not username:
-        await message.answer("❌ Имя пользователя не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ Имя пользователя не может быть пустым.",
+            reply_markup=get_back_keyboard("admin_servers"),
+        )
         return
 
     if len(username) > 100:
-        await message.answer("❌ Имя пользователя не должно превышать 100 символов.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ Имя пользователя не должно превышать 100 символов.",
+            reply_markup=get_back_keyboard("admin_servers"),
+        )
         return
 
     await state.update_data(username=username)
@@ -236,13 +262,16 @@ async def process_server_password(message: TgMessage, state: FSMContext) -> None
     password = message.text
 
     if not password:
-        await message.answer("❌ Пароль не может быть пустым.", reply_markup=get_back_keyboard("admin_servers"))
+        await message.answer(
+            "❌ Пароль не может быть пустым.", reply_markup=get_back_keyboard("admin_servers")
+        )
         return
 
     await state.update_data(password=password)
     await state.set_state(ServerManagement.waiting_for_verify_ssl)
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Да (рекомендуется)", callback_data="verify_ssl_yes")
     kb.button(text="❌ Нет (для самоподписанных сертификатов)", callback_data="verify_ssl_no")
@@ -333,6 +362,7 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
             # Check if it's an SSL error
             if "SSL" in str(e) or "tls" in str(e).lower():
                 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
                 kb = InlineKeyboardBuilder()
                 kb.button(text="❌ Нет, отменить", callback_data="cancel_ssl_bypass")
                 kb.button(text="✅ Да, попробовать без проверки", callback_data="retry_without_ssl")
@@ -345,8 +375,7 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
                 )
             else:
                 await callback.message.edit_text(
-                    f"❌ Не удалось подключиться к серверу:\n{e}\n\n"
-                    "Проверьте URL, логин и пароль.",
+                    f"❌ Не удалось подключиться к серверу:\n{e}\n\nПроверьте URL, логин и пароль.",
                     reply_markup=get_back_keyboard("admin_servers"),
                 )
                 await state.clear()
@@ -483,9 +512,9 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
     ssl_status = "✅" if server.verify_ssl else "❌"
 
     # Get paths with defaults
-    panel_path = getattr(server, 'panel_path', '/')
-    subscription_path = getattr(server, 'subscription_path', '/sub/')
-    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+    panel_path = getattr(server, "panel_path", "/")
+    subscription_path = getattr(server, "subscription_path", "/sub/")
+    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
     text = (
         f"🖥️ Сервер: {server.name}\n\n"
@@ -503,7 +532,9 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
     builder.append({"text": "✏️ Редактировать", "callback_data": f"server_edit_{server_id}"})
     builder.append({"text": "📊 Inbounds", "callback_data": f"server_inbounds_{server_id}"})
     builder.append({"text": "🔄 Синхронизировать", "callback_data": f"server_sync_{server_id}"})
-    builder.append({"text": "🔌 Проверить подключение", "callback_data": f"server_test_{server_id}"})
+    builder.append(
+        {"text": "🔌 Проверить подключение", "callback_data": f"server_test_{server_id}"}
+    )
     if server.is_active:
         builder.append({"text": "❌ Отключить", "callback_data": f"server_disable_{server_id}"})
     else:
@@ -512,6 +543,7 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
     builder.append({"text": "🔙 Назад", "callback_data": "admin_servers"})
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     for btn in builder:
         kb.button(**btn)
@@ -532,15 +564,20 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
 
     async with async_session_factory() as session:
         from app.services import SyncService
+
         sync_service = SyncService(session)
         try:
             # Sync inbounds and clients
             from app.database.models import Server
+
             server = await session.get(Server, server_id)
             if server:
                 await sync_service.sync_server(server, force=True)
                 await session.commit()
-                await callback.answer("✅ Синхронизация завершена! Inbounds и клиенты синхронизированы", show_alert=True)
+                await callback.answer(
+                    "✅ Синхронизация завершена! Inbounds и клиенты синхронизированы",
+                    show_alert=True,
+                )
             else:
                 await callback.answer("❌ Сервер не найден", show_alert=True)
         except Exception as e:
@@ -611,6 +648,7 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
             )
 
         from aiogram.utils.keyboard import InlineKeyboardBuilder
+
         kb = InlineKeyboardBuilder()
         kb.button(text="🔄 Обновить статистику", callback_data=f"inbound_stats_{server_id}")
         kb.button(text="🔙 Назад", callback_data=f"server_select_{server_id}")
@@ -661,6 +699,7 @@ async def show_inbound_stats(callback: CallbackQuery, is_admin: bool) -> None:
                 )
 
             from aiogram.utils.keyboard import InlineKeyboardBuilder
+
             kb = InlineKeyboardBuilder()
             kb.button(text="🔄 Обновить", callback_data=f"inbound_stats_{server_id}")
             kb.button(text="🔙 Назад", callback_data=f"server_select_{server_id}")
@@ -769,9 +808,9 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
         return
 
     # Get paths with defaults
-    panel_path = getattr(server, 'panel_path', '/')
-    subscription_path = getattr(server, 'subscription_path', '/sub/')
-    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+    panel_path = getattr(server, "panel_path", "/")
+    subscription_path = getattr(server, "subscription_path", "/sub/")
+    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
     builder = []
     builder.append({"text": "✏️ Название", "callback_data": "edit_server_name"})
@@ -785,6 +824,7 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
     builder.append({"text": "🔙 Назад", "callback_data": f"server_select_{server_id}"})
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     for btn in builder:
         kb.button(**btn)
@@ -929,7 +969,7 @@ async def start_edit_panel_path(callback: CallbackQuery, state: FSMContext) -> N
         await callback.answer("❌ Сервер не найден.", show_alert=True)
         return
 
-    panel_path = getattr(server, 'panel_path', '/')
+    panel_path = getattr(server, "panel_path", "/")
 
     await state.set_state(ServerManagement.waiting_for_edit_panel_path)
     await callback.message.edit_text(
@@ -991,7 +1031,7 @@ async def start_edit_subscription_path(callback: CallbackQuery, state: FSMContex
         await callback.answer("❌ Сервер не найден.", show_alert=True)
         return
 
-    subscription_path = getattr(server, 'subscription_path', '/sub/')
+    subscription_path = getattr(server, "subscription_path", "/sub/")
 
     await state.set_state(ServerManagement.waiting_for_edit_subscription_path)
     await callback.message.edit_text(
@@ -1053,7 +1093,7 @@ async def start_edit_json_path(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer("❌ Сервер не найден.", show_alert=True)
         return
 
-    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
     await state.set_state(ServerManagement.waiting_for_edit_subscription_json_path)
     await callback.message.edit_text(
@@ -1171,8 +1211,7 @@ async def start_edit_password(callback: CallbackQuery, state: FSMContext) -> Non
 
     await state.set_state(ServerManagement.waiting_for_edit_password)
     await callback.message.edit_text(
-        "✏️ Редактирование пароля\n\n"
-        "Введите новый пароль (или /skip чтобы оставить текущий):",
+        "✏️ Редактирование пароля\n\nВведите новый пароль (или /skip чтобы оставить текущий):",
         reply_markup=get_back_keyboard(f"server_select_{server_id}"),
         parse_mode="HTML",
     )
@@ -1222,6 +1261,7 @@ async def start_edit_ssl(callback: CallbackQuery, state: FSMContext) -> None:
     current_ssl = "✅ Включена" if server.verify_ssl else "❌ Отключена"
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Включить", callback_data="edit_ssl_enable")
     kb.button(text="❌ Отключить", callback_data="edit_ssl_disable")
@@ -1269,9 +1309,9 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
         return
 
     # Get paths with defaults
-    panel_path = getattr(server, 'panel_path', '/')
-    subscription_path = getattr(server, 'subscription_path', '/sub/')
-    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+    panel_path = getattr(server, "panel_path", "/")
+    subscription_path = getattr(server, "subscription_path", "/sub/")
+    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
     builder = []
     builder.append({"text": "✏️ Название", "callback_data": "edit_server_name"})
@@ -1285,6 +1325,7 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
     builder.append({"text": "🔙 Назад", "callback_data": f"server_select_{server_id}"})
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     for btn in builder:
         kb.button(**btn)
@@ -1322,9 +1363,9 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     ssl_status = "✅" if server.verify_ssl else "❌"
 
     # Get paths with defaults
-    panel_path = getattr(server, 'panel_path', '/')
-    subscription_path = getattr(server, 'subscription_path', '/sub/')
-    subscription_json_path = getattr(server, 'subscription_json_path', '/subjson/')
+    panel_path = getattr(server, "panel_path", "/")
+    subscription_path = getattr(server, "subscription_path", "/sub/")
+    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
     text = (
         f"🖥️ Сервер: {server.name}\n\n"
@@ -1342,7 +1383,9 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     builder.append({"text": "✏️ Редактировать", "callback_data": f"server_edit_{server_id}"})
     builder.append({"text": "📊 Inbounds", "callback_data": f"server_inbounds_{server_id}"})
     builder.append({"text": "🔄 Синхронизировать", "callback_data": f"server_sync_{server_id}"})
-    builder.append({"text": "🔌 Проверить подключение", "callback_data": f"server_test_{server_id}"})
+    builder.append(
+        {"text": "🔌 Проверить подключение", "callback_data": f"server_test_{server_id}"}
+    )
     if server.is_active:
         builder.append({"text": "❌ Отключить", "callback_data": f"server_disable_{server_id}"})
     else:
@@ -1351,6 +1394,7 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     builder.append({"text": "🔙 Назад", "callback_data": "admin_servers"})
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     kb = InlineKeyboardBuilder()
     for btn in builder:
         kb.button(**btn)

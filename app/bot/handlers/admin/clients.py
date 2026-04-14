@@ -7,8 +7,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.bot.keyboards import (
     get_back_keyboard,
@@ -199,7 +197,6 @@ async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
     if client.notes:
         text += f"\n📝 Заметки: {client.notes}"
 
-
     kb = InlineKeyboardBuilder()
     kb.button(text="📝 Подписки клиента", callback_data=f"client_subscriptions_{client_id}")
     kb.button(
@@ -252,7 +249,6 @@ async def show_client_subscriptions(
     else:
         text = "📝 Подписки клиента:\n\n"
 
-
     kb = InlineKeyboardBuilder()
 
     if subscriptions:
@@ -282,79 +278,6 @@ async def show_client_subscriptions(
         # Try to edit reply_markup only as fallback
         try:
             await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
-        except Exception as e2:
-            logger.error(f"Failed to edit reply_markup: {e2}")
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("client_sub_detail_"))
-async def show_client_subscription_detail(callback: CallbackQuery, is_admin: bool) -> None:
-    """Show subscription details from client view."""
-    if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
-        return
-
-    subscription_id = int(callback.data.split("_")[-1])
-
-    from app.database.models import Subscription
-    from app.services.new_subscription_service import NewSubscriptionService
-
-    async with async_session_factory() as session:
-        NewSubscriptionService(session)
-
-        result = await session.execute(
-            select(Subscription)
-            .where(Subscription.id == subscription_id)
-            .options(
-                selectinload(Subscription.client),
-                selectinload(Subscription.inbound_connections),
-            )
-        )
-        subscription = result.scalar_one_or_none()
-
-    if not subscription:
-        await callback.answer("❌ Подписка не найдена.", show_alert=True)
-        return
-
-    status = "✅ Активна" if subscription.is_active else "❌ Неактивна"
-    expiry = (
-        subscription.expiry_date.strftime("%d.%m.%Y") if subscription.expiry_date else "Бессрочно"
-    )
-    traffic = "Безлимит" if subscription.is_unlimited else f"{subscription.total_gb} GB"
-
-    text = (
-        f"📝 Подписка: <b>{subscription.name}</b>\n\n"
-        f"Клиент: {subscription.client.name}\n"
-        f"Токен: <code>{subscription.subscription_token}</code>\n"
-        f"Статус: {status}\n"
-        f"Трафик: {traffic}\n"
-        f"Срок: {expiry}\n"
-        f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"Подключений: {len(subscription.inbound_connections)}"
-    )
-
-    if subscription.notes:
-        text += f"\n📝 Заметки: {subscription.notes}"
-
-
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
-    builder.button(text="✏️ Редактировать", callback_data=f"admin_sub_edit_{subscription_id}")
-    if subscription.is_active:
-        builder.button(text="❌ Отключить", callback_data=f"admin_sub_disable_{subscription_id}")
-    else:
-        builder.button(text="✅ Включить", callback_data=f"admin_sub_enable_{subscription_id}")
-    builder.button(text="🗑️ Удалить", callback_data=f"admin_sub_delete_{subscription_id}")
-    builder.button(text="🔙 Назад", callback_data=f"client_subscriptions_{subscription.client_id}")
-    builder.adjust(1)
-
-    try:
-        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    except Exception as e:
-        logger.warning(f"Failed to edit message in show_client_subscription_detail: {e}")
-        # Try to edit reply_markup only as fallback
-        try:
-            await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
         except Exception as e2:
             logger.error(f"Failed to edit reply_markup: {e2}")
     await callback.answer()
@@ -422,7 +345,6 @@ async def start_create_subscription_from_template(
         f"Всего шаблонов: {len(templates)}\n\n"
         f"Выберите шаблон:"
     )
-
 
     builder = InlineKeyboardBuilder()
     for template in templates:
