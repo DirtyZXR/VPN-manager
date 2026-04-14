@@ -110,7 +110,10 @@ class SubscriptionTemplateService:
         await self.session.flush()
 
         # Reload with relationships
-        return await self.get_template(template.id)
+        result = await self.get_template(template.id)
+        if result is None:
+            raise RuntimeError("Template not found after creation")
+        return result
 
     async def update_template(
         self,
@@ -328,6 +331,7 @@ class SubscriptionTemplateService:
             total_gb=total_gb,
             expiry_days=expiry_days,
             notes=notes,
+            template_id=template_id,
         )
 
         # Add all inbounds from template
@@ -401,3 +405,188 @@ class SubscriptionTemplateService:
             .order_by(SubscriptionTemplateInbound.order)
         )
         return result.scalars().all()
+
+    async def delete_template_safely(self, template_id: int) -> bool:
+        """Safely delete template and all its linked subscriptions.
+
+        Args:
+            template_id: Template ID
+
+        Returns:
+            True if deleted, False if not found
+        """
+        template = await self.session.get(SubscriptionTemplate, template_id)
+        if not template:
+            return False
+
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(self.session)
+
+        # Get all subscriptions linked to this template
+        result = await self.session.execute(
+            select(Subscription).where(Subscription.template_id == template_id)
+        )
+        subscriptions = result.scalars().all()
+
+        # Delete all linked subscriptions (removes clients from XUI panels)
+        for sub in subscriptions:
+            try:
+                await sub_service.delete_subscription(sub.id)
+                logger.info(f"✅ Cascade deleted subscription {sub.name} (ID: {sub.id})")
+            except Exception as e:
+                logger.error(f"❌ Failed to cascade delete subscription {sub.name}: {e}")
+                # We continue to delete other subscriptions even if one fails
+
+        await self.session.delete(template)
+        await self.session.flush()
+        return True
+
+    async def _apply_template_limits_change(
+        self,
+        template_id: int,
+        old_gb: int | None,
+        new_gb: int | None,
+        old_days: int | None,
+        new_days: int | None,
+    ) -> None:
+        """Mass update limits for all subscriptions linked to a template using delta logic.
+
+        Args:
+            template_id: Template ID
+            old_gb: Old default GB (None or 0 = unlimited)
+            new_gb: New default GB (None or 0 = unlimited)
+            old_days: Old default days (None or 0 = never expire)
+            new_days: New default days (None or 0 = never expire)
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(self.session)
+
+        # Normalize None to 0 for logic
+        old_gb_val = old_gb or 0
+        new_gb_val = new_gb or 0
+        old_days_val = old_days or 0
+        new_days_val = new_days or 0
+
+        # Get all subscriptions linked to this template
+        result = await self.session.execute(
+            select(Subscription).where(Subscription.template_id == template_id)
+        )
+        subscriptions = result.scalars().all()
+
+        for sub in subscriptions:
+            try:
+                # Calculate new total GB
+                new_total: int | None = None
+                if old_gb_val == 0 and new_gb_val > 0:
+                    new_total = new_gb_val
+                elif old_gb_val > 0 and new_gb_val == 0:
+                    new_total = 0
+                elif old_gb_val > 0 and new_gb_val > 0 and old_gb_val != new_gb_val:
+                    delta_gb = new_gb_val - old_gb_val
+                    new_total = sub.total_gb + delta_gb
+                    if new_total <= 0:
+                        new_total = (
+                            1  # 0 means unlimited, we don't want to accidentally make it unlimited
+                        )
+
+                # Calculate new expiry date
+                new_expiry_date: datetime | None = None
+                new_expiry_days: float | None = None
+
+                if old_days_val == 0 and new_days_val > 0:
+                    new_expiry_days = float(new_days_val)
+                elif old_days_val > 0 and new_days_val == 0:
+                    new_expiry_days = 0.0
+                elif old_days_val > 0 and new_days_val > 0 and old_days_val != new_days_val:
+                    delta_days = new_days_val - old_days_val
+                    if sub.expiry_date:
+                        sub_expiry = (
+                            sub.expiry_date.replace(tzinfo=UTC)
+                            if sub.expiry_date.tzinfo is None
+                            else sub.expiry_date
+                        )
+                        new_expiry_date = sub_expiry + timedelta(days=delta_days)
+                    else:
+                        new_expiry_days = float(new_days_val)
+
+                if (
+                    new_total is not None
+                    or new_expiry_days is not None
+                    or new_expiry_date is not None
+                ):
+                    await sub_service.update_subscription(
+                        subscription_id=sub.id,
+                        total_gb=new_total if new_total is not None else None,
+                        expiry_days=new_expiry_days,
+                        exact_expiry_date=new_expiry_date,
+                    )
+                    logger.info(
+                        f"✅ Mass updated limits for subscription {sub.name} (ID: {sub.id})"
+                    )
+            except Exception as e:
+                logger.error(f"❌ Failed to mass update limits for subscription {sub.name}: {e}")
+
+    async def _apply_template_inbounds_change(
+        self,
+        template_id: int,
+        added_inbound_ids: set[int] | None = None,
+        removed_inbound_ids: set[int] | None = None,
+    ) -> None:
+        """Mass update inbounds for all subscriptions linked to a template.
+
+        Args:
+            template_id: Template ID
+            added_inbound_ids: Set of inbound IDs to add
+            removed_inbound_ids: Set of inbound IDs to remove
+        """
+        added = added_inbound_ids or set()
+        removed = removed_inbound_ids or set()
+
+        if not added and not removed:
+            return
+
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(self.session)
+
+        # Get all subscriptions linked to this template
+        result = await self.session.execute(
+            select(Subscription).where(Subscription.template_id == template_id)
+        )
+        subscriptions = result.scalars().all()
+
+        for sub in subscriptions:
+            # Handle additions
+            for inbound_id in added:
+                try:
+                    await sub_service.add_inbound_to_subscription(
+                        subscription_id=sub.id,
+                        inbound_id=inbound_id,
+                    )
+                    logger.info(
+                        f"✅ Mass added inbound {inbound_id} to subscription {sub.name} (ID: {sub.id})"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Failed to add inbound {inbound_id} to subscription {sub.name}: {e}"
+                    )
+
+            # Handle removals
+            for inbound_id in removed:
+                try:
+                    removed_ok = await sub_service.remove_inbound_from_subscription(
+                        subscription_id=sub.id,
+                        inbound_id=inbound_id,
+                    )
+                    if removed_ok:
+                        logger.info(
+                            f"✅ Mass removed inbound {inbound_id} from subscription {sub.name} (ID: {sub.id})"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Failed to remove inbound {inbound_id} from subscription {sub.name}: {e}"
+                    )

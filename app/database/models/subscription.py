@@ -11,6 +11,7 @@ from app.database.models.base import Base, TimestampMixin
 if TYPE_CHECKING:
     from app.database.models.client import Client
     from app.database.models.inbound_connection import InboundConnection
+    from app.database.models.subscription_template import SubscriptionTemplate
 
 
 class Subscription(Base, TimestampMixin):
@@ -23,6 +24,11 @@ class Subscription(Base, TimestampMixin):
         Integer,
         ForeignKey("clients.id", ondelete="CASCADE"),
         nullable=False,
+    )
+    template_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("subscription_templates.id", ondelete="CASCADE"),
+        nullable=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     subscription_token: Mapped[str] = mapped_column(
@@ -37,6 +43,7 @@ class Subscription(Base, TimestampMixin):
 
     # Relationships
     client: Mapped["Client"] = relationship("Client", back_populates="subscriptions")
+    template: Mapped["SubscriptionTemplate | None"] = relationship("SubscriptionTemplate")
     inbound_connections: Mapped[list["InboundConnection"]] = relationship(
         "InboundConnection",
         back_populates="subscription",
