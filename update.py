@@ -40,9 +40,11 @@ def main():
     if os.name == "nt":  # Windows
         pip_exe = venv_dir / "Scripts" / "pip.exe"
         python_exe = venv_dir / "Scripts" / "python.exe"
+        alembic_exe = venv_dir / "Scripts" / "alembic.exe"
     else:  # Linux / macOS
         pip_exe = venv_dir / "bin" / "pip"
         python_exe = venv_dir / "bin" / "python"
+        alembic_exe = venv_dir / "bin" / "alembic"
 
     if not pip_exe.exists() or not python_exe.exists():
         print(f"❌ Исполняемые файлы Python/pip не найдены внутри {venv_dir}")
@@ -59,12 +61,14 @@ def main():
         print("⚠️ Файл requirements.txt не найден, пропускаем обновление зависимостей.")
 
     # 2. Применение миграций БД
-    # Вызываем python -m alembic для большей надежности (чтобы alembic точно использовал библиотеки из .venv)
     if (base_dir / "alembic.ini").exists():
-        run_command(
-            [str(python_exe), "-m", "alembic", "upgrade", "head"],
-            "Применение миграций базы данных (Alembic)",
-        )
+        if alembic_exe.exists():
+            run_command(
+                [str(alembic_exe), "upgrade", "head"],
+                "Применение миграций базы данных (Alembic)",
+            )
+        else:
+            print("⚠️ Исполняемый файл alembic не найден, пропускаем миграции.")
     else:
         print("⚠️ Файл alembic.ini не найден, пропускаем миграции.")
 
