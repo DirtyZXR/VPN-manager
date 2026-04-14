@@ -65,7 +65,7 @@ dmypy.json
 .ruff_cache/
 
 # Alembic
-alembic/versions/*.py
+#alembic/versions/*.py
 !alembic/versions/.gitkeep
 analyze_notification_issue.py
 CORRECT_ANALYSIS.md
