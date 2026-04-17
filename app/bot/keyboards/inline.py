@@ -300,16 +300,68 @@ def get_clients_page_keyboard(
     return builder.as_markup()
 
 
-def get_instruction_menu_keyboard() -> InlineKeyboardMarkup:
+def get_help_main_keyboard() -> InlineKeyboardMarkup:
+    """Get main help and FAQ keyboard.
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="iOS / Mac", callback_data="help_os_ios")
+    builder.button(text="Android", callback_data="help_os_android")
+    builder.button(text="Windows", callback_data="help_os_windows")
+    builder.button(text="Linux", callback_data="help_os_linux")
+    builder.button(text="Частые вопросы (FAQ)", callback_data="faq_main")
+    builder.button(text="🔙 Главное меню", callback_data="admin_menu")
+    builder.adjust(2, 2, 1, 1)
+    return builder.as_markup()
+
+
+def get_instruction_menu_keyboard(os_name: str) -> InlineKeyboardMarkup:
     """Get instruction selection keyboard.
+
+    Args:
+        os_name: OS name (ios, android, windows, linux)
 
     Returns:
         Inline keyboard with instruction options
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="📖 Пошаговая", callback_data="instruction_step_by_step")
-    builder.button(text="📄 Полная", callback_data="instruction_full")
-    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.button(
+        text="📖 Пошаговая настройка", callback_data=f"instruction_step_by_step_{os_name}"
+    )
+    builder.button(text="📄 Полная инструкция", callback_data=f"instruction_full_{os_name}")
+    builder.button(text="🔙 Назад к выбору ОС", callback_data="help_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_faq_list_keyboard(faq_list: list[dict]) -> InlineKeyboardMarkup:
+    """Get FAQ list keyboard.
+
+    Args:
+        faq_list: List of FAQ dictionaries with 'question' keys
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    for i, item in enumerate(faq_list):
+        builder.button(text=item["question"], callback_data=f"faq_q_{i}")
+
+    builder.button(text="🔙 Назад", callback_data="help_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_faq_answer_keyboard() -> InlineKeyboardMarkup:
+    """Get FAQ answer keyboard.
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 К списку вопросов", callback_data="faq_main")
     builder.adjust(1)
     return builder.as_markup()
 
