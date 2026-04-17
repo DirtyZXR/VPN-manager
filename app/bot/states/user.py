@@ -22,3 +22,9 @@ class InstructionViewing(StatesGroup):
     """States for step-by-step instruction viewing."""
 
     viewing = State()
+
+
+class UserRequestSubscription(StatesGroup):
+    """States for requesting a new subscription."""
+
+    waiting_for_name = State()

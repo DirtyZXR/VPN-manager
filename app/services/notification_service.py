@@ -515,3 +515,148 @@ class NotificationService:
                 f"❌ Failed to send admin notifications for new user {client.name}: {e}",
                 exc_info=True,
             )
+
+    async def notify_admin_of_subscription_request(
+        self, client: Client, comment: str | None = None
+    ) -> None:
+        """Send notification to admins about a user requesting a new subscription.
+
+        Args:
+            client: The client requesting the subscription
+            comment: Optional comment from the user
+        """
+        settings = get_settings()
+        admin_ids = settings.admin_ids
+        if not admin_ids:
+            logger.warning(
+                "No admin Telegram IDs configured, skipping subscription request notification."
+            )
+            return
+
+        safe_name = html.escape(client.name) if client.name else "Не указан"
+
+        message = (
+            f"🔔 <b>Запрос на новую подписку!</b>\n\n"
+            f"<b>Клиент:</b> {safe_name} (ID: {client.id})\n"
+            f"<b>Telegram ID:</b> {client.telegram_id}"
+        )
+
+        if comment:
+            safe_comment = html.escape(comment)
+            message += f"\n<b>Комментарий:</b> {safe_comment}"
+
+        try:
+            async with await self._get_bot() as bot:
+                for admin_id in admin_ids:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=message,
+                            parse_mode="HTML",
+                        )
+                        logger.info(
+                            f"✅ Admin notification sent to {admin_id} for subscription request from {safe_name}"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"❌ Failed to send admin notification to {admin_id} for subscription request from {safe_name}: {e}"
+                        )
+        except Exception as e:
+            logger.error(
+                f"❌ Failed to send admin notifications for subscription request from {client.name}: {e}",
+                exc_info=True,
+            )
+
+    async def notify_admins_new_request(self, request, template_name: str) -> None:
+        """Send notification to admins about a specific subscription request.
+
+        Args:
+            request: SubscriptionRequest instance
+            template_name: The name of the requested template
+        """
+        settings = get_settings()
+        admin_ids = settings.admin_ids
+        if not admin_ids:
+            logger.warning("No admin Telegram IDs configured, skipping request notification.")
+            return
+
+        from app.bot.keyboards.inline import get_request_admin_keyboard
+
+        safe_name = html.escape(request.client.name) if request.client.name else "Не указан"
+        safe_tpl_name = html.escape(template_name)
+        safe_req_name = (
+            html.escape(request.requested_name) if request.requested_name else "Не указано"
+        )
+
+        message = (
+            f"🔔 <b>Новый запрос на подписку!</b>\n\n"
+            f"<b>Клиент:</b> {safe_name} (ID: {request.client_id})\n"
+            f"<b>Шаблон:</b> {safe_tpl_name}\n"
+            f"<b>Название:</b> {safe_req_name}"
+        )
+
+        keyboard = get_request_admin_keyboard(request.id)
+
+        try:
+            async with await self._get_bot() as bot:
+                for admin_id in admin_ids:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=message,
+                            parse_mode="HTML",
+                            reply_markup=keyboard,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to send request notification to admin {admin_id}: {e}"
+                        )
+        except Exception as e:
+            logger.error(f"Failed to process admin notifications for request {request.id}: {e}")
+
+    async def notify_user_request_decision(
+        self,
+        telegram_id: int,
+        is_approved: bool,
+        sub_name: str | None = None,
+        template_name: str | None = None,
+    ) -> bool:
+        """Send notification to user about the decision on their request.
+
+        Args:
+            telegram_id: User's telegram ID
+            is_approved: Whether the request was approved
+            sub_name: The name of the subscription
+            template_name: The name of the template
+
+        Returns:
+            True if notification sent, False if not
+        """
+        if not telegram_id:
+            return False
+
+        try:
+            async with await self._get_bot() as bot:
+                if is_approved:
+                    message = "✅ <b>Ваш запрос одобрен!</b>"
+                    if sub_name:
+                        safe_name = html.escape(sub_name)
+                        message += f"\nПодписка <b>{safe_name}</b> была создана."
+                else:
+                    safe_sub = (
+                        html.escape(sub_name)
+                        if sub_name and sub_name != "Не указано"
+                        else "без названия"
+                    )
+                    safe_tpl = html.escape(template_name) if template_name else "неизвестно"
+                    message = f"❌ Ваш запрос на создание подписки <b>{safe_sub}</b> по шаблону <b>{safe_tpl}</b> был отклонен."
+
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send request decision notification to {telegram_id}: {e}")
+            return False

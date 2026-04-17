@@ -23,6 +23,15 @@ from app.database.models import Client
 router = Router()
 
 
+def _get_main_menu_text(client: Client | None, is_admin: bool) -> str:
+    """Get unified main menu text."""
+    if client is None:
+        return "👋 Добро пожаловать!\n\nДля начала работы, пожалуйста, зарегистрируйтесь:"
+    if is_admin:
+        return "⚙️ <b>Меню администратора</b>\n\nВыберите раздел для управления:"
+    return "🏠 <b>Главное меню</b>\n\nВыберите действие ниже:"
+
+
 @router.message(Command("start"))
 async def cmd_start(
     message: Message, state: FSMContext, client: Client | None, is_admin: bool
@@ -30,18 +39,12 @@ async def cmd_start(
     """Handle /start command."""
     await state.clear()
 
-    text = "👋 Добро пожаловать в VPN Manager!\n\nЭтот бот помогает управлять VPN подписками.\n\n"
-
-    if client is None:
-        text += "Для начала работы, пожалуйста, зарегистрируйтесь:"
-    elif is_admin:
-        text += "Вы администратор 👑"
-    else:
-        text += "Выберите действие в меню:"
+    text = _get_main_menu_text(client, is_admin)
 
     await message.answer(
         text,
         reply_markup=get_main_menu_keyboard(is_admin, is_registered=client is not None),
+        parse_mode="HTML",
     )
 
 
@@ -61,17 +64,23 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data == "admin_menu")
-async def show_admin_menu(callback: CallbackQuery, is_admin: bool, client: Client | None) -> None:
+async def show_admin_menu(
+    callback: CallbackQuery, is_admin: bool, client: Client | None, state: FSMContext
+) -> None:
     """Show admin menu or redirect to main menu for non-admins."""
-    text = "⚙️ Меню администратора" if is_admin else "Главное меню"
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
+
+    text = _get_main_menu_text(client, is_admin)
     reply_markup = get_main_menu_keyboard(is_admin, is_registered=client is not None)
 
     try:
-        await callback.message.edit_text(text, reply_markup=reply_markup)
+        await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
     except Exception:
         with contextlib.suppress(Exception):
             await callback.message.delete()
-        await callback.message.answer(text, reply_markup=reply_markup)
+        await callback.message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
     await callback.answer()
 
 
@@ -259,15 +268,15 @@ async def go_back(callback: CallbackQuery, state: FSMContext, is_admin: bool, cl
     if current_state:
         await state.clear()
 
-    text = "Главное меню"
+    text = _get_main_menu_text(client, is_admin)
     reply_markup = get_main_menu_keyboard(is_admin, is_registered=client is not None)
 
     try:
-        await callback.message.edit_text(text, reply_markup=reply_markup)
+        await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
     except Exception:
         with contextlib.suppress(Exception):
             await callback.message.delete()
-        await callback.message.answer(text, reply_markup=reply_markup)
+        await callback.message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
     await callback.answer()
 
 

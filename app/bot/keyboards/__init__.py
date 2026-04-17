@@ -28,6 +28,8 @@ from app.bot.keyboards.inline import (
     get_user_actions_keyboard,
     get_user_keyboard,
     get_users_keyboard,
+    get_public_templates_keyboard,
+    get_request_admin_keyboard,
 )
 
 __all__ = [
@@ -58,4 +60,6 @@ __all__ = [
     "get_template_multi_select_keyboard",
     "get_template_multi_select_confirm_keyboard",
     "get_inbound_selection_for_template",
+    "get_public_templates_keyboard",
+    "get_request_admin_keyboard",
 ]

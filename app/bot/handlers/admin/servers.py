@@ -19,11 +19,15 @@ router = Router()
 
 
 @router.callback_query(F.data == "admin_servers")
-async def show_servers(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_servers(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
     """Show servers list."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
+
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
 
     async with async_session_factory() as session:
         service = XUIService(session)

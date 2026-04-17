@@ -26,11 +26,15 @@ router = Router()
 
 
 @router.callback_query(F.data == "admin_clients")
-async def show_clients(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
     """Show clients search menu."""
     if not is_admin:
         await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
         return
+
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
 
     try:
         # Create a custom keyboard for main menu

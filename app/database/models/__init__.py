@@ -11,6 +11,7 @@ from app.database.models.notification_log import (
 )
 from app.database.models.server import Server
 from app.database.models.subscription import Subscription
+from app.database.models.subscription_request import SubscriptionRequest
 from app.database.models.subscription_template import SubscriptionTemplate
 from app.database.models.subscription_template_inbound import SubscriptionTemplateInbound
 
@@ -21,6 +22,7 @@ __all__ = [
     "Server",
     "Inbound",
     "Subscription",
+    "SubscriptionRequest",
     "InboundConnection",
     "SubscriptionTemplate",
     "SubscriptionTemplateInbound",
