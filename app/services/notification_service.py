@@ -110,7 +110,7 @@ class NotificationService:
 
                     if urls:
                         message += "\n🔗 <b>Все URL подписки:</b>\n"
-                        message += "\n".join([f"<code>{u}</code>" for u in urls])
+                        message += "\n\n".join([f"<code>{u}</code>" for u in urls])
 
                 await bot.send_message(
                     chat_id=client.telegram_id,
