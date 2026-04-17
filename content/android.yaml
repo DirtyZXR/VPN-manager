@@ -1,0 +1,11 @@
+full_instruction: |
+  <b>Полная инструкция для Android</b>
+  Тут будет ваш текст полной инструкции.
+
+step_by_step:
+  steps:
+    - title: "Шаг 1"
+      text: "Скачайте клиент."
+      media: "content/images/test.png"
+    - title: "Шаг 2"
+      text: "Вставьте ключ."
