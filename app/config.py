@@ -69,10 +69,10 @@ _instructions_cache: dict | None = None
 
 
 def load_instructions() -> dict:
-    """Load instructions from YAML file with caching.
+    """Load all instructions from YAML files in content/ directory with caching.
 
     Returns:
-        Dictionary with 'full_instruction' and 'step_by_step' keys.
+        Dictionary mapping filename (without .yaml) to parsed YAML content.
     """
     global _instructions_cache
     if _instructions_cache is not None:
@@ -80,22 +80,25 @@ def load_instructions() -> dict:
 
     import yaml
 
-    path = Path(__file__).parent.parent / "instructions.yaml"
-    if not path.exists():
-        return {
-            "full_instruction": "⚠️ Файл instructions.yaml не найден.",
-            "step_by_step": {"steps": []},
-        }
+    content_dir = Path(__file__).parent.parent / "content"
+    result = {}
 
-    with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    if content_dir.exists() and content_dir.is_dir():
+        for file_path in content_dir.glob("*.yaml"):
+            with open(file_path, encoding="utf-8") as f:
+                try:
+                    data = yaml.safe_load(f)
+                    if data is not None:
+                        result[file_path.stem] = data
+                except yaml.YAMLError:
+                    pass
 
-    _instructions_cache = data
-    return data
+    _instructions_cache = result
+    return result
 
 
 def reload_instructions() -> dict:
-    """Force reload instructions from YAML file (clears cache).
+    """Force reload instructions from YAML files (clears cache).
 
     Returns:
         Freshly loaded instructions dictionary.

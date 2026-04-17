@@ -36,6 +36,7 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
         builder.button(text="Мои подписки", callback_data="my_subscriptions")
         builder.button(text="Все URL подписок", callback_data="all_sub_urls")
         builder.button(text="📖 Инструкция", callback_data="instruction_menu")
+        builder.button(text="➕ Запросить подписку", callback_data="request_subscription")
 
         if is_admin:
             builder.button(text="Управление серверами", callback_data="admin_servers")
@@ -300,16 +301,68 @@ def get_clients_page_keyboard(
     return builder.as_markup()
 
 
-def get_instruction_menu_keyboard() -> InlineKeyboardMarkup:
+def get_help_main_keyboard() -> InlineKeyboardMarkup:
+    """Get main help and FAQ keyboard.
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="iOS / Mac", callback_data="help_os_ios")
+    builder.button(text="Android", callback_data="help_os_android")
+    builder.button(text="Windows", callback_data="help_os_windows")
+    builder.button(text="Linux", callback_data="help_os_linux")
+    builder.button(text="Частые вопросы (FAQ)", callback_data="faq_main")
+    builder.button(text="🔙 Главное меню", callback_data="admin_menu")
+    builder.adjust(2, 2, 1, 1)
+    return builder.as_markup()
+
+
+def get_instruction_menu_keyboard(os_name: str) -> InlineKeyboardMarkup:
     """Get instruction selection keyboard.
+
+    Args:
+        os_name: OS name (ios, android, windows, linux)
 
     Returns:
         Inline keyboard with instruction options
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="📖 Пошаговая", callback_data="instruction_step_by_step")
-    builder.button(text="📄 Полная", callback_data="instruction_full")
-    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.button(
+        text="📖 Пошаговая настройка", callback_data=f"instruction_step_by_step_{os_name}"
+    )
+    builder.button(text="📄 Полная инструкция", callback_data=f"instruction_full_{os_name}")
+    builder.button(text="🔙 Назад к выбору ОС", callback_data="help_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_faq_list_keyboard(faq_list: list[dict]) -> InlineKeyboardMarkup:
+    """Get FAQ list keyboard.
+
+    Args:
+        faq_list: List of FAQ dictionaries with 'question' keys
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    for i, item in enumerate(faq_list):
+        builder.button(text=item["question"], callback_data=f"faq_q_{i}")
+
+    builder.button(text="🔙 Назад", callback_data="help_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_faq_answer_keyboard() -> InlineKeyboardMarkup:
+    """Get FAQ answer keyboard.
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 К списку вопросов", callback_data="faq_main")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -406,23 +459,34 @@ def get_templates_keyboard(templates: list) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_template_actions_keyboard(template_id: int) -> InlineKeyboardMarkup:
+def get_template_actions_keyboard(
+    template_id: int, is_public: bool = False
+) -> InlineKeyboardMarkup:
     """Get template actions keyboard.
 
     Args:
         template_id: Template ID
+        is_public: Whether template is public
 
     Returns:
-        Inline keyboard markup with 4 buttons: Edit, Edit Inbounds, Delete, Back
+        Inline keyboard markup with buttons: Edit, Edit Inbounds, Toggle Public, Delete, Back
     """
     builder = InlineKeyboardBuilder()
     builder.button(text="✏️ Изменить", callback_data=f"template_edit_menu_{template_id}")
     builder.button(
         text="✏️ Редактировать подключения", callback_data=f"template_manage_inbounds_{template_id}"
     )
+    if is_public:
+        builder.button(
+            text="🔒 Скрыть из доступа", callback_data=f"admin_tpl_toggle_public_{template_id}"
+        )
+    else:
+        builder.button(
+            text="👁 Сделать публичным", callback_data=f"admin_tpl_toggle_public_{template_id}"
+        )
     builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
     builder.button(text="🔙 Назад", callback_data="admin_templates")
-    builder.adjust(2)
+    builder.adjust(2, 1, 2)
     return builder.as_markup()
 
 
@@ -635,4 +699,53 @@ def get_subscription_details_keyboard(
     builder.button(text="🔙 Назад к клиенту", callback_data=f"client_subscriptions_{client_id}")
 
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_public_templates_keyboard(templates: list) -> InlineKeyboardMarkup:
+    """Get public templates list keyboard for users.
+
+    Args:
+        templates: List of public SubscriptionTemplate objects
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+
+    for template in templates:
+        builder.button(
+            text=f"📦 {template.name}",
+            callback_data=f"user_req_tpl_{template.id}",
+        )
+
+    builder.button(text="🔙 Назад", callback_data="back")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_cancel_keyboard() -> InlineKeyboardMarkup:
+    """Get keyboard with a single cancel button.
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data="cancel")
+    return builder.as_markup()
+
+
+def get_request_admin_keyboard(request_id: int) -> InlineKeyboardMarkup:
+    """Get keyboard for admin to approve or reject a subscription request.
+
+    Args:
+        request_id: Request ID
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Одобрить", callback_data=f"admin_req_approve_{request_id}")
+    builder.button(text="❌ Отклонить", callback_data=f"admin_req_reject_{request_id}")
+    builder.adjust(2)
     return builder.as_markup()

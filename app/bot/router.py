@@ -3,7 +3,7 @@
 from aiogram import Router
 
 from app.bot.handlers import common, registration
-from app.bot.handlers.admin import clients, servers, subscriptions, sync, templates
+from app.bot.handlers.admin import clients, requests, servers, subscriptions, sync, templates
 from app.bot.handlers.user import subscriptions as user_subscriptions
 
 
@@ -23,6 +23,7 @@ def create_router() -> Router:
     router.include_router(subscriptions.router)
     router.include_router(sync.router)
     router.include_router(templates.router)
+    router.include_router(requests.router)
     router.include_router(user_subscriptions.router)
 
     return router
