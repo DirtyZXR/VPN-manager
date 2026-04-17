@@ -178,7 +178,7 @@ class NewSubscriptionService:
         client_uuid = str(uuid.uuid4())
 
         # Generate unique email for this inbound
-        base_email = f"{subscription.client.name}_{subscription.name}_{inbound.remark}@vpn.local"
+        base_email = f"{subscription.name}-{subscription.client.name}"
         client_email = await self._generate_unique_email(inbound_id, base_email)
 
         # Calculate expiry time for XUI
@@ -473,11 +473,15 @@ class NewSubscriptionService:
         Raises:
             XUIError: If unable to generate unique email
         """
-        # Split base email into name and domain once
-        base_name, domain_part = base_email.rsplit("@", 1)
+        if "@" in base_email:
+            base_name, domain_part = base_email.rsplit("@", 1)
+            domain_part = f"@{domain_part}"
+        else:
+            base_name = base_email
+            domain_part = ""
 
         for attempt in range(max_attempts):
-            email = base_email if attempt == 0 else f"{base_name}_{attempt}@{domain_part}"
+            email = base_email if attempt == 0 else f"{base_name}_{attempt}{domain_part}"
 
             # Check if email exists in this inbound
             existing = await self.session.execute(

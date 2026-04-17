@@ -429,9 +429,8 @@ class XUIClient:
         """
         # First get current client data from inbound
         inbound = await self.get_inbound(inbound_id)
-        import json
 
-        settings_data = json.loads(inbound.settings)
+        settings_data = json.loads(inbound.settings or "{}")
         clients_list = settings_data.get("clients", [])
 
         client_data = None
@@ -445,6 +444,44 @@ class XUIClient:
 
         # Update enable flag
         client_data["enable"] = enable
+
+        # Build update request
+        client = XUIAddClientRequest(**client_data)
+        return await self.update_client(inbound_id, client)
+
+    async def update_client_email(
+        self,
+        inbound_id: int,
+        client_uuid: str,
+        new_email: str,
+    ) -> bool:
+        """Update client email.
+
+        Args:
+            inbound_id: Inbound ID
+            client_uuid: Client UUID
+            new_email: New client email
+
+        Returns:
+            True if successful
+        """
+        # First get current client data from inbound
+        inbound = await self.get_inbound(inbound_id)
+
+        settings_data = json.loads(inbound.settings or "{}")
+        clients_list = settings_data.get("clients", [])
+
+        client_data = None
+        for c in clients_list:
+            if c.get("id") == client_uuid:
+                client_data = c
+                break
+
+        if not client_data:
+            raise XUINotFoundError(f"Client {client_uuid} not found in inbound {inbound_id}")
+
+        # Update email
+        client_data["email"] = new_email
 
         # Build update request
         client = XUIAddClientRequest(**client_data)
