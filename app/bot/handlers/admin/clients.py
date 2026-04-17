@@ -660,7 +660,7 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
             await state.clear()
             await callback.answer(f"✅ Клиент удален. Удалено {deleted_count} подключений из XUI.")
-            await show_clients(callback, is_admin)
+            await show_clients(callback, is_admin, state)
         except Exception:
             await session.rollback()
             raise
