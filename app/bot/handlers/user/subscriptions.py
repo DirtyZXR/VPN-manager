@@ -4,13 +4,19 @@ from collections import defaultdict
 from urllib.parse import urljoin
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
 from loguru import logger
 
 from app.bot.keyboards import get_back_keyboard
+from app.bot.keyboards.inline import get_public_templates_keyboard, get_cancel_keyboard
 from app.database import async_session_factory
 from app.services.new_subscription_service import NewSubscriptionService
+from app.services.subscription_request_service import SubscriptionRequestService
+from app.services.subscription_template_service import SubscriptionTemplateService
+from app.services.notification_service import NotificationService
+from app.bot.states.user import UserRequestSubscription
 
 router = Router()
 
@@ -448,3 +454,91 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             await client_obj.close()
         except Exception as e:
             logger.warning(f"Error closing XUI client: {e}")
+
+
+@router.callback_query(F.data == "request_subscription")
+async def start_subscription_request(callback: CallbackQuery, client) -> None:
+    """Start subscription request process for user."""
+    if not client:
+        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        return
+
+    async with async_session_factory() as session:
+        req_service = SubscriptionRequestService(session)
+        pending_count = await req_service.get_pending_requests_count(client.id)
+        if pending_count >= 5:
+            await callback.answer("У вас слишком много ожидающих заявок.", show_alert=True)
+            return
+
+        tpl_service = SubscriptionTemplateService(session)
+        public_templates = await tpl_service.get_public_templates()
+
+    if not public_templates:
+        await callback.answer("В данный момент запросы недоступны.", show_alert=True)
+        return
+
+    text = "Выберите шаблон для новой подписки:\n\n"
+    for tpl in public_templates:
+        desc = tpl.description or "Нет описания"
+        text += f"📦 <b>{tpl.name}</b>\n   {desc}\n\n"
+
+    keyboard = get_public_templates_keyboard(public_templates)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("user_req_tpl_"))
+async def handle_template_selection(callback: CallbackQuery, state: FSMContext, client) -> None:
+    """Handle template selection for subscription request."""
+    if not client:
+        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        return
+
+    template_id = int(callback.data.split("_")[-1])
+    await state.update_data(template_id=template_id)
+    await state.set_state(UserRequestSubscription.waiting_for_name)
+
+    await callback.message.answer(
+        "Введите понятное название для вашей подписки (например: Мой Телефон):",
+        reply_markup=get_cancel_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.message(UserRequestSubscription.waiting_for_name)
+async def process_subscription_request_name(message: Message, state: FSMContext, client) -> None:
+    """Process entered name and create subscription request."""
+    if not client:
+        return
+
+    if not message.text:
+        return
+
+    requested_name = message.text.strip()
+    if not requested_name:
+        await message.answer("Пожалуйста, введите корректное название.")
+        return
+
+    data = await state.get_data()
+    template_id = data.get("template_id")
+
+    async with async_session_factory() as session:
+        req_service = SubscriptionRequestService(session)
+        request = await req_service.create_request(
+            client_id=client.id,
+            template_id=template_id,
+            requested_name=requested_name,
+        )
+
+        tpl_service = SubscriptionTemplateService(session)
+        template = await tpl_service.get_template(template_id)
+
+        await session.commit()
+
+        notification_service = NotificationService(session)
+        await notification_service.notify_admins_new_request(request, template.name)
+
+    await message.answer(
+        "✅ Ваш запрос отправлен администратору. В ближайшее время вы получите ответ"
+    )
+    await state.clear()

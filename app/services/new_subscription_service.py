@@ -177,9 +177,7 @@ class NewSubscriptionService:
 
         client_uuid = str(uuid.uuid4())
 
-        # Generate unique email for this inbound
         base_email = f"{subscription.name}-{subscription.client.name}"
-        client_email = await self._generate_unique_email(inbound_id, base_email)
 
         # Calculate expiry time for XUI
         expiry_time = 0
@@ -189,22 +187,62 @@ class NewSubscriptionService:
         # Get Telegram ID from client
         tg_id = int(subscription.client.telegram_id) if subscription.client.telegram_id else 0
 
-        # Create client in XUI
-        client_request = XUIAddClientRequest(
-            id=client_uuid,
-            email=client_email,
-            enable=True,
-            flow="xtls-rprx-vision",
-            totalGB=subscription.total_gb * 1024 * 1024 * 1024,  # Convert GB to bytes
-            expiryTime=expiry_time,
-            subId=subscription.subscription_token,
-            tgId=tg_id,  # Pass Telegram ID to XUI
-        )
+        exclude_emails: set[str] = set()
+        client_email = None
 
         try:
             xui_client = await self._get_xui_client(inbound.server)
-            await xui_client.add_client(inbound.xui_id, client_request)
+        except Exception as e:
+            await self.session.rollback()
+            raise XUIError(f"Failed to get XUI client: {e}") from e
 
+        for _ in range(100):  # Maximum attempts
+            try:
+                # Generate unique email for this inbound
+                email = await self._generate_unique_email(
+                    inbound_id, base_email, exclude_emails=exclude_emails
+                )
+            except XUIError as e:
+                await self.session.rollback()
+                raise e
+
+            # Create client in XUI
+            client_request = XUIAddClientRequest(
+                id=client_uuid,
+                email=email,
+                enable=True,
+                flow="xtls-rprx-vision",
+                totalGB=subscription.total_gb * 1024 * 1024 * 1024,  # Convert GB to bytes
+                expiryTime=expiry_time,
+                subId=subscription.subscription_token,
+                tgId=tg_id,  # Pass Telegram ID to XUI
+            )
+
+            try:
+                await xui_client.add_client(inbound.xui_id, client_request)
+                client_email = email
+                break
+            except XUIError as e:
+                error_msg = str(e).lower()
+                if "duplicate" in error_msg and "email" in error_msg:
+                    logger.warning(f"Email {email} already exists in XUI panel, retrying...")
+                    exclude_emails.add(email)
+                    continue
+                else:
+                    await self.session.rollback()
+                    logger.error(f"Failed to create XUI client: {e}", exc_info=True)
+                    raise XUIError(f"Failed to create XUI client: {str(e)}") from e
+            except Exception as e:
+                await self.session.rollback()
+                logger.error(f"Failed to create XUI client: {e}", exc_info=True)
+                raise XUIError(f"Failed to create XUI client: {str(e)}") from e
+        else:
+            await self.session.rollback()
+            raise XUIError(
+                f"Unable to find an email accepted by XUI panel for inbound {inbound_id}"
+            )
+
+        try:
             # Create inbound connection with per-connection traffic and expiry
             connection = InboundConnection(
                 subscription_id=subscription_id,
@@ -227,10 +265,10 @@ class NewSubscriptionService:
             return connection
 
         except Exception as e:
-            # Rollback on XUI error
+            # Rollback on database error
             await self.session.rollback()
-            logger.error(f"Failed to create XUI client: {e}", exc_info=True)
-            raise XUIError(f"Failed to create XUI client: {str(e)}") from e
+            logger.error(f"Failed to save inbound connection: {e}", exc_info=True)
+            raise XUIError(f"Failed to save inbound connection: {str(e)}") from e
 
     async def remove_inbound_from_subscription(
         self,
@@ -457,15 +495,17 @@ class NewSubscriptionService:
         inbound_id: int,
         base_email: str,
         max_attempts: int = 100,
+        exclude_emails: set[str] | None = None,
     ) -> str:
-        """Generate unique email for inbound.
+        """Generate unique email for server.
 
-        Checks if email already exists in this inbound and adds suffix if needed.
+        Checks if email already exists on the same server and adds suffix if needed.
 
         Args:
             inbound_id: Inbound ID
             base_email: Base email template
             max_attempts: Maximum attempts to find unique email
+            exclude_emails: Set of emails to explicitly exclude (e.g. known duplicates in XUI)
 
         Returns:
             Unique email
@@ -480,13 +520,25 @@ class NewSubscriptionService:
             base_name = base_email
             domain_part = ""
 
+        # First get the server_id for this inbound
+        inbound_result = await self.session.execute(select(Inbound).where(Inbound.id == inbound_id))
+        inbound = inbound_result.scalar_one_or_none()
+        if not inbound:
+            raise XUIError(f"Inbound {inbound_id} not found")
+        server_id = inbound.server_id
+
         for attempt in range(max_attempts):
             email = base_email if attempt == 0 else f"{base_name}_{attempt}{domain_part}"
 
-            # Check if email exists in this inbound
+            if exclude_emails and email in exclude_emails:
+                continue
+
+            # Check if email exists on the same server
             existing = await self.session.execute(
-                select(InboundConnection).where(
-                    InboundConnection.inbound_id == inbound_id,
+                select(InboundConnection)
+                .join(Inbound, InboundConnection.inbound_id == Inbound.id)
+                .where(
+                    Inbound.server_id == server_id,
                     InboundConnection.email == email,
                 )
             )

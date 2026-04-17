@@ -48,6 +48,24 @@ class SubscriptionTemplateService:
         )
         return result.scalars().all()
 
+    async def get_public_templates(self) -> Sequence[SubscriptionTemplate]:
+        """Get public subscription templates.
+
+        Returns:
+            List of public templates
+        """
+        result = await self.session.execute(
+            select(SubscriptionTemplate)
+            .options(
+                selectinload(SubscriptionTemplate.template_inbounds)
+                .selectinload(SubscriptionTemplateInbound.inbound)
+                .selectinload(Inbound.server)
+            )
+            .where(SubscriptionTemplate.is_active, SubscriptionTemplate.is_public)
+            .order_by(SubscriptionTemplate.created_at.desc())
+        )
+        return result.scalars().all()
+
     async def get_template(self, template_id: int) -> SubscriptionTemplate | None:
         """Get template by ID.
 
@@ -124,6 +142,7 @@ class SubscriptionTemplateService:
         default_expiry_days: int | None = None,
         notes: str | None = None,
         is_active: bool | None = None,
+        is_public: bool | None = None,
     ) -> SubscriptionTemplate | None:
         """Update template.
 
@@ -135,6 +154,7 @@ class SubscriptionTemplateService:
             default_expiry_days: New expiry days (optional)
             notes: New notes (optional)
             is_active: New active status (optional)
+            is_public: New public status (optional)
 
         Returns:
             Updated template or None if not found
@@ -155,6 +175,8 @@ class SubscriptionTemplateService:
             template.notes = notes
         if is_active is not None:
             template.is_active = is_active
+        if is_public is not None:
+            template.is_public = is_public
 
         await self.session.flush()
 

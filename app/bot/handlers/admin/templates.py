@@ -31,11 +31,15 @@ router = Router()
 
 
 @router.callback_query(F.data == "admin_templates")
-async def show_templates(callback: CallbackQuery, is_admin: bool):
+async def show_templates(callback: CallbackQuery, is_admin: bool, state: FSMContext):
     """Show templates list."""
     if not is_admin:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
+
+    current_state = await state.get_state()
+    if current_state:
+        await state.clear()
 
     async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
@@ -290,10 +294,61 @@ async def show_template_details(callback: CallbackQuery, is_admin: bool):
         if template.notes:
             text += f"\n📌 <b>Заметки:</b> {template.notes}"
 
-        keyboard = get_template_actions_keyboard(template_id)
+        keyboard = get_template_actions_keyboard(template_id, template.is_public)
 
         await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_tpl_toggle_public_"))
+async def toggle_template_public_status(callback: CallbackQuery, is_admin: bool):
+    """Toggle template public status."""
+    if not is_admin:
+        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        return
+
+    template_id = int(callback.data.split("_")[4])
+
+    async with async_session_factory() as session:
+        template_service = SubscriptionTemplateService(session)
+        template = await template_service.get_template(template_id)
+
+        if not template:
+            await callback.answer("⚠️ Шаблон не найден", show_alert=True)
+            return
+
+        updated_template = await template_service.update_template(
+            template_id=template_id, is_public=not template.is_public
+        )
+        await session.commit()
+
+        traffic_limit = (
+            f"{updated_template.default_total_gb} ГБ"
+            if updated_template.default_total_gb > 0
+            else "Безлимитный"
+        )
+        expiry_text = (
+            f"{updated_template.default_expiry_days} дн."
+            if updated_template.default_expiry_days
+            else "Бессрочный"
+        )
+        inbounds_count = len(updated_template.template_inbounds)
+
+        text = (
+            f"📋 <b>{updated_template.name}</b>\n\n"
+            f"📝 {updated_template.description or 'Нет описания'}\n"
+            f"📊 <b>Лимит трафика:</b> {traffic_limit}\n"
+            f"📅 <b>Срок действия:</b> {expiry_text}\n"
+            f"🔌 <b>Подключений:</b> {inbounds_count}\n"
+        )
+
+        if updated_template.notes:
+            text += f"\n📌 <b>Заметки:</b> {updated_template.notes}"
+
+        keyboard = get_template_actions_keyboard(template_id, updated_template.is_public)
+
+        await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer("Статус обновлен")
 
 
 @router.callback_query(F.data.startswith("template_create_subscription_"))
@@ -1333,7 +1388,7 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
                 "\n\n✅ Шаблон изменен. Запущено фоновое обновление всех привязанных подписок..."
             )
 
-            keyboard = get_template_actions_keyboard(template.id)
+            keyboard = get_template_actions_keyboard(template.id, template.is_public)
 
         await callback.message.edit_text(text, reply_markup=keyboard)
         await callback.answer(
@@ -1587,7 +1642,7 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
             if template.notes:
                 text += f"\n📌 <b>Заметки:</b> {template.notes}"
 
-            keyboard = get_template_actions_keyboard(template.id)
+            keyboard = get_template_actions_keyboard(template.id, template.is_public)
 
             await callback.message.edit_text(text, reply_markup=keyboard)
             await callback.answer(f"✅ Удалено {deleted_count} подключений", show_alert=True)
