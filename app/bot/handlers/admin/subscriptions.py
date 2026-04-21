@@ -1388,7 +1388,7 @@ async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> 
         await callback.answer("❌ У подписки нет подключений.")
         await callback.message.edit_text(
             "❌ У подписки нет подключений.\n\nДобавьте первый inbound для использования подписки.",
-            reply_markup=get_back_keyboard("admin_menu"),
+            reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
         )
         return
 

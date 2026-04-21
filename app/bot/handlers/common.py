@@ -19,7 +19,7 @@ from app.bot.keyboards import (
 from app.bot.states.user import InstructionViewing
 from app.config import load_instructions, reload_instructions
 from app.database.models import Client
-from app.utils.texts import t
+from app.utils.texts import t, reload_texts
 
 router = Router()
 
@@ -30,10 +30,6 @@ def _get_main_menu_text(client: Client | None, is_admin: bool) -> str:
         return t(
             "common.welcome_guest",
             "👋 Добро пожаловать!\n\nДля начала работы, пожалуйста, зарегистрируйтесь:",
-        )
-    if is_admin:
-        return t(
-            "common.menu_admin", "⚙️ <b>Меню администратора</b>\n\nВыберите раздел для управления:"
         )
     return t("common.menu_user", "🏠 <b>Главное меню</b>\n\nВыберите действие ниже:")
 
@@ -69,11 +65,32 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
         await event.answer(t("common.cancelled", "❌ Действие отменено."))
 
 
-@router.callback_query(F.data == "admin_menu")
-async def show_admin_menu(
+@router.message(Command("reload_texts"))
+async def cmd_reload_texts(message: Message, is_admin: bool) -> None:
+    """Handle /reload_texts command (admin only)."""
+    if not is_admin:
+        await message.answer(t("errors.admin_only", "❌ У вас нет прав администратора."))
+        return
+
+    try:
+        reload_texts()
+        await message.answer(t("admin.texts.reloaded", "✅ Файл с текстами успешно перезагружен!"))
+    except Exception as e:
+        logger.error(f"Error reloading texts: {e}")
+        await message.answer(
+            t(
+                "admin.texts.reload_error",
+                "❌ Ошибка при перезагрузке текстов: {error}",
+                error=str(e),
+            )
+        )
+
+
+@router.callback_query(F.data == "main_menu")
+async def show_main_menu(
     callback: CallbackQuery, is_admin: bool, client: Client | None, state: FSMContext
 ) -> None:
-    """Show admin menu or redirect to main menu for non-admins."""
+    """Show main menu."""
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -349,4 +366,33 @@ async def admin_reload_instructions(callback: CallbackQuery, is_admin: bool) -> 
         logger.error(f"Failed to reload instructions: {e}", exc_info=True)
         await callback.answer(
             t("common.error", "❌ Ошибка: {error}", error=str(e)), show_alert=True
+        )
+
+
+@router.callback_query(F.data == "admin_reload_texts")
+async def admin_reload_texts_cb(callback: CallbackQuery, is_admin: bool) -> None:
+    """Admin: reload texts from YAML file via button."""
+    if not is_admin:
+        await callback.answer(
+            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    try:
+        from app.utils.texts import reload_texts
+
+        reload_texts()
+        await callback.answer(
+            t("admin.texts.reloaded", "✅ Файл с текстами успешно перезагружен!"),
+            show_alert=True,
+        )
+    except Exception as e:
+        logger.error(f"Failed to reload texts: {e}")
+        await callback.answer(
+            t(
+                "admin.texts.reload_error",
+                "❌ Ошибка при перезагрузке текстов: {error}",
+                error=str(e),
+            ),
+            show_alert=True,
         )

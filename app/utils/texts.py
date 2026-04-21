@@ -21,6 +21,21 @@ class TextManager:
         except Exception as e:
             logger.warning(f"Failed to load text file {self.filepath}: {e}")
 
+    def _format(self, text: str, **kwargs) -> str:
+        if not kwargs:
+            return text
+        try:
+            return text.format(**kwargs)
+        except KeyError as e:
+            logger.warning(f"Missing kwargs for text formatting. Key expected: {e}, Text: '{text}'")
+            return text
+        except ValueError as e:
+            logger.warning(f"Value error during text formatting: {e}, Text: '{text}'")
+            return text
+        except Exception as e:
+            logger.warning(f"Unexpected error formatting text: {e}")
+            return text
+
     def get(self, key: str, default: str, **kwargs) -> str:
         parts = key.split(".")
         current = self._texts
@@ -29,16 +44,26 @@ class TextManager:
             if isinstance(current, dict) and part in current:
                 current = current[part]
             else:
-                return default.format(**kwargs) if kwargs else default
+                return self._format(default, **kwargs)
 
         if isinstance(current, str):
-            return current.format(**kwargs) if kwargs else current
+            return self._format(current, **kwargs)
 
-        return default.format(**kwargs) if kwargs else default
+        return self._format(default, **kwargs)
+
+    def reload(self) -> None:
+        """Force reload the YAML file from disk."""
+        logger.info(f"Reloading texts from {self.filepath}")
+        self._load()
 
 
 # Global instance assuming messages.yaml is in the project root
 _text_manager = TextManager("messages.yaml")
+
+
+def reload_texts() -> None:
+    """Reload all texts from the messages.yaml file."""
+    _text_manager.reload()
 
 
 def t(key: str, default: str, **kwargs) -> str:
