@@ -993,6 +993,10 @@ def get_subscription_details_keyboard(
         text=t("keyboards.subscription.edit", "✏️ Редактировать"),
         callback_data=f"admin_sub_edit_{subscription_id}",
     )
+    builder.button(
+        text=t("keyboards.subscription.rebuild", "🔄 Переиспользовать токен"),
+        callback_data=f"admin_sub_rebuild_{subscription_id}",
+    )
 
     builder.button(
         text=t("keyboards.subscription.reset", "🔄 Сбросить подписку"),
@@ -1033,6 +1037,32 @@ def get_subscription_details_keyboard(
         callback_data=f"client_subscriptions_{client_id}",
     )
 
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_subscription_rebuild_mode_keyboard(subscription_id: int) -> InlineKeyboardMarkup:
+    """Get keyboard for selecting rebuild mode.
+
+    Args:
+        subscription_id: Subscription ID
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.rebuild.template", "📋 Применить шаблон"),
+        callback_data=f"rebuild_mode_template_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.rebuild.manual", "⚙️ Настроить вручную"),
+        callback_data=f"rebuild_mode_manual_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.common.back", "🔙 Назад"),
+        callback_data=f"admin_sub_detail_{subscription_id}",
+    )
     builder.adjust(1)
     return builder.as_markup()
 
