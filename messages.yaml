@@ -1,0 +1,1021 @@
+admin:
+  clients:
+    add:
+      email_prompt: "Введите email клиента (или отправьте '-' для автоматической генерации):"
+      empty_name: ❌ Имя не может быть пустым.
+      error: "❌ Ошибка при создании клиента: {e}"
+      invalid_email: ❌ Некорректный формат email.
+      invalid_telegram: ❌ Telegram ID должен быть числом или '-'.
+      name_too_long: ❌ Имя не должно превышать 100 символов.
+      not_specified: Не указан
+      success: "✅ Клиент '{name}' успешно создан!
+
+
+        ID: {id}
+
+        Email: {email}
+
+        Telegram ID: {telegram_id}"
+      telegram_prompt: "Введите Telegram ID клиента (число) или отправьте '-' для
+        пропуска.
+
+
+        Примечание: Telegram ID будет использоваться для синхронизации с XUI
+        панелями."
+      title: "➕ Добавление нового клиента
+
+
+        Введите имя клиента:"
+    admin:
+      made: ✅ Клиент теперь админ.
+      removed: ✅ Клиент больше не админ.
+    btn:
+      add: ➕ Добавить клиента
+      all_clients: 📋 Все клиенты
+      back: 🔙 Назад
+      create_from_template: 📋 Создать подписку по шаблону
+      create_subscription: ➕ Создать подписку
+      delete: 🗑️ Удалить
+      disable: ❌ Отключить
+      edit_notes: 📝 Изменить заметки
+      enable: ✅ Включить
+      make_admin: ⬆️ Сделать админом
+      rename_name: ✏️ Изменить имя
+      rename_telegram: 📱 Изменить Telegram ID
+      search: 🔍 Поиск клиентов
+      subscriptions: 📝 Подписки клиента
+      unadmin: ⬇️ Снять админа
+    delete:
+      confirm: "⚠️ Вы уверены, что хотите удалить этого клиента?
+
+
+        Все его подписки и подключения будут также удалены!"
+      success: ✅ Клиент удален. Удалено {count} подключений из XUI.
+    details:
+      active: ✅ Активен
+      admin: ✅ Админ
+      client: 👤 Клиент
+      inactive: ❌ Неактивен
+      notes: "\n📝 Заметки: {notes}"
+      text: "👤 Клиент: {name}
+
+
+        ID: {id}
+
+        Email: {email}
+
+        Telegram ID: {telegram_id}
+
+        Статус: {status}
+
+        Роль: {admin_status}
+
+        Подписок: {sub_count}
+
+        Создан: {created_at}"
+    disable:
+      success: ✅ Клиент отключен. Деактивировано {count} подключений в XUI.
+    enable:
+      success: ✅ Клиент включен. Активировано {count} подключений в XUI.
+    list:
+      empty: "👥 Список клиентов пуст.
+
+
+        Нажмите '➕ Добавить клиента' для создания первого клиента."
+      subs: "   📝 Подписок: {count}\n\n"
+      title: "👥 <b>Список клиентов</b> (страница {page}/{total})
+
+        Всего активных: {count}
+
+        \n"
+    main_menu: "👥 Управление клиентами
+
+
+      Для эффективной работы с большим количеством клиентов используйте поиск по
+      различным критериям."
+    no_rights: ❌ У вас нет прав администратора.
+    not_found: ❌ Клиент не найден.
+    notes:
+      success: ✅ Заметки клиента обновлены.
+      title: "📝 Изменение заметок клиента
+
+
+        Введите новые заметки (для удаления отправьте `-`):"
+    rename:
+      success: ✅ Клиент переименован в '{name}'
+      title: "✏️ Изменение имени клиента
+
+
+        Введите новое имя:"
+    rename_telegram:
+      removed: ✅ Telegram ID удален
+      success: ✅ Telegram ID изменен на {id}
+      title: "📱 Изменение Telegram ID
+
+
+        Введите новый Telegram ID (или '-' для удаления):"
+    search:
+      empty: ❌ Поисковый запрос не может быть пустым.
+      no_results: "🔍 Поиск не дал результатов.
+
+
+        Советы:
+
+        • Для поиска по имени можно использовать несколько слов
+
+        • Для поиска по email используйте символ @
+
+        • Для Telegram ID используйте только цифры"
+      no_results_all: "🔍 Поиск не дал результатов.
+
+
+        Комплексный поиск проверяет все поля:
+
+        • Имя клиента
+
+        • Email клиента
+
+        • Telegram ID
+
+        • XUI email (из inbound подключений)
+
+
+        Попробуйте изменить поисковый запрос."
+      prompt:
+        all: "Введите поисковый запрос (проверит ВСЕ поля одновременно):
+
+          • Имя
+
+          • Email клиента
+
+          • Telegram ID
+
+          • Email из XUI inbound"
+        default: "Введите поисковый запрос:"
+        email: "Введите email клиента (частичное совпадение):"
+        name: "Введите имя клиента (частичное совпадение):"
+        telegram: "Введите Telegram ID (цифры) или @username клиента:"
+        xui_email: "Введите email из XUI inbound (частичное совпадение):"
+      results: "🔍 Результаты поиска ({count}):\n\n"
+      results_all: "🔍 Результаты поиска по всем полям ({count}):
+
+        \n"
+      title: "🔍 Поиск клиентов
+
+
+        Выберите критерий поиска:"
+    servers:
+      no_active: ❌ Нет активных серверов.
+      select: "Выберите сервер:"
+    subscriptions:
+      empty: "📝 У клиента нет подписок.
+
+
+        Нажмите '➕ Создать подписку' для добавления первой подписки."
+      item: "{status} <b>{name}</b>
+
+        \   Трафик: {traffic}
+
+        \   Срок: {expiry}
+
+        \   Подключений: {conn_count}
+
+        \n"
+      no_expiry: Бессрочно
+      title: "📝 Подписки клиента:\n\n"
+      unlimited: Безлимит
+    templates:
+      btn: "{status} {name} ({count} подключений)"
+      create: "📋 <b>Создание подписки из шаблона</b>
+
+
+        📋 <b>Шаблон:</b> {template_name}
+
+        👤 <b>Клиент:</b> {client_name}
+
+        🔌 <b>Подключений:</b> {conn_count}
+
+
+        Введите название подписки:"
+      empty: ❌ Нет доступных шаблонов. Сначала создайте шаблон.
+      title: "📋 <b>Создание подписки по шаблону</b>
+
+
+        Всего шаблонов: {count}
+
+
+        Выберите шаблон:"
+  errors:
+    no_rights: ❌ У вас нет прав администратора.
+  export:
+    caption: "📄 Экспорт базы данных VPN Manager
+
+      Размер: {size:.2f} MB
+
+      Дата: {date}"
+    error: ❌ Ошибка при экспорте базы данных.
+    file_not_found: ❌ Файл базы данных не найден.
+    file_too_large: "❌ Файл базы данных слишком большой ({size:.1f} MB). Максимум: 1.5 GB"
+    preparing: ⏳ Подготовка файла базы данных...
+    success: ✅ База данных отправлена!
+  instructions:
+    reloaded: ✅ Инструкции перезагружены
+  requests:
+    access_denied: ⛔ Доступ запрещен
+    already_processed: Запрос уже обработан
+    approve_error: "❌ Ошибка: {error}"
+    approved: ✅ Запрос одобрен.
+    not_specified: Не указано
+    rejected: ❌ Запрос отклонен.
+    template_name: Подписка из шаблона {name}
+    unknown: Неизвестно
+  servers:
+    add_cancelled: ❌ Добавление сервера отменено.
+    add_json_path: "Введите путь для JSON подписок (опционально).
+
+
+      ❗ Важно: пути нужно указывать с обоих сторон со слешами (/path/)
+
+
+      Если не указать, будет использоваться /subjson/
+
+
+      Примеры:
+
+      • /subjson/ - стандартный путь
+
+      • /custom/json/ - кастомный путь
+
+
+      Отправьте /skip чтобы использовать значение по умолчанию (/subjson/)."
+    add_name: "➕ Добавление нового сервера
+
+
+      Введите название сервера (например, 'NL-Server-1'):"
+    add_panel_path: "Введите путь к панели управления (опционально).
+
+
+      ❗ Важно: пути нужно указывать с обоих сторон со слешами (/path/)
+
+
+      Если не указать, будет использоваться / (корневой путь).
+
+
+      Примеры:
+
+      • /panel/ - для стандартной установки
+
+      • /xui/ - для кастомного пути
+
+
+      Отправьте /skip чтобы использовать значение по умолчанию (/)."
+    add_password: "Введите пароль для входа в панель:"
+    add_ssl: "Проверять SSL сертификат при подключении к серверу?
+
+
+      ⚠️ Отключение проверки небезопасно и рекомендуется только для серверов с
+      самоподписанными или проблемными сертификатами."
+    add_sub_path: "Введите путь для подписок (опционально).
+
+
+      ❗ Важно: пути нужно указывать с обоих сторон со слешами (/path/)
+
+
+      Если не указать, будет использоваться /sub/
+
+
+      Примеры:
+
+      • /sub/ - стандартный путь
+
+      • /custom/sub/ - кастомный путь
+
+
+      Отправьте /skip чтобы использовать значение по умолчанию (/sub/)."
+    add_url: "Введите базовый адрес сервера (например, https://example.com):"
+    added_success: "✅ Сервер '{name}' успешно добавлен!
+
+
+      URL: {url}
+
+      Проверка SSL: {ssl_status}
+
+      Найдено inbounds: {inbounds_count}
+
+      Синхронизировано inbounds: {synced_count}"
+    added_success_no_ssl: "✅ Сервер '{name}' успешно добавлен!
+
+
+      URL: {url}
+
+      ⚠️ Проверка SSL: ОТКЛЮЧЕНА
+
+      Найдено inbounds: {inbounds_count}
+
+      Синхронизировано inbounds: {synced_count}"
+    buttons:
+      back: 🔙 Назад
+      cancel: ❌ Нет, отменить
+      delete: 🗑️ Удалить
+      disable: ❌ Отключить
+      disable_ssl: ❌ Отключить
+      edit: ✏️ Редактировать
+      edit_json_path: 📋 Путь JSON
+      edit_name: ✏️ Название
+      edit_panel_path: 📁 Путь панели
+      edit_password: 🔒 Пароль
+      edit_ssl: 🔐 SSL
+      edit_sub_path: 📝 Путь подписок
+      edit_url: 🌐 URL сервера
+      edit_username: 👤 Логин
+      enable: ✅ Включить
+      enable_ssl: ✅ Включить
+      inbounds: 📊 Inbounds
+      refresh: 🔄 Обновить
+      retry_without_ssl: ✅ Да, попробовать без проверки
+      sync: 🔄 Синхронизировать
+      test_connection: 🔌 Проверить подключение
+      update_stats: 🔄 Обновить статистику
+      verify_ssl_no: ❌ Нет (для самоподписанных сертификатов)
+      verify_ssl_yes: ✅ Да (рекомендуется)
+    delete_confirm: "⚠️ Вы уверены, что хотите удалить этот сервер?
+
+
+      Все связанные подписки будут также удалены!"
+    deleted: ✅ Сервер удален.
+    disabled: ✅ Сервер отключен.
+    edit_json_path: "✏️ Редактирование пути JSON подписок
+
+
+      Текущий путь: <b>{path}</b>
+
+
+      Введите новый путь (или /skip чтобы оставить текущий).
+
+
+      ❗ Важно: путь нужно указывать с обоих сторон со слешами (/path/)"
+    edit_menu: "✏️ Редактирование сервера: <b>{name}</b>
+
+
+      🌐 URL: {url}
+
+      📁 Путь панели: {panel_path}
+
+      📝 Путь подписок: {sub_path}
+
+      📋 Путь JSON: {json_path}
+
+      👤 Логин: {username}
+
+
+      Выберите поле для редактирования:"
+    edit_name: "✏️ Редактирование названия сервера
+
+
+      Текущее название: <b>{name}</b>
+
+
+      Введите новое название (или /skip чтобы оставить текущее):"
+    edit_panel_path: "✏️ Редактирование пути панели
+
+
+      Текущий путь: <b>{path}</b>
+
+
+      Введите новый путь (или /skip чтобы оставить текущий).
+
+
+      ❗ Важно: путь нужно указывать с обоих сторон со слешами (/path/)"
+    edit_password: "✏️ Редактирование пароля
+
+
+      Введите новый пароль (или /skip чтобы оставить текущий):"
+    edit_ssl: "✏️ Редактирование проверки SSL
+
+
+      Текущее состояние: {current}
+
+
+      Выберите новое состояние:"
+    edit_sub_path: "✏️ Редактирование пути подписок
+
+
+      Текущий путь: <b>{path}</b>
+
+
+      Введите новый путь (или /skip чтобы оставить текущий).
+
+
+      ❗ Важно: путь нужно указывать с обоих сторон со слешами (/path/)"
+    edit_url: "✏️ Редактирование URL сервера
+
+
+      Текущий URL: <b>{url}</b>
+
+
+      Введите новый URL (или /skip чтобы оставить текущий):"
+    edit_username: "✏️ Редактирование логина
+
+
+      Текущий логин: <b>{username}</b>
+
+
+      Введите новый логин (или /skip чтобы оставить текущий):"
+    enabled: ✅ Сервер включен.
+    errors:
+      connection_failed: "❌ Не удалось подключиться к серверу:
+
+        {error}
+
+
+        Проверьте URL, логин и пароль."
+      connection_failed_no_ssl: "❌ Не удалось подключиться к серверу даже без проверки
+        SSL:
+
+        {error}
+
+
+        Проверьте URL, логин и пароль."
+      empty_name: ❌ Название не может быть пустым.
+      empty_password: ❌ Пароль не может быть пустым.
+      empty_url: ❌ URL не может быть пустым.
+      empty_username: ❌ Имя пользователя не может быть пустым.
+      generic: "❌ Ошибка: {error}"
+      invalid_url_scheme: ❌ URL должен начинаться с http:// или https://
+      name_too_long: ❌ Название не должно превышать 100 символов.
+      not_found: ❌ Сервер не найден
+      path_too_long: ❌ Путь не должен превышать 500 символов.
+      ssl_error: "❌ Ошибка SSL сертификата:
+
+        {error}
+
+
+        Хотите попробовать подключиться без проверки SSL сертификата?"
+      sync_failed: "❌ Ошибка при синхронизации: {error}"
+      unexpected: "❌ Ошибка при проверке сервера:
+
+        {error}"
+      url_too_long: ❌ URL не должен превышать 500 символов.
+      username_too_long: ❌ Имя пользователя не должно превышать 100 символов.
+    inbounds:
+      empty: "📊 Inbounds сервера {name}
+
+
+        ❌ Нет доступных inbounds.
+
+
+        Нажмите '🔄 Синхронизировать' для получения inbounds с панели."
+      item: "{status} {remark}
+
+        \   Протокол: {protocol}
+
+        \   Порт: {port}
+
+        \   Клиентов (БД): {clients}
+
+        \n"
+      no_inbounds_to_update: ❌ Нет inbounds для обновления.
+      title: "📊 Inbounds сервера {name}
+
+
+        Всего: {count} inbounds
+
+        \n"
+    info: "🖥️ Сервер: {name}
+
+
+      🌐 URL: {url}
+
+      📁 Путь панели: {panel_path}
+
+      📝 Путь подписок: {sub_path}
+
+      📋 Путь JSON: {json_path}
+
+      👤 Логин: {username}
+
+      🔒 SSL: {ssl_status}
+
+      📊 Статус: {status}
+
+      🔄 Последняя синхронизация: {last_sync}"
+    json_path_changed: "✅ Путь JSON подписок изменен на: {path}"
+    list: "📋 Список серверов:"
+    list_empty: "📋 Список серверов пуст.
+
+
+      Нажмите '➕ Добавить сервер' для добавления первого сервера."
+    name_changed: "✅ Название изменено на: {name}"
+    panel_path_changed: "✅ Путь панели изменен на: {path}"
+    password_changed: ✅ Пароль изменен
+    ssl_changed: "✅ Проверка SSL: {status}"
+    ssl_disabled: ❌ Отключена
+    ssl_enabled: ✅ Включена
+    stats:
+      item: "{status} {remark} ({protocol})
+
+        \   Порт: {port}
+
+        \   Всего клиентов: {total}
+
+        \   Активных: {active}
+
+        \   Отключенных: {disabled}
+
+        \   Использовано трафика: {used:.2f} GB
+
+        \n"
+      title: "📊 Статистика Inbounds сервера {name}
+
+        \n"
+      updated: ✅ Статистика обновлена
+    status:
+      active: ✅ Активен
+      inactive: ❌ Неактивен
+    sub_path_changed: "✅ Путь подписок изменен на: {path}"
+    sync:
+      never: Никогда
+    sync_error: Ошибка
+    sync_success: ✅ Синхронизация завершена! Inbounds и клиенты синхронизированы
+    test:
+      error: ❌ {message}
+      success: ✅ {message}
+    testing_connection: 🔄 Проверка подключения к серверу...
+    testing_connection_no_ssl: 🔄 Повторная проверка подключения к серверу (без SSL)...
+    url_changed: "✅ URL изменен на: {url}"
+    username_changed: "✅ Логин изменен на: {username}"
+  subscriptions:
+    access_denied: ❌ У вас нет прав администратора.
+    add_error: "❌ Ошибка при добавлении inbounds: {error}"
+    add_time_prompt: "⏳ Введите количество дней для добавления к подписке:"
+    added_alert: Добавлено {count} inbounds
+    added_success: ✅ Успешно добавлено {count} inbounds к подписке!
+    all_params_updated: "✅ Все параметры обновлены для подписки '{name}'
+
+
+      📝 Название: {name}
+
+      📊 Трафик: {traffic}
+
+      ⏰ Срок: {expiry}"
+    btn_add_inbound: ➕ Добавить inbound
+    btn_add_inbounds: ➡️ Добавить inbounds
+    btn_back: 🔙 Назад
+    btn_cancel: ❌ Отмена
+    btn_confirm: ✅ Подтвердить
+    btn_create_sub: ➡️ Создать подписку
+    btn_disable_selected: ❌ Отключить выбранные
+    btn_edit_all: 🔄 Изменить все пункты
+    btn_edit_expiry: ⏰ Срок
+    btn_edit_name: ✏️ Название
+    btn_edit_notes: 📝 Заметки
+    btn_edit_traffic: 📊 Трафик
+    btn_enable_selected: ✅ Включить выбранные
+    btn_exit: 🔙 Выход
+    btn_multi_select: ✅ Множественный выбор
+    btn_to_client_subs: 🔙 К подпискам клиента
+    confirm_creation: "📝 Подтверждение создания подписки:
+
+
+      👤 Клиент: {client_name}
+
+      🖥️ Сервер: {server_name}
+
+      📦 Inbounds: {inbounds}
+
+      📊 Трафик: {traffic}
+
+      ⏰ Срок: {expiry}"
+    conn_deleted: ✅ Подключение удалено
+    connection_not_found: ❌ Подключение не найдено.
+    connection_status: ✅ Подключение {status}
+    connections_not_found: ❌ Подключения не найдены.
+    create_error: "❌ Ошибка при создании подписки: {error}"
+    created_success: "✅ Подписка успешно создана!
+
+
+      📝 Название: {name}
+
+      👤 Клиент: {client_name}
+
+      🖥️ Сервер: {server_name}
+
+      📦 Inbounds: {inbounds}
+
+      📊 Трафик: {traffic}
+
+      ⏰ Срок: {expiry}
+
+      🔑 Токен: {token}
+
+      📝 Создано подключений: {conn_count}"
+    current_expiry: "Текущий срок: {expiry_str}
+
+      Введите новый срок действия в днях (0 для бессрочной):"
+    current_traffic: "Текущий трафик: {traffic_str}
+
+      Введите новый лимит трафика в GB (0 для безлимита):"
+    days_count: "{count} дней"
+    delete_confirm: "⚠️ Вы уверены, что хотите удалить эту подписку?
+
+
+      Все подключения в XUI будут удалены!"
+    delete_conn_confirm: "⚠️ Вы уверены, что хотите удалить это подключение?
+
+
+      Клиент будет удален из XUI панели!"
+    delete_error: "❌ Ошибка при удалении: {error}"
+    delete_sub_error: "❌ Ошибка при удалении подписки: {error}"
+    deleted_alert: ✅ Подписка удалена.
+    deleted_success: ✅ Подписка успешно удалена.
+    details: "📝 Подписка: <b>{name}</b> {template_text}
+
+
+      ID: {id}
+
+      Клиент: {client_name} (ID: {client_id})
+
+      Токен: <code>{token}</code>
+
+      Статус: {status}
+
+      Трафик: {traffic}
+
+      Срок: {expiry}
+
+      Создана: {created_at}
+
+      Подключений: {conn_count}
+
+      \n"
+    disabled_success: ✅ Подписка отключена.
+    edit_all_header: "✏️ Редактирование всех параметров подписки
+
+
+      Текущее название: {name}
+
+      Введите новое название:"
+    edit_menu: "✏️ Редактирование подписки
+
+
+      Выберите параметр для изменения:"
+    enabled_success: ✅ Подписка включена.
+    enter_expiry_days: "Введите срок действия в днях (0 для бессрочной):"
+    enter_name: "Выбрано {count} inbounds
+
+
+      Введите название подписки:"
+    enter_non_negative_number: ❌ Введите неотрицательное число.
+    enter_positive_integer: ❌ Введите положительное целое число.
+    enter_traffic_limit: "Введите лимит трафика в GB (0 для безлимита):"
+    error: "❌ Ошибка: {error}"
+    expiry_changed: ✅ Срок изменен на {expiry}
+    id_not_found: "❌ Ошибка: ID подписки не найден."
+    inbound_item: "{status} {remark} ({protocol})
+
+      \   Сервер: {server_name}
+
+      \   Порт: {port}
+
+      \   Email: {email}
+
+      \   UUID: {uuid}
+
+      \   ID подключения: {conn_id}
+
+      \n"
+    inbounds_list: "📢 Inbounds подписки (ID: {id}):\n\n"
+    individual: "[Индивидуальная]"
+    multi_select_disable_confirm: "⚠️ Отключить {count} подключений?
+
+
+      Все выбранные inbounds будут отключены."
+    multi_select_enable_confirm: "⚠️ Включить {count} подключений?
+
+
+      Все выбранные inbounds будут включены."
+    multi_select_error: "❌ Ошибка: нет выбранных подключений или действия."
+    multi_select_exec_error: "❌ Ошибка при выполнении действия: {error}"
+    multi_select_header: "✅ Режим множественного выбора
+
+
+      Выберите inbounds для массовых действий:
+
+      (Выбрано: {selected}/{total})"
+    multi_select_success: Успешно {action_text} {success_count}/{total} подключений
+    name_changed: ✅ Название изменено на '{name}'
+    name_empty: ❌ Название не может быть пустым.
+    name_too_long: ❌ Название не должно превышать 100 символов.
+    no_active_inbounds: ❌ У сервера нет активных inbounds. Сначала синхронизируйте сервер.
+    no_connections: "❌ У подписки нет подключений.
+
+
+      Добавьте первый inbound для использования подписки."
+    not_found: ❌ Подписка не найдена.
+    notes_changed: ✅ Заметки обновлены для подписки '{name}'
+    notes_field: "📝 Заметки: {notes}\n\n"
+    prompt_expiry: "Введите новый срок в днях (0 для бессрочной):"
+    prompt_name: "Введите новое название подписки:"
+    prompt_notes: "Введите заметки (или '-' для очистки):"
+    prompt_traffic: "Введите новый лимит трафика в GB (0 для безлимита):"
+    reset_success: ✅ Подписка сброшена
+    select_at_least_one_inbound: ❌ Выберите хотя бы один inbound.
+    select_inbounds_add: "📢 Выберите inbounds (можно выбрать несколько):
+
+
+      Нажмите '➡️ Добавить inbounds' когда выбор готов:"
+    select_inbounds_create: "📢 Выберите inbounds (можно выбрать несколько):
+
+
+      Нажмите '➡️ Создать подписку' когда выбор готов:"
+    select_server_for_add: "📢 Добавление inbound к подписке
+
+
+      Выберите сервер:"
+    status_active: ✅ Активна
+    status_disabled_action: отключено
+    status_enabled_action: включено
+    status_inactive: ❌ Неактивна
+    template_prefix: "[Шаблон: {name}]"
+    time_added_success: ✅ Успешно добавлено {days} дней к подписке.
+    traffic_changed: ✅ Трафик изменен на {traffic}
+    unlimited: Безлимит
+    unlimited_time: Бессрочно
+  sync:
+    access_denied: ❌ У вас нет прав администратора.
+    btn_back: 🔙 Назад
+    btn_check_integrity: 📊 Проверить целостность
+    btn_sync_servers: 🖥️ Синхронизировать сервера
+    integrity_completed: "{status_emoji} Проверка целостности завершена
+
+
+      Статус: {status_text}
+
+      💡 При необходимости запустите полную синхронизацию."
+    integrity_error: "❌ Ошибка при проверке: {error}"
+    integrity_issues: Обнаружены расхождения
+    integrity_ok: Все данные актуальны
+    integrity_started_alert: ⏳ Проверка целостности запущена...
+    integrity_started_text: "🔍 Проверка целостности данных...
+
+      ⏳ Пожалуйста, подождите."
+    menu_text: "🔄 Управление синхронизацией данных
+
+
+      Выберите действие для синхронизации данных между ботом и 3x-ui панелями.
+
+
+      ✅ Синхронизируются: серверы, inbounds и клиенты
+
+
+      📌 Что делает каждая кнопка:
+
+      • 🖥️ Синхронизировать сервера - Все серверы с inbounds и клиентами
+
+      • 📊 Проверить целостность - Только проверка, без синхронизации"
+    sync_completed: "{status_emoji} Синхронизация серверов завершена
+
+
+      Синхронизировано серверов: {synced}
+
+      Ошибок: {errors}
+
+      ✅ Серверы, inbounds и клиенты синхронизированы"
+    sync_error: "❌ Ошибка при синхронизации: {error}"
+    sync_started_alert: ⏳ Синхронизация запущена...
+    sync_started_text: "🔄 Синхронизация серверов...
+
+      ⏳ Пожалуйста, подождите."
+common:
+  access_denied: ⛔ Доступ запрещен
+  btn_back: 🔙 Назад
+  cancelled: ❌ Действие отменено.
+  error: "❌ Ошибка: {error}"
+  menu_admin: "⚙️ <b>Меню администратора</b>
+
+
+    Выберите раздел для управления:"
+  menu_user: "🏠 <b>Главное меню</b>
+
+
+    Выберите действие ниже:"
+  welcome_guest: "👋 Добро пожаловать!
+
+
+    Для начала работы, пожалуйста, зарегистрируйтесь:"
+faq:
+  empty: Частые вопросы пока не добавлены.
+  error: Ошибка при загрузке вопроса.
+  not_found: Вопрос не найден.
+  title: "Частые вопросы:"
+instruction:
+  done: "✅ <b>Настройка завершена!</b>
+
+
+    Если возникли проблемы — обратитесь к админу."
+  not_found: ⚠️ Инструкция не найдена.
+  select_format: "Выберите тип инструкции для {os_name}:"
+  select_os: "Выберите операционную систему или раздел:"
+  step_by_step_not_configured: ⚠️ Пошаговая инструкция не настроена.
+  step_not_found: ⚠️ Шаг не найден.
+  step_title: Шаг {index}
+keyboards:
+  clients:
+    add: Добавить клиента
+    add_icon: ➕ Добавить клиента
+    client_button: "{status} {admin_badge} {name}"
+    client_page_button: "{admin_badge} {status} {name} (ID: {id})"
+    search: Поиск клиентов
+    search_icon: 🔍 Поиск клиентов
+  common:
+    back: Назад
+    back_icon: 🔙 Назад
+    cancel: Отмена
+    cancel_icon: ❌ Отмена
+    confirm: Подтвердить
+    confirm_icon: ✅ Подтвердить
+    exit: 🔙 Выход
+    main_menu: 🔙 Главное меню
+    status:
+      active: Активен
+      inactive: Неактивен
+  faq:
+    back_to_list: 🔙 К списку вопросов
+  help:
+    back_to_os: 🔙 Назад к выбору ОС
+    faq: Частые вопросы (FAQ)
+    os_android: Android
+    os_ios: iOS / Mac
+    os_linux: Linux
+    os_windows: Windows
+  inbounds:
+    inbound_button: "{status} {remark} ({protocol})"
+  instruction:
+    back_to_menu: 🔙 К меню инструкции
+    full: 📄 Полная инструкция
+    step_by_step: 📖 Пошаговая настройка
+  main_menu:
+    admin:
+      clients: Управление клиентами
+      export: Экспорт БД
+      reload_instructions: 🔄 Обновить инструкцию
+      servers: Управление серверами
+      sync: 🔄 Синхронизация
+      templates: 📋 Шаблоны подписок
+    all_sub_urls: Все ссылки подписок
+    instruction: 📖 Инструкция
+    my_subscriptions: Мои подписки
+    registration: 📝 Регистрация
+    request_subscription: ➕ Запросить подписку
+  navigation:
+    done: ✅ Готово
+    next: Далее ➡️
+    page: 📄 {current}/{total}
+    prev: ⬅️ Назад
+  pagination:
+    current: 📄 {current}/{total}
+    next: Вперед ➡️ ({next_page}/{total_pages})
+    prev: ⬅️ Назад ({page}/{total_pages})
+  public_templates:
+    item: 📦 {name}
+  registration:
+    enter_name: ✏️ Ввести имя
+    use_telegram: 📱 Использовать Telegram
+  request_admin:
+    approve: ✅ Одобрить
+    reject: ❌ Отклонить
+  search:
+    by_email: 📧 По email
+    by_name: 👤 По имени
+    by_telegram: 📱 По Telegram
+    by_xui_email: 🔗 По XUI email
+    complex: 🔍 Комплексный поиск
+  servers:
+    add: Добавить сервер
+    server_button: "{status} {name}"
+  subscription:
+    add_time: ⏳ Добавить время
+    back_to_client: 🔙 Назад к клиенту
+    delete: 🗑️ Удалить
+    disable: ❌ Отключить
+    edit: ✏️ Редактировать
+    edit_expiry: 📅 Изменить дату окончания
+    edit_traffic: ⚙️ Изменить лимит трафика
+    enable: ✅ Включить
+    inbounds: 📢 Inbounds
+    reset: 🔄 Сбросить подписку
+  template_actions:
+    delete: ❌ Удалить
+    edit: ✏️ Изменить
+    edit_inbounds: ✏️ Редактировать подключения
+    hide_public: 🔒 Скрыть из доступа
+    make_public: 👁 Сделать публичным
+  template_edit:
+    description: 📝 Описание
+    expiry: 📅 Срок действия
+    name: 📝 Название
+    notes: 📌 Заметки
+    traffic: 📊 Трафик
+  template_edit_inbounds:
+    add_selected: ➕ Подключить выбранные
+    cancel: 🔙 Отмена
+    item: "{selected} {remark} {status}"
+    remove_selected: ❌ Отключить выбранные
+  template_inbound_select:
+    add_selected: ➡️ Добавить выбранные
+    item: 📦 {status} {remark} ({server_name})
+  template_inbounds:
+    edit: ✏️ Редактировать подключения
+    inbound_item: "{status} {remark} ({server_name})"
+    no_inbounds: Нет подключений
+  template_multi_select:
+    delete: 🗑️ Удалить выбранные
+    item: "{selected} {status} {remark} ({server_name})"
+  templates:
+    add: ➕ Создать шаблон
+    template_button: "{status} {name}"
+  user_actions:
+    delete: Удалить
+    disable: Отключить
+    enable: Включить
+    rename: Переименовать
+  users:
+    add: Добавить пользователя
+    admin_badge: Админ
+    user_button: "{status} {admin_badge} {name}"
+user:
+  errors:
+    admin_only: ❌ Эта функция доступна только администраторам.
+    client_not_found: ❌ Клиент не найден.
+  req:
+    choose_template: "Выберите шаблон для новой подписки:
+
+      \n"
+    enter_name: "Введите понятное название для вашей подписки (например: Мой Телефон):"
+    invalid_name: Пожалуйста, введите корректное название.
+    no_description: Нет описания
+    success: ✅ Ваш запрос отправлен администратору. В ближайшее время вы получите ответ
+    template_item: "📦 <b>{name}</b>\n   {desc}\n\n"
+    too_many: У вас слишком много ожидающих заявок.
+    unavailable: В данный момент запросы недоступны.
+  status:
+    conn_expiry: "        📅 Срок: {expiry}\n"
+    conn_info: "      {status} {remark} ({server})\n"
+    conn_traffic: "        📊 Трафик: {traffic}\n"
+    connections_header: "   <b>Подключения:</b>\n"
+    header: "📊 <b>Сроки и остатки подписок</b>
+
+      \n"
+    no_connections: "   Нет активных подключений\n\n"
+    sub_connections: "   🔌 Активных подключений: {active}/{total}
+
+      \n"
+    sub_expiry: "   📅 Срок: {expiry}\n"
+    sub_header: "📦 <b>{name}</b>\n"
+    sub_header_empty: "❌ <b>{name}</b>\n"
+    traffic_error: " (ошибка получения данных)"
+    traffic_gb: "{gb} ГБ"
+    traffic_low: " (⚠️ осталось {gb:.2f} ГБ)"
+    traffic_remaining: " (осталось {gb:.2f} ГБ)"
+  subs:
+    active_connections: "📢 Активные подключения:\n\n"
+    btn_back_to_subs: 🔙 Назад к подпискам
+    btn_copy_urls: 📋 Скопировать все URL
+    btn_status: 📊 Сроки и остатки
+    btn_sub: 📝 {name}
+    btn_urls: 🔗 Subscription URLs
+    conn_expiry: "      Срок: {expiry}\n"
+    conn_info: "    └ {status} {remark} ({protocol}) | {server}\n"
+    conn_traffic: "      Трафик: {traffic}\n"
+    conn_url: "  • URL: {url}\n"
+    details_header: "📝 Подписка: <b>{name}</b>
+
+
+      Статус: {status}
+
+      Создана: {created}
+
+      Активных подключений: {active}/{total}
+
+      Токен: <code>{token}</code>
+
+      \n"
+    empty: "📝 У вас пока нет подписок.
+
+
+      Запросите подпсику в меню"
+    list_header: "📝 Ваши подписки ({count}):\n\n"
+    list_item: "{status} <b>{name}</b>
+
+      \   Активных подключений: {active}/{total}
+
+      \n"
+    no_active: ❌ Нет активных подписок.
+    not_found: ❌ Подписка не найдена.
+    traffic_gb: "{gb} GB"
+    unlimited: Безлимит
+    url_group: "<b>Подписка: {name}</b>\n"
+    urls_header: "🔗 Subscription URLs:\n\n"
+    urls_hidden: "
+
+      ... (остальные подписки скрыты из-за ограничений Telegram)"
