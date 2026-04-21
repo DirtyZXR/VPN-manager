@@ -47,7 +47,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
                 "user.subs.empty",
                 "📝 У вас пока нет подписок.\n\nСвяжитесь с администратором для создания подписки.",
             ),
-            reply_markup=get_back_keyboard("admin_menu"),
+            reply_markup=get_back_keyboard("main_menu"),
         )
         await callback.answer()
         return
@@ -82,7 +82,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         text=t("user.subs.btn_status", "📊 Сроки и остатки"),
         callback_data="show_subscription_status",
     )
-    builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="admin_menu")
+    builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="main_menu")
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")

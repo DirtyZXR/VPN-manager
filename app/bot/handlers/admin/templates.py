@@ -61,7 +61,9 @@ async def show_templates(callback: CallbackQuery, is_admin: bool, state: FSMCont
                 text=t("admin.templates.btn_create_template", "➕ Создать шаблон"),
                 callback_data="template_add",
             )
-            builder.button(text=t("admin.templates.btn_back", "Назад"), callback_data="admin_clients_menu")
+            builder.button(
+                text=t("admin.templates.btn_back", "Назад"), callback_data="admin_clients_menu"
+            )
             builder.adjust(1)
             keyboard = builder.as_markup()
         else:
@@ -1058,7 +1060,7 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
 
             if not templates:
                 text = "📋 <b>Шаблоны подписок</b>\n\nШаблонов пока нет. Создайте первый шаблон!"
-        keyboard = get_back_keyboard("admin_clients_menu")
+                keyboard = get_back_keyboard("admin_clients_menu")
             else:
                 text = f"📋 <b>Шаблоны подписок</b>\n\nВсего шаблонов: {len(templates)}"
                 keyboard = get_templates_keyboard(templates)
@@ -1339,14 +1341,14 @@ async def process_edit_template_description(message: Message, state: FSMContext)
         await show_template_details_edit_menu(message, state)
         return
 
-        if len(new_description) > 500:
-            await message.answer(
-                t(
-                    "admin.templates.desc_too_long",
-                    "⚠️ Описание слишком длинное. Максимум 500 символов. Введите описание:",
-                )
+    if len(new_description) > 500:
+        await message.answer(
+            t(
+                "admin.templates.desc_too_long",
+                "⚠️ Описание слишком длинное. Максимум 500 символов. Введите описание:",
             )
-            return
+        )
+        return
 
     data = await state.get_data()
     template_id = data["template_id"]
@@ -1566,14 +1568,14 @@ async def process_edit_template_notes(message: Message, state: FSMContext):
         await show_template_details_edit_menu(message, state)
         return
 
-        if len(new_notes) > 500:
-            await message.answer(
-                t(
-                    "admin.templates.notes_too_long",
-                    "⚠️ Заметки слишком длинные. Максимум 500 символов. Введите заметки:",
-                )
+    if len(new_notes) > 500:
+        await message.answer(
+            t(
+                "admin.templates.notes_too_long",
+                "⚠️ Заметки слишком длинные. Максимум 500 символов. Введите заметки:",
             )
-            return
+        )
+        return
 
     data = await state.get_data()
     template_id = data["template_id"]
