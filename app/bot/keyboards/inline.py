@@ -54,28 +54,8 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
 
         if is_admin:
             builder.button(
-                text=t("keyboards.main_menu.admin.servers", "Управление серверами"),
-                callback_data="admin_servers",
-            )
-            builder.button(
-                text=t("keyboards.main_menu.admin.clients", "Управление клиентами"),
-                callback_data="admin_clients",
-            )
-            builder.button(
-                text=t("keyboards.main_menu.admin.templates", "📋 Шаблоны подписок"),
-                callback_data="admin_templates",
-            )
-            builder.button(
-                text=t("keyboards.main_menu.admin.sync", "🔄 Синхронизация"),
-                callback_data="admin_sync",
-            )
-            builder.button(
-                text=t("keyboards.main_menu.admin.reload_instructions", "🔄 Обновить инструкцию"),
-                callback_data="admin_reload_instructions",
-            )
-            builder.button(
-                text=t("keyboards.main_menu.admin.export", "Экспорт БД"),
-                callback_data="admin_export",
+                text=t("keyboards.main_menu.admin_panel", "⚙️ Панель администратора"),
+                callback_data="admin_menu",
             )
     else:
         builder.button(
@@ -87,8 +67,79 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
     return builder.as_markup()
 
 
+def get_admin_dashboard_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.admin.menu.clients", "👥 Клиентская часть"),
+        callback_data="admin_clients_menu",
+    )
+    builder.button(
+        text=t("keyboards.admin.menu.infra", "🖥 Инфраструктура"), callback_data="admin_infra_menu"
+    )
+    builder.button(
+        text=t("keyboards.admin.menu.system", "🛠 Система и Настройки"),
+        callback_data="admin_system_menu",
+    )
+    builder.button(
+        text=t("keyboards.admin.menu.back_to_main", "🔙 В главное меню"), callback_data="main_menu"
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_clients_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.main_menu.admin.clients", "Управление клиентами"),
+        callback_data="admin_clients",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.templates", "📋 Шаблоны подписок"),
+        callback_data="admin_templates",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.broadcast", "📢 Уведомление всем"),
+        callback_data="admin_broadcast",
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_infra_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.main_menu.admin.servers", "Управление серверами"),
+        callback_data="admin_servers",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.sync", "🔄 Синхронизация"), callback_data="admin_sync"
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_system_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.main_menu.admin.export", "Экспорт БД"), callback_data="admin_export"
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.reload_instructions", "🔄 Обновить инструкцию"),
+        callback_data="admin_reload_instructions",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.reload_texts", "🔄 Обновить тексты"),
+        callback_data="admin_reload_texts",
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
+    builder.adjust(2, 1, 1)  # First row has 2 buttons, next have 1
+    return builder.as_markup()
+
+
 def get_servers_keyboard(
-    servers: list, action: str = "select", back_target: str = "admin_menu"
+    servers: list, action: str = "select", back_target: str = "admin_infra_menu"
 ) -> InlineKeyboardMarkup:
     """Get servers list keyboard.
 
@@ -192,7 +243,7 @@ def get_users_keyboard(users: list) -> InlineKeyboardMarkup:
         )
 
     builder.button(text=t("keyboards.users.add", "Добавить пользователя"), callback_data="user_add")
-    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_menu")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -225,7 +276,7 @@ def get_inbounds_keyboard(inbounds: list) -> InlineKeyboardMarkup:
             callback_data=f"inbound_select_{inbound.id}",
         )
 
-    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_menu")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_infra_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -328,7 +379,7 @@ def get_clients_keyboard(clients: list) -> InlineKeyboardMarkup:
     builder.button(
         text=t("keyboards.clients.search", "Поиск клиентов"), callback_data="client_search"
     )
-    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_menu")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -439,7 +490,7 @@ def get_help_main_keyboard() -> InlineKeyboardMarkup:
     builder.button(text=t("keyboards.help.os_linux", "Linux"), callback_data="help_os_linux")
     builder.button(text=t("keyboards.help.faq", "Частые вопросы (FAQ)"), callback_data="faq_main")
     builder.button(
-        text=t("keyboards.common.main_menu", "🔙 Главное меню"), callback_data="admin_menu"
+        text=t("keyboards.common.main_menu", "🔙 Главное меню"), callback_data="main_menu"
     )
     builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
@@ -632,7 +683,7 @@ def get_templates_keyboard(templates: list) -> InlineKeyboardMarkup:
     builder.button(
         text=t("keyboards.templates.add", "➕ Создать шаблон"), callback_data="template_add"
     )
-    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_menu")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients_menu")
     builder.adjust(1)
     return builder.as_markup()
 

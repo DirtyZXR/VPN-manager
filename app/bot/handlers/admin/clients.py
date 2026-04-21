@@ -53,7 +53,7 @@ async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContex
         kb.button(
             text=t("admin.clients.btn.add", "➕ Добавить клиента"), callback_data="client_add"
         )
-        kb.button(text=t("admin.clients.btn.back", "🔙 Назад"), callback_data="admin_menu")
+        kb.button(text=t("admin.clients.btn.back", "🔙 Назад"), callback_data="admin_clients_menu")
         kb.adjust(1)
 
         await callback.message.edit_text(

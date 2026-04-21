@@ -61,7 +61,7 @@ async def show_templates(callback: CallbackQuery, is_admin: bool, state: FSMCont
                 text=t("admin.templates.btn_create_template", "➕ Создать шаблон"),
                 callback_data="template_add",
             )
-            builder.button(text=t("admin.templates.btn_back", "Назад"), callback_data="admin_menu")
+            builder.button(text=t("admin.templates.btn_back", "Назад"), callback_data="admin_clients_menu")
             builder.adjust(1)
             keyboard = builder.as_markup()
         else:
@@ -679,7 +679,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
         if client.telegram_id:
             text += t("admin.templates.notification_sent", "\n📱 <b>Уведомление отправлено:</b> Да")
 
-        keyboard = get_back_keyboard("admin_menu")
+        keyboard = get_back_keyboard("admin_clients_menu")
 
         await message.answer(text, reply_markup=keyboard)
 
@@ -1058,7 +1058,7 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
 
             if not templates:
                 text = "📋 <b>Шаблоны подписок</b>\n\nШаблонов пока нет. Создайте первый шаблон!"
-                keyboard = get_back_keyboard("admin_menu")
+        keyboard = get_back_keyboard("admin_clients_menu")
             else:
                 text = f"📋 <b>Шаблоны подписок</b>\n\nВсего шаблонов: {len(templates)}"
                 keyboard = get_templates_keyboard(templates)

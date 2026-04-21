@@ -128,3 +128,10 @@ class TemplateManagement(StatesGroup):
 
     # Template deletion
     confirm_delete_template = State()
+
+
+class BroadcastManagement(StatesGroup):
+    """Broadcast messages to users states."""
+
+    waiting_for_message = State()
+    confirm_broadcast = State()

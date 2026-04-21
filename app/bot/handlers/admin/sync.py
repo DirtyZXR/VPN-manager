@@ -33,7 +33,7 @@ async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
         text=t("admin.sync.btn_check_integrity", "📊 Проверить целостность"),
         callback_data="sync_integrity",
     )
-    keyboard.button(text=t("admin.sync.btn_back", "🔙 Назад"), callback_data="admin_menu")
+    keyboard.button(text=t("admin.sync.btn_back", "🔙 Назад"), callback_data="admin_infra_menu")
     keyboard.adjust(1)
 
     with contextlib.suppress(Exception):

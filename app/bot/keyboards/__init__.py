@@ -13,6 +13,10 @@ from app.bot.keyboards.inline import (
     get_inbounds_keyboard,
     get_instruction_menu_keyboard,
     get_main_menu_keyboard,
+    get_admin_dashboard_keyboard,
+    get_admin_clients_menu_keyboard,
+    get_admin_infra_menu_keyboard,
+    get_admin_system_menu_keyboard,
     get_registration_keyboard,
     get_servers_keyboard,
     get_servers_keyboard_for_template_edit,
@@ -34,6 +38,10 @@ from app.bot.keyboards.inline import (
 
 __all__ = [
     "get_main_menu_keyboard",
+    "get_admin_dashboard_keyboard",
+    "get_admin_clients_menu_keyboard",
+    "get_admin_infra_menu_keyboard",
+    "get_admin_system_menu_keyboard",
     "get_user_keyboard",
     "get_subscription_details_keyboard",
     "get_servers_keyboard",
