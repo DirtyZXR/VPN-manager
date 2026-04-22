@@ -19,6 +19,7 @@ from app.bot.keyboards import (
 from app.bot.states.user import InstructionViewing
 from app.config import load_instructions, reload_instructions
 from app.database.models import Client
+from app.utils.texts import t, reload_texts
 
 router = Router()
 
@@ -26,10 +27,11 @@ router = Router()
 def _get_main_menu_text(client: Client | None, is_admin: bool) -> str:
     """Get unified main menu text."""
     if client is None:
-        return "👋 Добро пожаловать!\n\nДля начала работы, пожалуйста, зарегистрируйтесь:"
-    if is_admin:
-        return "⚙️ <b>Меню администратора</b>\n\nВыберите раздел для управления:"
-    return "🏠 <b>Главное меню</b>\n\nВыберите действие ниже:"
+        return t(
+            "common.welcome_guest",
+            "👋 Добро пожаловать!\n\nДля начала работы, пожалуйста, зарегистрируйтесь:",
+        )
+    return t("common.menu_user", "🏠 <b>Главное меню</b>\n\nВыберите действие ниже:")
 
 
 @router.message(Command("start"))
@@ -56,18 +58,39 @@ async def cmd_cancel(event: Message | CallbackQuery, state: FSMContext) -> None:
 
     if isinstance(event, CallbackQuery):
         await event.message.edit_text(
-            "❌ Действие отменено.",
+            t("common.cancelled", "❌ Действие отменено."),
         )
         await event.answer()
     else:
-        await event.answer("❌ Действие отменено.")
+        await event.answer(t("common.cancelled", "❌ Действие отменено."))
 
 
-@router.callback_query(F.data == "admin_menu")
-async def show_admin_menu(
+@router.message(Command("reload_texts"))
+async def cmd_reload_texts(message: Message, is_admin: bool) -> None:
+    """Handle /reload_texts command (admin only)."""
+    if not is_admin:
+        await message.answer(t("errors.admin_only", "❌ У вас нет прав администратора."))
+        return
+
+    try:
+        reload_texts()
+        await message.answer(t("admin.texts.reloaded", "✅ Файл с текстами успешно перезагружен!"))
+    except Exception as e:
+        logger.error(f"Error reloading texts: {e}")
+        await message.answer(
+            t(
+                "admin.texts.reload_error",
+                "❌ Ошибка при перезагрузке текстов: {error}",
+                error=str(e),
+            )
+        )
+
+
+@router.callback_query(F.data == "main_menu")
+async def show_main_menu(
     callback: CallbackQuery, is_admin: bool, client: Client | None, state: FSMContext
 ) -> None:
-    """Show admin menu or redirect to main menu for non-admins."""
+    """Show main menu."""
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -91,7 +114,7 @@ async def show_admin_menu(
 @router.callback_query(F.data == "help_main")
 async def show_instruction_menu(callback: CallbackQuery) -> None:
     """Show instruction selection menu."""
-    text = "Выберите операционную систему или раздел:"
+    text = t("instruction.select_os", "Выберите операционную систему или раздел:")
     reply_markup = get_help_main_keyboard()
 
     try:
@@ -107,7 +130,7 @@ async def show_instruction_menu(callback: CallbackQuery) -> None:
 async def show_os_instruction_menu(callback: CallbackQuery) -> None:
     """Show instruction formats for specific OS."""
     os_name = callback.data.replace("help_os_", "")
-    text = f"Выберите тип инструкции для {os_name}:"
+    text = t("instruction.select_format", "Выберите тип инструкции для {os_name}:", os_name=os_name)
     reply_markup = get_instruction_menu_keyboard(os_name)
 
     try:
@@ -124,7 +147,9 @@ async def show_full_instruction(callback: CallbackQuery) -> None:
     """Show full instruction text."""
     os_name = callback.data.replace("instruction_full_", "")
     instructions = load_instructions()
-    text = instructions.get(os_name, {}).get("full_instruction", "⚠️ Инструкция не найдена.")
+    text = instructions.get(os_name, {}).get(
+        "full_instruction", t("instruction.not_found", "⚠️ Инструкция не найдена.")
+    )
     reply_markup = get_instruction_menu_keyboard(os_name)
 
     try:
@@ -145,7 +170,7 @@ async def start_step_by_step(callback: CallbackQuery, state: FSMContext) -> None
 
     if not steps:
         await callback.message.edit_text(
-            "⚠️ Пошаговая инструкция не настроена.",
+            t("instruction.step_by_step_not_configured", "⚠️ Пошаговая инструкция не настроена."),
             reply_markup=get_instruction_menu_keyboard(os_name),
         )
         await callback.answer()
@@ -193,7 +218,10 @@ async def instruction_done(callback: CallbackQuery, state: FSMContext) -> None:
     with contextlib.suppress(Exception):
         await callback.message.delete()
     await callback.message.answer(
-        "✅ <b>Настройка завершена!</b>\n\nЕсли возникли проблемы — обратитесь к админу.",
+        t(
+            "instruction.done",
+            "✅ <b>Настройка завершена!</b>\n\nЕсли возникли проблемы — обратитесь к админу.",
+        ),
         reply_markup=get_help_main_keyboard(),
         parse_mode="HTML",
     )
@@ -220,12 +248,12 @@ async def _render_step(callback: CallbackQuery, step_index: int, state: FSMConte
     steps = instructions.get(os_name, {}).get("step_by_step", {}).get("steps", [])
 
     if not steps or step_index >= len(steps):
-        await callback.answer("⚠️ Шаг не найден.")
+        await callback.answer(t("instruction.step_not_found", "⚠️ Шаг не найден."))
         return
 
     step = steps[step_index]
     text = step.get("text", "")
-    title = step.get("title", f"Шаг {step_index + 1}")
+    title = step.get("title", t("instruction.step_title", "Шаг {index}", index=step_index + 1))
     media_path = step.get("media")
     total = len(steps)
 
@@ -286,13 +314,14 @@ async def faq_main(callback: CallbackQuery) -> None:
     faq_list = load_instructions().get("faq", {}).get("faq", [])
     if not faq_list:
         await callback.message.edit_text(
-            "Частые вопросы пока не добавлены.", reply_markup=get_help_main_keyboard()
+            t("faq.empty", "Частые вопросы пока не добавлены."),
+            reply_markup=get_help_main_keyboard(),
         )
         await callback.answer()
         return
 
     await callback.message.edit_text(
-        "Частые вопросы:",
+        t("faq.title", "Частые вопросы:"),
         reply_markup=get_faq_list_keyboard(faq_list),
     )
     await callback.answer()
@@ -308,9 +337,9 @@ async def show_faq_answer(callback: CallbackQuery) -> None:
             item = faq_list[index]
             text = f"<b>{item['question']}</b>\n\n{item['answer']}"
         else:
-            text = "Вопрос не найден."
+            text = t("faq.not_found", "Вопрос не найден.")
     except Exception:
-        text = "Ошибка при загрузке вопроса."
+        text = t("faq.error", "Ошибка при загрузке вопроса.")
 
     await callback.message.edit_text(
         text,
@@ -324,15 +353,46 @@ async def show_faq_answer(callback: CallbackQuery) -> None:
 async def admin_reload_instructions(callback: CallbackQuery, is_admin: bool) -> None:
     """Admin: reload instructions from YAML file."""
     if not is_admin:
-        await callback.answer("⛔ Доступ запрещен", show_alert=True)
+        await callback.answer(t("common.access_denied", "⛔ Доступ запрещен"), show_alert=True)
         return
 
     try:
         reload_instructions()
         await callback.answer(
-            "✅ Инструкции перезагружены",
+            t("admin.instructions.reloaded", "✅ Инструкции перезагружены"),
             show_alert=True,
         )
     except Exception as e:
         logger.error(f"Failed to reload instructions: {e}", exc_info=True)
-        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+        await callback.answer(
+            t("common.error", "❌ Ошибка: {error}", error=str(e)), show_alert=True
+        )
+
+
+@router.callback_query(F.data == "admin_reload_texts")
+async def admin_reload_texts_cb(callback: CallbackQuery, is_admin: bool) -> None:
+    """Admin: reload texts from YAML file via button."""
+    if not is_admin:
+        await callback.answer(
+            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    try:
+        from app.utils.texts import reload_texts
+
+        reload_texts()
+        await callback.answer(
+            t("admin.texts.reloaded", "✅ Файл с текстами успешно перезагружен!"),
+            show_alert=True,
+        )
+    except Exception as e:
+        logger.error(f"Failed to reload texts: {e}")
+        await callback.answer(
+            t(
+                "admin.texts.reload_error",
+                "❌ Ошибка при перезагрузке текстов: {error}",
+                error=str(e),
+            ),
+            show_alert=True,
+        )

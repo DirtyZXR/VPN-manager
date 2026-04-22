@@ -203,6 +203,71 @@ class NotificationService:
             )
             return False
 
+    async def notify_subscription_rebuilt(
+        self,
+        client: Client,
+        subscription: Subscription,
+        old_name: str,
+    ) -> bool:
+        """Send notification when subscription is rebuilt (reused token)."""
+        if not client.telegram_id:
+            return False
+
+        try:
+            async with await self._get_bot() as bot:
+                safe_old_name = html.escape(old_name) if old_name else "Не указана"
+                safe_new_name = (
+                    html.escape(subscription.name) if subscription.name else "Не указана"
+                )
+
+                from app.utils.texts import t
+
+                if safe_old_name == safe_new_name:
+                    message = t(
+                        "notifications.rebuilt_same_name",
+                        "🎉 Ваша подписка <b>{name}</b> обновлена!",
+                        name=safe_new_name,
+                    )
+                else:
+                    message = t(
+                        "notifications.rebuilt_diff_name",
+                        "🎉 Ваша подписка <b>{old_name}</b> изменена на <b>{new_name}</b>!",
+                        old_name=safe_old_name,
+                        new_name=safe_new_name,
+                    )
+
+                traffic_limit = (
+                    f"{subscription.total_gb} ГБ"
+                    if subscription.total_gb > 0
+                    else t("admin.templates.unlimited_capital", "Безлимитный")
+                )
+                expiry_text = (
+                    f"{subscription.remaining_days} дн."
+                    if subscription.expiry_date
+                    else t("admin.templates.unlimited_time_capital", "Бессрочная")
+                )
+
+                message += t(
+                    "notifications.rebuilt_details",
+                    "\n\n📊 <b>Новый лимит трафика:</b> {traffic}\n📅 <b>Новый срок действия:</b> {expiry}",
+                    traffic=traffic_limit,
+                    expiry=expiry_text,
+                )
+
+                await bot.send_message(
+                    chat_id=client.telegram_id,
+                    text=message,
+                    parse_mode="HTML",
+                )
+
+                logger.info(f"✅ Rebuild notification sent to client {client.name}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Failed to send rebuild notification to client {client.name}: {e}")
+            return False
+
     async def notify_subscription_deleted(
         self,
         client: Client,

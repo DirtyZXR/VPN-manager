@@ -7,6 +7,8 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
+from app.utils.texts import t
+
 
 def get_user_keyboard() -> ReplyKeyboardMarkup:
     """Get persistent user keyboard with /start button.
@@ -33,27 +35,111 @@ def get_main_menu_keyboard(is_admin: bool, is_registered: bool = True) -> Inline
     builder = InlineKeyboardBuilder()
 
     if is_registered:
-        builder.button(text="Мои подписки", callback_data="my_subscriptions")
-        builder.button(text="Все URL подписок", callback_data="all_sub_urls")
-        builder.button(text="📖 Инструкция", callback_data="instruction_menu")
-        builder.button(text="➕ Запросить подписку", callback_data="request_subscription")
+        builder.button(
+            text=t("keyboards.main_menu.my_subscriptions", "Мои подписки"),
+            callback_data="my_subscriptions",
+        )
+        builder.button(
+            text=t("keyboards.main_menu.all_sub_urls", "Все URL подписок"),
+            callback_data="all_sub_urls",
+        )
+        builder.button(
+            text=t("keyboards.main_menu.instruction", "📖 Инструкция"),
+            callback_data="instruction_menu",
+        )
+        builder.button(
+            text=t("keyboards.main_menu.request_subscription", "➕ Запросить подписку"),
+            callback_data="request_subscription",
+        )
 
         if is_admin:
-            builder.button(text="Управление серверами", callback_data="admin_servers")
-            builder.button(text="Управление клиентами", callback_data="admin_clients")
-            builder.button(text="📋 Шаблоны подписок", callback_data="admin_templates")
-            builder.button(text="🔄 Синхронизация", callback_data="admin_sync")
-            builder.button(text="🔄 Обновить инструкцию", callback_data="admin_reload_instructions")
-            builder.button(text="Экспорт БД", callback_data="admin_export")
+            builder.button(
+                text=t("keyboards.main_menu.admin_panel", "⚙️ Панель администратора"),
+                callback_data="admin_menu",
+            )
     else:
-        builder.button(text="📝 Регистрация", callback_data="start_registration")
+        builder.button(
+            text=t("keyboards.main_menu.registration", "📝 Регистрация"),
+            callback_data="start_registration",
+        )
 
     builder.adjust(2)
     return builder.as_markup()
 
 
+def get_admin_dashboard_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.admin.menu.clients", "👥 Клиентская часть"),
+        callback_data="admin_clients_menu",
+    )
+    builder.button(
+        text=t("keyboards.admin.menu.infra", "🖥 Инфраструктура"), callback_data="admin_infra_menu"
+    )
+    builder.button(
+        text=t("keyboards.admin.menu.system", "🛠 Система и Настройки"),
+        callback_data="admin_system_menu",
+    )
+    builder.button(
+        text=t("keyboards.admin.menu.back_to_main", "🔙 В главное меню"), callback_data="main_menu"
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_clients_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.main_menu.admin.clients", "Управление клиентами"),
+        callback_data="admin_clients",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.templates", "📋 Шаблоны подписок"),
+        callback_data="admin_templates",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.broadcast", "📢 Уведомление всем"),
+        callback_data="admin_broadcast",
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_infra_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.main_menu.admin.servers", "Управление серверами"),
+        callback_data="admin_servers",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.sync", "🔄 Синхронизация"), callback_data="admin_sync"
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_admin_system_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.main_menu.admin.export", "Экспорт БД"), callback_data="admin_export"
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.reload_instructions", "🔄 Обновить инструкцию"),
+        callback_data="admin_reload_instructions",
+    )
+    builder.button(
+        text=t("keyboards.main_menu.admin.reload_texts", "🔄 Обновить тексты"),
+        callback_data="admin_reload_texts",
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
+    builder.adjust(2, 1, 1)  # First row has 2 buttons, next have 1
+    return builder.as_markup()
+
+
 def get_servers_keyboard(
-    servers: list, action: str = "select", back_target: str = "admin_menu"
+    servers: list, action: str = "select", back_target: str = "admin_infra_menu"
 ) -> InlineKeyboardMarkup:
     """Get servers list keyboard.
 
@@ -68,14 +154,23 @@ def get_servers_keyboard(
     builder = InlineKeyboardBuilder()
 
     for server in servers:
-        status = "Активен" if server.is_active else "Неактивен"
+        status = (
+            t("keyboards.common.status.active", "Активен")
+            if server.is_active
+            else t("keyboards.common.status.inactive", "Неактивен")
+        )
         builder.button(
-            text=f"{status} {server.name}",
+            text=t(
+                "keyboards.servers.server_button",
+                "{status} {name}",
+                status=status,
+                name=server.name,
+            ),
             callback_data=f"server_{action}_{server.id}",
         )
 
-    builder.button(text="Добавить сервер", callback_data="server_add")
-    builder.button(text="Назад", callback_data=back_target)
+    builder.button(text=t("keyboards.servers.add", "Добавить сервер"), callback_data="server_add")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data=back_target)
     builder.adjust(1)
     return builder.as_markup()
 
@@ -96,13 +191,24 @@ def get_servers_keyboard_for_template_edit(
     builder = InlineKeyboardBuilder()
 
     for server in servers:
-        status = "Активен" if server.is_active else "Неактивен"
+        status = (
+            t("keyboards.common.status.active", "Активен")
+            if server.is_active
+            else t("keyboards.common.status.inactive", "Неактивен")
+        )
         builder.button(
-            text=f"{status} {server.name}",
+            text=t(
+                "keyboards.servers.server_button",
+                "{status} {name}",
+                status=status,
+                name=server.name,
+            ),
             callback_data=f"server_{action}_{server.id}",
         )
 
-    builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.button(
+        text=t("keyboards.common.back", "Назад"), callback_data=f"template_select_{template_id}"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -119,15 +225,25 @@ def get_users_keyboard(users: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for user in users:
-        status = "Активен" if user.is_active else "Неактивен"
-        admin_badge = "Админ" if user.is_admin else ""
+        status = (
+            t("keyboards.common.status.active", "Активен")
+            if user.is_active
+            else t("keyboards.common.status.inactive", "Неактивен")
+        )
+        admin_badge = t("keyboards.users.admin_badge", "Админ") if user.is_admin else ""
         builder.button(
-            text=f"{status} {admin_badge} {user.name}",
+            text=t(
+                "keyboards.users.user_button",
+                "{status} {admin_badge} {name}",
+                status=status,
+                admin_badge=admin_badge,
+                name=user.name,
+            ),
             callback_data=f"user_select_{user.id}",
         )
 
-    builder.button(text="Добавить пользователя", callback_data="user_add")
-    builder.button(text="Назад", callback_data="admin_menu")
+    builder.button(text=t("keyboards.users.add", "Добавить пользователя"), callback_data="user_add")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -144,13 +260,23 @@ def get_inbounds_keyboard(inbounds: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for inbound in inbounds:
-        status = "Активен" if inbound.is_active else "Неактивен"
+        status = (
+            t("keyboards.common.status.active", "Активен")
+            if inbound.is_active
+            else t("keyboards.common.status.inactive", "Неактивен")
+        )
         builder.button(
-            text=f"{status} {inbound.remark} ({inbound.protocol})",
+            text=t(
+                "keyboards.inbounds.inbound_button",
+                "{status} {remark} ({protocol})",
+                status=status,
+                remark=inbound.remark,
+                protocol=inbound.protocol,
+            ),
             callback_data=f"inbound_select_{inbound.id}",
         )
 
-    builder.button(text="Назад", callback_data="admin_menu")
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_infra_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -169,8 +295,10 @@ def get_confirm_keyboard(
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="Подтвердить", callback_data=f"confirm_{confirm_action}")
-    builder.button(text="Отмена", callback_data=cancel_action)
+    builder.button(
+        text=t("keyboards.common.confirm", "Подтвердить"), callback_data=f"confirm_{confirm_action}"
+    )
+    builder.button(text=t("keyboards.common.cancel", "Отмена"), callback_data=cancel_action)
     builder.adjust(2)
     return builder.as_markup()
 
@@ -185,11 +313,21 @@ def get_user_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="Переименовать", callback_data=f"user_rename_{user_id}")
-    builder.button(text="Включить", callback_data=f"user_enable_{user_id}")
-    builder.button(text="Отключить", callback_data=f"user_disable_{user_id}")
-    builder.button(text="Удалить", callback_data=f"user_delete_{user_id}")
-    builder.button(text="Назад", callback_data="admin_users")
+    builder.button(
+        text=t("keyboards.user_actions.rename", "Переименовать"),
+        callback_data=f"user_rename_{user_id}",
+    )
+    builder.button(
+        text=t("keyboards.user_actions.enable", "Включить"), callback_data=f"user_enable_{user_id}"
+    )
+    builder.button(
+        text=t("keyboards.user_actions.disable", "Отключить"),
+        callback_data=f"user_disable_{user_id}",
+    )
+    builder.button(
+        text=t("keyboards.user_actions.delete", "Удалить"), callback_data=f"user_delete_{user_id}"
+    )
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_users")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -204,7 +342,7 @@ def get_back_keyboard(callback_data: str = "admin_menu") -> InlineKeyboardMarkup
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="Назад", callback_data=callback_data)
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data=callback_data)
     return builder.as_markup()
 
 
@@ -220,16 +358,28 @@ def get_clients_keyboard(clients: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for client in clients:
-        status = "Активен" if client.is_active else "Неактивен"
-        admin_badge = "Админ" if client.is_admin else ""
+        status = (
+            t("keyboards.common.status.active", "Активен")
+            if client.is_active
+            else t("keyboards.common.status.inactive", "Неактивен")
+        )
+        admin_badge = t("keyboards.users.admin_badge", "Админ") if client.is_admin else ""
         builder.button(
-            text=f"{status} {admin_badge} {client.name}",
+            text=t(
+                "keyboards.clients.client_button",
+                "{status} {admin_badge} {name}",
+                status=status,
+                admin_badge=admin_badge,
+                name=client.name,
+            ),
             callback_data=f"client_select_{client.id}",
         )
 
-    builder.button(text="Добавить клиента", callback_data="client_add")
-    builder.button(text="Поиск клиентов", callback_data="client_search")
-    builder.button(text="Назад", callback_data="admin_menu")
+    builder.button(text=t("keyboards.clients.add", "Добавить клиента"), callback_data="client_add")
+    builder.button(
+        text=t("keyboards.clients.search", "Поиск клиентов"), callback_data="client_search"
+    )
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -260,7 +410,14 @@ def get_clients_page_keyboard(
         status = "✅" if client.is_active else "❌"
         admin_badge = "🛡️" if client.is_admin else "👤"
         builder.button(
-            text=f"{admin_badge} {status} {client.name} (ID: {client.id})",
+            text=t(
+                "keyboards.clients.client_page_button",
+                "{admin_badge} {status} {name} (ID: {id})",
+                admin_badge=admin_badge,
+                status=status,
+                name=client.name,
+                id=client.id,
+            ),
             callback_data=f"client_select_{client.id}",
         )
 
@@ -269,28 +426,47 @@ def get_clients_page_keyboard(
         if page > 0:
             pagination_row.append(
                 InlineKeyboardButton(
-                    text=f"⬅️ Назад ({page}/{total_pages})",
+                    text=t(
+                        "keyboards.pagination.prev",
+                        "⬅️ Назад ({page}/{total_pages})",
+                        page=page,
+                        total_pages=total_pages,
+                    ),
                     callback_data=f"clients_page_{page - 1}",
                 )
             )
         pagination_row.append(
             InlineKeyboardButton(
-                text=f"📄 {current_page_display}/{total_pages}",
+                text=t(
+                    "keyboards.pagination.current",
+                    "📄 {current}/{total}",
+                    current=current_page_display,
+                    total=total_pages,
+                ),
                 callback_data="clients_page_current",
             )
         )
         if page < total_pages - 1:
             pagination_row.append(
                 InlineKeyboardButton(
-                    text=f"Вперед ➡️ ({page + 2}/{total_pages})",
+                    text=t(
+                        "keyboards.pagination.next",
+                        "Вперед ➡️ ({next_page}/{total_pages})",
+                        next_page=page + 2,
+                        total_pages=total_pages,
+                    ),
                     callback_data=f"clients_page_{page + 1}",
                 )
             )
         builder.row(*pagination_row)
 
-    builder.button(text="🔍 Поиск клиентов", callback_data="client_search")
-    builder.button(text="➕ Добавить клиента", callback_data="client_add")
-    builder.button(text="🔙 Назад", callback_data="admin_clients")
+    builder.button(
+        text=t("keyboards.clients.search_icon", "🔍 Поиск клиентов"), callback_data="client_search"
+    )
+    builder.button(
+        text=t("keyboards.clients.add_icon", "➕ Добавить клиента"), callback_data="client_add"
+    )
+    builder.button(text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="admin_clients")
 
     rows = [1] * len(clients)
     if total_pages > 1:
@@ -308,12 +484,14 @@ def get_help_main_keyboard() -> InlineKeyboardMarkup:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="iOS / Mac", callback_data="help_os_ios")
-    builder.button(text="Android", callback_data="help_os_android")
-    builder.button(text="Windows", callback_data="help_os_windows")
-    builder.button(text="Linux", callback_data="help_os_linux")
-    builder.button(text="Частые вопросы (FAQ)", callback_data="faq_main")
-    builder.button(text="🔙 Главное меню", callback_data="admin_menu")
+    builder.button(text=t("keyboards.help.os_ios", "iOS / Mac"), callback_data="help_os_ios")
+    builder.button(text=t("keyboards.help.os_android", "Android"), callback_data="help_os_android")
+    builder.button(text=t("keyboards.help.os_windows", "Windows"), callback_data="help_os_windows")
+    builder.button(text=t("keyboards.help.os_linux", "Linux"), callback_data="help_os_linux")
+    builder.button(text=t("keyboards.help.faq", "Частые вопросы (FAQ)"), callback_data="faq_main")
+    builder.button(
+        text=t("keyboards.common.main_menu", "🔙 Главное меню"), callback_data="main_menu"
+    )
     builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
@@ -329,10 +507,16 @@ def get_instruction_menu_keyboard(os_name: str) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     builder.button(
-        text="📖 Пошаговая настройка", callback_data=f"instruction_step_by_step_{os_name}"
+        text=t("keyboards.instruction.step_by_step", "📖 Пошаговая настройка"),
+        callback_data=f"instruction_step_by_step_{os_name}",
     )
-    builder.button(text="📄 Полная инструкция", callback_data=f"instruction_full_{os_name}")
-    builder.button(text="🔙 Назад к выбору ОС", callback_data="help_main")
+    builder.button(
+        text=t("keyboards.instruction.full", "📄 Полная инструкция"),
+        callback_data=f"instruction_full_{os_name}",
+    )
+    builder.button(
+        text=t("keyboards.help.back_to_os", "🔙 Назад к выбору ОС"), callback_data="help_main"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -350,7 +534,7 @@ def get_faq_list_keyboard(faq_list: list[dict]) -> InlineKeyboardMarkup:
     for i, item in enumerate(faq_list):
         builder.button(text=item["question"], callback_data=f"faq_q_{i}")
 
-    builder.button(text="🔙 Назад", callback_data="help_main")
+    builder.button(text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="help_main")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -362,7 +546,9 @@ def get_faq_answer_keyboard() -> InlineKeyboardMarkup:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 К списку вопросов", callback_data="faq_main")
+    builder.button(
+        text=t("keyboards.faq.back_to_list", "🔙 К списку вопросов"), callback_data="faq_main"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -380,16 +566,31 @@ def get_step_navigation_keyboard(current_step: int, total_steps: int) -> InlineK
     builder = InlineKeyboardBuilder()
 
     if current_step > 0:
-        builder.button(text="⬅️ Назад", callback_data="instruction_prev")
+        builder.button(
+            text=t("keyboards.navigation.prev", "⬅️ Назад"), callback_data="instruction_prev"
+        )
     builder.button(
-        text=f"📄 {current_step + 1}/{total_steps}", callback_data="instruction_page_current"
+        text=t(
+            "keyboards.navigation.page",
+            "📄 {current}/{total}",
+            current=current_step + 1,
+            total=total_steps,
+        ),
+        callback_data="instruction_page_current",
     )
     if current_step < total_steps - 1:
-        builder.button(text="Далее ➡️", callback_data="instruction_next")
+        builder.button(
+            text=t("keyboards.navigation.next", "Далее ➡️"), callback_data="instruction_next"
+        )
     else:
-        builder.button(text="✅ Готово", callback_data="instruction_done")
+        builder.button(
+            text=t("keyboards.navigation.done", "✅ Готово"), callback_data="instruction_done"
+        )
 
-    builder.button(text="🔙 К меню инструкции", callback_data="instruction_menu")
+    builder.button(
+        text=t("keyboards.instruction.back_to_menu", "🔙 К меню инструкции"),
+        callback_data="instruction_menu",
+    )
 
     # Layout: navigation row + back button
     nav_buttons = 1  # page indicator always present
@@ -411,12 +612,24 @@ def get_client_search_keyboard() -> InlineKeyboardMarkup:
         Inline keyboard markup with search field options
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="👤 По имени", callback_data="search_field_name")
-    builder.button(text="📧 По email", callback_data="search_field_email")
-    builder.button(text="📱 По Telegram", callback_data="search_field_telegram")
-    builder.button(text="🔗 По XUI email", callback_data="search_field_xui_email")
-    builder.button(text="🔍 Комплексный поиск", callback_data="search_field_all")
-    builder.button(text="Назад", callback_data="admin_clients")
+    builder.button(
+        text=t("keyboards.search.by_name", "👤 По имени"), callback_data="search_field_name"
+    )
+    builder.button(
+        text=t("keyboards.search.by_email", "📧 По email"), callback_data="search_field_email"
+    )
+    builder.button(
+        text=t("keyboards.search.by_telegram", "📱 По Telegram"),
+        callback_data="search_field_telegram",
+    )
+    builder.button(
+        text=t("keyboards.search.by_xui_email", "🔗 По XUI email"),
+        callback_data="search_field_xui_email",
+    )
+    builder.button(
+        text=t("keyboards.search.complex", "🔍 Комплексный поиск"), callback_data="search_field_all"
+    )
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -428,9 +641,14 @@ def get_registration_keyboard() -> InlineKeyboardMarkup:
         Inline keyboard markup with registration options
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Ввести имя", callback_data="reg_enter_name")
-    builder.button(text="📱 Использовать Telegram", callback_data="reg_use_telegram")
-    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.button(
+        text=t("keyboards.registration.enter_name", "✏️ Ввести имя"), callback_data="reg_enter_name"
+    )
+    builder.button(
+        text=t("keyboards.registration.use_telegram", "📱 Использовать Telegram"),
+        callback_data="reg_use_telegram",
+    )
+    builder.button(text=t("keyboards.common.cancel_icon", "❌ Отмена"), callback_data="cancel")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -447,14 +665,25 @@ def get_templates_keyboard(templates: list) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
     for template in templates:
-        status = "Активен" if template.is_active else "Неактивен"
+        status = (
+            t("keyboards.common.status.active", "Активен")
+            if template.is_active
+            else t("keyboards.common.status.inactive", "Неактивен")
+        )
         builder.button(
-            text=f"{status} {template.name}",
+            text=t(
+                "keyboards.templates.template_button",
+                "{status} {name}",
+                status=status,
+                name=template.name,
+            ),
             callback_data=f"template_select_{template.id}",
         )
 
-    builder.button(text="➕ Создать шаблон", callback_data="template_add")
-    builder.button(text="Назад", callback_data="admin_menu")
+    builder.button(
+        text=t("keyboards.templates.add", "➕ Создать шаблон"), callback_data="template_add"
+    )
+    builder.button(text=t("keyboards.common.back", "Назад"), callback_data="admin_clients_menu")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -472,20 +701,31 @@ def get_template_actions_keyboard(
         Inline keyboard markup with buttons: Edit, Edit Inbounds, Toggle Public, Delete, Back
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="✏️ Изменить", callback_data=f"template_edit_menu_{template_id}")
     builder.button(
-        text="✏️ Редактировать подключения", callback_data=f"template_manage_inbounds_{template_id}"
+        text=t("keyboards.template_actions.edit", "✏️ Изменить"),
+        callback_data=f"template_edit_menu_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.template_actions.edit_inbounds", "✏️ Редактировать подключения"),
+        callback_data=f"template_manage_inbounds_{template_id}",
     )
     if is_public:
         builder.button(
-            text="🔒 Скрыть из доступа", callback_data=f"admin_tpl_toggle_public_{template_id}"
+            text=t("keyboards.template_actions.hide_public", "🔒 Скрыть из доступа"),
+            callback_data=f"admin_tpl_toggle_public_{template_id}",
         )
     else:
         builder.button(
-            text="👁 Сделать публичным", callback_data=f"admin_tpl_toggle_public_{template_id}"
+            text=t("keyboards.template_actions.make_public", "👁 Сделать публичным"),
+            callback_data=f"admin_tpl_toggle_public_{template_id}",
         )
-    builder.button(text="❌ Удалить", callback_data=f"template_delete_{template_id}")
-    builder.button(text="🔙 Назад", callback_data="admin_templates")
+    builder.button(
+        text=t("keyboards.template_actions.delete", "❌ Удалить"),
+        callback_data=f"template_delete_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="admin_templates"
+    )
     builder.adjust(2, 1, 2)
     return builder.as_markup()
 
@@ -500,12 +740,30 @@ def get_template_edit_menu_keyboard(template_id: int) -> InlineKeyboardMarkup:
         Inline keyboard markup with edit field options
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="📝 Название", callback_data=f"template_edit_name_{template_id}")
-    builder.button(text="📝 Описание", callback_data=f"template_edit_description_{template_id}")
-    builder.button(text="📊 Трафик", callback_data=f"template_edit_traffic_{template_id}")
-    builder.button(text="📅 Срок действия", callback_data=f"template_edit_expiry_{template_id}")
-    builder.button(text="📌 Заметки", callback_data=f"template_edit_notes_{template_id}")
-    builder.button(text="🔙 Назад", callback_data=f"template_select_{template_id}")
+    builder.button(
+        text=t("keyboards.template_edit.name", "📝 Название"),
+        callback_data=f"template_edit_name_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.template_edit.description", "📝 Описание"),
+        callback_data=f"template_edit_description_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.template_edit.traffic", "📊 Трафик"),
+        callback_data=f"template_edit_traffic_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.template_edit.expiry", "📅 Срок действия"),
+        callback_data=f"template_edit_expiry_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.template_edit.notes", "📌 Заметки"),
+        callback_data=f"template_edit_notes_{template_id}",
+    )
+    builder.button(
+        text=t("keyboards.common.back_icon", "🔙 Назад"),
+        callback_data=f"template_select_{template_id}",
+    )
     builder.adjust(2)
     return builder.as_markup()
 
@@ -530,17 +788,29 @@ def get_template_inbounds_keyboard(
         for ti in template_inbounds:
             status = "✅" if ti.inbound.is_active else "❌"
             builder.button(
-                text=f"{status} {ti.inbound.remark} ({ti.inbound.server.name})",
+                text=t(
+                    "keyboards.template_inbounds.inbound_item",
+                    "{status} {remark} ({server_name})",
+                    status=status,
+                    remark=ti.inbound.remark,
+                    server_name=ti.inbound.server.name,
+                ),
                 callback_data=f"template_inbound_remove_{template_id}_{ti.inbound_id}",
             )
     else:
-        builder.button(text="Нет подключений", callback_data="template_no_inbounds")
+        builder.button(
+            text=t("keyboards.template_inbounds.no_inbounds", "Нет подключений"),
+            callback_data="template_no_inbounds",
+        )
 
     # Action buttons
     builder.button(
-        text="✏️ Редактировать подключения", callback_data=f"template_edit_inbounds_{template_id}"
+        text=t("keyboards.template_inbounds.edit", "✏️ Редактировать подключения"),
+        callback_data=f"template_edit_inbounds_{template_id}",
     )
-    builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.button(
+        text=t("keyboards.common.back", "Назад"), callback_data=f"template_select_{template_id}"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -570,18 +840,29 @@ def get_template_edit_inbounds_keyboard(
         in_template_status = "✅" if inbound.id in template_inbound_ids else "❌"
         selected = "🔘" if inbound.id in selected_ids else "⭕"
         builder.button(
-            text=f"{selected} {inbound.remark} {in_template_status}",
+            text=t(
+                "keyboards.template_edit_inbounds.item",
+                "{selected} {remark} {status}",
+                selected=selected,
+                remark=inbound.remark,
+                status=in_template_status,
+            ),
             callback_data=f"template_inbound_edit_toggle_{template_id}_{inbound.id}",
         )
 
     builder.adjust(1)
     builder.button(
-        text="➕ Подключить выбранные", callback_data=f"template_bulk_add_selected_{template_id}"
+        text=t("keyboards.template_edit_inbounds.add_selected", "➕ Подключить выбранные"),
+        callback_data=f"template_bulk_add_selected_{template_id}",
     )
     builder.button(
-        text="❌ Отключить выбранные", callback_data=f"template_bulk_remove_selected_{template_id}"
+        text=t("keyboards.template_edit_inbounds.remove_selected", "❌ Отключить выбранные"),
+        callback_data=f"template_bulk_remove_selected_{template_id}",
     )
-    builder.button(text="🔙 Отмена", callback_data=f"template_bulk_cancel_{template_id}")
+    builder.button(
+        text=t("keyboards.template_edit_inbounds.cancel", "🔙 Отмена"),
+        callback_data=f"template_bulk_cancel_{template_id}",
+    )
     builder.adjust(1)
 
     return builder.as_markup()
@@ -610,12 +891,23 @@ def get_inbound_selection_for_template(template_id: int, inbounds: list) -> Inli
         for inbound in server_inbounds:
             status = "✅" if inbound.is_active else "❌"
             builder.button(
-                text=f"📦 {status} {inbound.remark} ({server_name})",
+                text=t(
+                    "keyboards.template_inbound_select.item",
+                    "📦 {status} {remark} ({server_name})",
+                    status=status,
+                    remark=inbound.remark,
+                    server_name=server_name,
+                ),
                 callback_data=f"template_toggle_inbound_{template_id}_{inbound.id}",
             )
 
-    builder.button(text="➡️ Добавить выбранные", callback_data="template_confirm_add_inbounds")
-    builder.button(text="Назад", callback_data=f"template_select_{template_id}")
+    builder.button(
+        text=t("keyboards.template_inbound_select.add_selected", "➡️ Добавить выбранные"),
+        callback_data="template_confirm_add_inbounds",
+    )
+    builder.button(
+        text=t("keyboards.common.back", "Назад"), callback_data=f"template_select_{template_id}"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -639,13 +931,25 @@ def get_template_multi_select_keyboard(
         selected = "✅" if ti.inbound_id in selected_ids else "⭕"
         status = "🟢" if ti.inbound.is_active else "🔴"
         builder.button(
-            text=f"{selected} {status} {ti.inbound.remark} ({ti.inbound.server.name})",
+            text=t(
+                "keyboards.template_multi_select.item",
+                "{selected} {status} {remark} ({server_name})",
+                selected=selected,
+                status=status,
+                remark=ti.inbound.remark,
+                server_name=ti.inbound.server.name,
+            ),
             callback_data=f"template_multi_select_{template_id}_{ti.inbound_id}",
         )
 
     builder.adjust(1)
-    builder.button(text="🗑️ Удалить выбранные", callback_data="template_multi_delete_inbounds")
-    builder.button(text="🔙 Выход", callback_data=f"template_select_{template_id}")
+    builder.button(
+        text=t("keyboards.template_multi_select.delete", "🗑️ Удалить выбранные"),
+        callback_data="template_multi_delete_inbounds",
+    )
+    builder.button(
+        text=t("keyboards.common.exit", "🔙 Выход"), callback_data=f"template_select_{template_id}"
+    )
     builder.adjust(1)
 
     return builder.as_markup()
@@ -654,8 +958,13 @@ def get_template_multi_select_keyboard(
 def get_template_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
     """Get confirmation keyboard for template multi-select action."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Подтвердить", callback_data="template_multi_confirm")
-    builder.button(text="❌ Отмена", callback_data="template_multi_cancel")
+    builder.button(
+        text=t("keyboards.common.confirm_icon", "✅ Подтвердить"),
+        callback_data="template_multi_confirm",
+    )
+    builder.button(
+        text=t("keyboards.common.cancel_icon", "❌ Отмена"), callback_data="template_multi_cancel"
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -676,28 +985,84 @@ def get_subscription_details_keyboard(
     """
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="📢 Inbounds", callback_data=f"admin_sub_inbounds_{subscription_id}")
-    builder.button(text="✏️ Редактировать", callback_data=f"admin_sub_edit_{subscription_id}")
+    builder.button(
+        text=t("keyboards.subscription.inbounds", "📢 Inbounds"),
+        callback_data=f"admin_sub_inbounds_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.subscription.edit", "✏️ Редактировать"),
+        callback_data=f"admin_sub_edit_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.subscription.rebuild", "🔄 Переиспользовать токен"),
+        callback_data=f"admin_sub_rebuild_{subscription_id}",
+    )
 
-    builder.button(text="🔄 Сбросить подписку", callback_data=f"sub_reset:{subscription_id}")
-    builder.button(text="⏳ Добавить время", callback_data=f"sub_add_time:{subscription_id}")
+    builder.button(
+        text=t("keyboards.subscription.reset", "🔄 Сбросить подписку"),
+        callback_data=f"sub_reset:{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.subscription.add_time", "⏳ Добавить время"),
+        callback_data=f"sub_add_time:{subscription_id}",
+    )
 
     if not is_template:
         builder.button(
-            text="⚙️ Изменить лимит трафика", callback_data=f"sub_edit_traffic:{subscription_id}"
+            text=t("keyboards.subscription.edit_traffic", "⚙️ Изменить лимит трафика"),
+            callback_data=f"sub_edit_traffic:{subscription_id}",
         )
         builder.button(
-            text="📅 Изменить дату окончания", callback_data=f"sub_edit_expiry:{subscription_id}"
+            text=t("keyboards.subscription.edit_expiry", "📅 Изменить дату окончания"),
+            callback_data=f"sub_edit_expiry:{subscription_id}",
         )
 
     if is_active:
-        builder.button(text="❌ Отключить", callback_data=f"admin_sub_disable_{subscription_id}")
+        builder.button(
+            text=t("keyboards.subscription.disable", "❌ Отключить"),
+            callback_data=f"admin_sub_disable_{subscription_id}",
+        )
     else:
-        builder.button(text="✅ Включить", callback_data=f"admin_sub_enable_{subscription_id}")
+        builder.button(
+            text=t("keyboards.subscription.enable", "✅ Включить"),
+            callback_data=f"admin_sub_enable_{subscription_id}",
+        )
 
-    builder.button(text="🗑️ Удалить", callback_data=f"admin_sub_delete_{subscription_id}")
-    builder.button(text="🔙 Назад к клиенту", callback_data=f"client_subscriptions_{client_id}")
+    builder.button(
+        text=t("keyboards.subscription.delete", "🗑️ Удалить"),
+        callback_data=f"admin_sub_delete_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.subscription.back_to_client", "🔙 Назад к клиенту"),
+        callback_data=f"client_subscriptions_{client_id}",
+    )
 
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_subscription_rebuild_mode_keyboard(subscription_id: int) -> InlineKeyboardMarkup:
+    """Get keyboard for selecting rebuild mode.
+
+    Args:
+        subscription_id: Subscription ID
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.rebuild.template", "📋 Применить шаблон"),
+        callback_data=f"rebuild_mode_template_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.rebuild.manual", "⚙️ Настроить вручную"),
+        callback_data=f"rebuild_mode_manual_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.common.back", "🔙 Назад"),
+        callback_data=f"admin_sub_detail_{subscription_id}",
+    )
     builder.adjust(1)
     return builder.as_markup()
 
@@ -715,11 +1080,11 @@ def get_public_templates_keyboard(templates: list) -> InlineKeyboardMarkup:
 
     for template in templates:
         builder.button(
-            text=f"📦 {template.name}",
+            text=t("keyboards.public_templates.item", "📦 {name}", name=template.name),
             callback_data=f"user_req_tpl_{template.id}",
         )
 
-    builder.button(text="🔙 Назад", callback_data="back")
+    builder.button(text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="back")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -731,7 +1096,7 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data="cancel")
+    builder.button(text=t("keyboards.common.cancel_icon", "❌ Отмена"), callback_data="cancel")
     return builder.as_markup()
 
 
@@ -745,7 +1110,13 @@ def get_request_admin_keyboard(request_id: int) -> InlineKeyboardMarkup:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Одобрить", callback_data=f"admin_req_approve_{request_id}")
-    builder.button(text="❌ Отклонить", callback_data=f"admin_req_reject_{request_id}")
+    builder.button(
+        text=t("keyboards.request_admin.approve", "✅ Одобрить"),
+        callback_data=f"admin_req_approve_{request_id}",
+    )
+    builder.button(
+        text=t("keyboards.request_admin.reject", "❌ Отклонить"),
+        callback_data=f"admin_req_reject_{request_id}",
+    )
     builder.adjust(2)
     return builder.as_markup()

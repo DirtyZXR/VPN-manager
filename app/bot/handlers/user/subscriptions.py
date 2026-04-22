@@ -17,6 +17,7 @@ from app.services.subscription_request_service import SubscriptionRequestService
 from app.services.subscription_template_service import SubscriptionTemplateService
 from app.services.notification_service import NotificationService
 from app.bot.states.user import UserRequestSubscription
+from app.utils.texts import t
 
 router = Router()
 
@@ -25,7 +26,9 @@ router = Router()
 async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
     """Show user's subscriptions."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     async with async_session_factory() as session:
@@ -40,13 +43,16 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
 
     if not subscriptions:
         await callback.message.edit_text(
-            "📝 У вас пока нет подписок.\n\nСвяжитесь с администратором для создания подписки.",
-            reply_markup=get_back_keyboard("admin_menu"),
+            t(
+                "user.subs.empty",
+                "📝 У вас пока нет подписок.\n\nСвяжитесь с администратором для создания подписки.",
+            ),
+            reply_markup=get_back_keyboard("main_menu"),
         )
         await callback.answer()
         return
 
-    text = f"📝 Ваши подписки ({len(subscriptions)}):\n\n"
+    text = t("user.subs.list_header", "📝 Ваши подписки ({count}):\n\n", count=len(subscriptions))
 
     builder = InlineKeyboardBuilder()
 
@@ -54,17 +60,29 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         # Use new subscription status property
         status = sub.subscription_status
 
-        text += (
-            f"{status} <b>{sub.name}</b>\n"
-            f"   Активных подключений: {sub.active_connections_count}/{len(sub.inbound_connections)}\n\n"
+        text += t(
+            "user.subs.list_item",
+            "{status} <b>{name}</b>\n   Активных подключений: {active}/{total}\n\n",
+            status=status,
+            name=sub.name,
+            active=sub.active_connections_count,
+            total=len(sub.inbound_connections),
         )
 
         # Add button for each subscription
-        builder.button(text=f"📝 {sub.name}", callback_data=f"user_sub_select_{sub.id}")
+        builder.button(
+            text=t("user.subs.btn_sub", "📝 {name}", name=sub.name),
+            callback_data=f"user_sub_select_{sub.id}",
+        )
 
-    builder.button(text="🔗 Subscription URLs", callback_data="all_sub_urls")
-    builder.button(text="📊 Сроки и остатки", callback_data="show_subscription_status")
-    builder.button(text="🔙 Назад", callback_data="admin_menu")
+    builder.button(
+        text=t("user.subs.btn_urls", "🔗 Subscription URLs"), callback_data="all_sub_urls"
+    )
+    builder.button(
+        text=t("user.subs.btn_status", "📊 Сроки и остатки"),
+        callback_data="show_subscription_status",
+    )
+    builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="main_menu")
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -75,7 +93,9 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
 async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
     """Show all subscription URLs for user."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     async with async_session_factory() as session:
@@ -83,7 +103,9 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
         urls = await service.get_subscription_urls(client.id)
 
     if not urls:
-        await callback.answer("❌ Нет активных подписок.", show_alert=True)
+        await callback.answer(
+            t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
+        )
         return
 
     # Group URLs by subscription ID (unique subscription = subscription_id)
@@ -93,13 +115,13 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
         grouped_subs[sub_id].append(url_info)
 
     max_length = 4096
-    text = "🔗 Subscription URLs:\n\n"
+    text = t("user.subs.urls_header", "🔗 Subscription URLs:\n\n")
 
     # Show subscription info with URLs
     for _sub_id, url_list in grouped_subs.items():
         sub_name = url_list[0]["subscription_name"]
 
-        section = f"<b>Подписка: {sub_name}</b>\n"
+        section = t("user.subs.url_group", "<b>Подписка: {name}</b>\n", name=sub_name)
 
         # Group by URL (different inbounds on same server have same URL)
         # Show unique URLs
@@ -118,15 +140,20 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
 
         # Check if adding this section would exceed limit
         if len(text) + len(section) > max_length:
-            section = "\n... (остальные подписки скрыты из-за ограничений Telegram)"
+            section = t(
+                "user.subs.urls_hidden",
+                "\n... (остальные подписки скрыты из-за ограничений Telegram)",
+            )
             text += section
             break
 
         text += section
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="📋 Скопировать все URL", callback_data="copy_all_urls")
-    builder.button(text="🔙 Назад", callback_data="my_subscriptions")
+    builder.button(
+        text=t("user.subs.btn_copy_urls", "📋 Скопировать все URL"), callback_data="copy_all_urls"
+    )
+    builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="my_subscriptions")
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -137,7 +164,9 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
 async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
     """Copy all JSON subscription URLs to clipboard-friendly format."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     async with async_session_factory() as session:
@@ -145,7 +174,9 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
         urls = await service.get_subscription_json_urls(client.id)
 
     if not urls:
-        await callback.answer("❌ Нет активных подписок.", show_alert=True)
+        await callback.answer(
+            t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
+        )
         return
 
     # Group URLs by subscription ID (unique subscription = subscription_id)
@@ -183,7 +214,9 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
 async def show_user_subscription_details(callback: CallbackQuery, client) -> None:
     """Show subscription details for user."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     subscription_id = int(callback.data.split("_")[-1])
@@ -193,18 +226,21 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         subscription = await service.get_subscription(subscription_id)
 
     if not subscription or subscription.client_id != client.id:
-        await callback.answer("❌ Подписка не найдена.", show_alert=True)
+        await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
         return
 
     # Use new subscription status property
     status = subscription.subscription_status
 
-    text = (
-        f"📝 Подписка: <b>{subscription.name}</b>\n\n"
-        f"Статус: {status}\n"
-        f"Создана: {subscription.created_at.strftime('%d.%m.%Y %H:%M')}\n"
-        f"Активных подключений: {subscription.active_connections_count}/{len(subscription.inbound_connections)}\n"
-        f"Токен: <code>{subscription.subscription_token}</code>\n\n"
+    text = t(
+        "user.subs.details_header",
+        "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}\nТокен: <code>{token}</code>\n\n",
+        name=subscription.name,
+        status=status,
+        created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
+        active=subscription.active_connections_count,
+        total=len(subscription.inbound_connections),
+        token=subscription.subscription_token,
     )
 
     # Group URLs by server to avoid duplicates
@@ -228,10 +264,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
             )
 
     if server_urls:
-        text += "📢 Активные подключения:\n\n"
+        text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
         for url, conn_list in server_urls.items():
             # Show URL once per group
-            text += f"  • URL: {url}\n"
+            text += t("user.subs.conn_url", "  • URL: {url}\n", url=url)
 
             # Show per-inbound traffic and expiry
             for i, conn_data in enumerate(conn_list):
@@ -239,7 +275,11 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 inbound = conn_data["inbound"]
 
                 # Per-inbound traffic
-                traffic = "Безлимит" if conn.is_unlimited else f"{conn.total_gb} GB"
+                traffic = (
+                    t("user.subs.unlimited", "Безлимит")
+                    if conn.is_unlimited
+                    else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+                )
 
                 # Per-inbound expiry
                 from app.utils.date_utils import format_expiry_date
@@ -253,16 +293,24 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 # Add connection status indicator with server name
                 conn_status = "✅" if conn.is_connection_active else "❌"
                 server_name = conn_data.get("server_name", "Unknown")
-                text += (
-                    f"    └ {conn_status} {inbound.remark} ({inbound.protocol}) | {server_name}\n"
+                text += t(
+                    "user.subs.conn_info",
+                    "    └ {status} {remark} ({protocol}) | {server}\n",
+                    status=conn_status,
+                    remark=inbound.remark,
+                    protocol=inbound.protocol,
+                    server=server_name,
                 )
-                text += f"      Трафик: {traffic}\n"
-                text += f"      Срок: {expiry_info}\n"
+                text += t("user.subs.conn_traffic", "      Трафик: {traffic}\n", traffic=traffic)
+                text += t("user.subs.conn_expiry", "      Срок: {expiry}\n", expiry=expiry_info)
 
             text += "\n"
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 Назад к подпискам", callback_data="my_subscriptions")
+    builder.button(
+        text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+        callback_data="my_subscriptions",
+    )
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -273,7 +321,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 async def export_database(callback: CallbackQuery, client) -> None:
     """Export database to file and send to user (admin only)."""
     if not client or not client.is_admin:
-        await callback.answer("❌ Эта функция доступна только администраторам.", show_alert=True)
+        await callback.answer(
+            t("user.errors.admin_only", "❌ Эта функция доступна только администраторам."),
+            show_alert=True,
+        )
         return
 
     try:
@@ -290,14 +341,20 @@ async def export_database(callback: CallbackQuery, client) -> None:
 
         # Check if database file exists
         if not db_path.exists():
-            await callback.answer("❌ Файл базы данных не найден.", show_alert=True)
+            await callback.answer(
+                t("admin.export.file_not_found", "❌ Файл базы данных не найден."), show_alert=True
+            )
             return
 
         # Check file size (max 1.5 GB)
         file_size = db_path.stat().st_size
         if file_size > 1.5 * 1024 * 1024 * 1024:
             await callback.answer(
-                f"❌ Файл базы данных слишком большой ({file_size / (1024 * 1024):.1f} MB). Максимум: 1.5 GB",
+                t(
+                    "admin.export.file_too_large",
+                    "❌ Файл базы данных слишком большой ({size:.1f} MB). Максимум: 1.5 GB",
+                    size=file_size / (1024 * 1024),
+                ),
                 show_alert=True,
             )
             return
@@ -310,7 +367,7 @@ async def export_database(callback: CallbackQuery, client) -> None:
 
         try:
             # Show preparation message
-            await callback.answer("⏳ Подготовка файла базы данных...")
+            await callback.answer(t("admin.export.preparing", "⏳ Подготовка файла базы данных..."))
 
             # Copy database file to avoid locking issues
             shutil.copy2(db_path, temp_db_path)
@@ -326,12 +383,15 @@ async def export_database(callback: CallbackQuery, client) -> None:
             document = FSInputFile(path=temp_db_path, filename=f"vpn_manager_{timestamp}.db")
             await callback.message.answer_document(
                 document=document,
-                caption=f"📄 Экспорт базы данных VPN Manager\n"
-                f"Размер: {file_size / (1024 * 1024):.2f} MB\n"
-                f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                caption=t(
+                    "admin.export.caption",
+                    "📄 Экспорт базы данных VPN Manager\nРазмер: {size:.2f} MB\nДата: {date}",
+                    size=file_size / (1024 * 1024),
+                    date=datetime.now().strftime("%d.%m.%Y %H:%M"),
+                ),
             )
 
-            await callback.answer("✅ База данных отправлена!")
+            await callback.answer(t("admin.export.success", "✅ База данных отправлена!"))
             logger.info(f"Database exported by admin {client.id}: {db_path}")
 
         finally:
@@ -345,14 +405,18 @@ async def export_database(callback: CallbackQuery, client) -> None:
 
     except Exception as e:
         logger.error(f"Error exporting database for admin {client.id}: {e}", exc_info=True)
-        await callback.answer("❌ Ошибка при экспорте базы данных.", show_alert=True)
+        await callback.answer(
+            t("admin.export.error", "❌ Ошибка при экспорте базы данных."), show_alert=True
+        )
 
 
 @router.callback_query(F.data == "show_subscription_status")
 async def show_subscription_status(callback: CallbackQuery, client) -> None:
     """Show subscription status including expiry and traffic information."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     async with async_session_factory() as session:
@@ -362,10 +426,12 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
         subscriptions = await service.get_client_subscriptions(client.id)
 
     if not subscriptions:
-        await callback.answer("❌ Нет активных подписок.", show_alert=True)
+        await callback.answer(
+            t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
+        )
         return
 
-    text = "📊 <b>Сроки и остатки подписок</b>\n\n"
+    text = t("user.status.header", "📊 <b>Сроки и остатки подписок</b>\n\n")
 
     # Get XUI service for traffic data
     from app.services import XUIService
@@ -378,8 +444,8 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
         enabled_connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
 
         if not enabled_connections:
-            text += f"❌ <b>{sub.name}</b>\n"
-            text += "   Нет активных подключений\n\n"
+            text += t("user.status.sub_header_empty", "❌ <b>{name}</b>\n", name=sub.name)
+            text += t("user.status.no_connections", "   Нет активных подключений\n\n")
             continue
 
         # Subscription-level expiry (from subscription or from connections)
@@ -387,12 +453,17 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
         expiry_text = format_expiry_date(sub.expiry_date, include_time=True)
 
-        text += f"📦 <b>{sub.name}</b>\n"
-        text += f"   📅 Срок: {expiry_text}\n"
-        text += f"   🔌 Активных подключений: {sub.active_connections_count}/{len(enabled_connections)}\n\n"
+        text += t("user.status.sub_header", "📦 <b>{name}</b>\n", name=sub.name)
+        text += t("user.status.sub_expiry", "   📅 Срок: {expiry}\n", expiry=expiry_text)
+        text += t(
+            "user.status.sub_connections",
+            "   🔌 Активных подключений: {active}/{total}\n\n",
+            active=sub.active_connections_count,
+            total=len(enabled_connections),
+        )
 
         # Show per-connection details
-        text += "   <b>Подключения:</b>\n"
+        text += t("user.status.connections_header", "   <b>Подключения:</b>\n")
 
         for conn in enabled_connections:
             inbound = conn.inbound
@@ -403,9 +474,9 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
             # Connection traffic
             if conn.is_unlimited:
-                traffic_text = "Безлимит"
+                traffic_text = t("user.subs.unlimited", "Безлимит")
             else:
-                traffic_text = f"{conn.total_gb} ГБ"
+                traffic_text = t("user.status.traffic_gb", "{gb} ГБ", gb=conn.total_gb)
 
                 # Get actual traffic from XUI
                 try:
@@ -425,24 +496,43 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                                 remaining_gb = conn.total_gb - used_gb
 
                                 if remaining_gb <= 5:
-                                    traffic_text += f" (⚠️ осталось {remaining_gb:.2f} ГБ)"
+                                    traffic_text += t(
+                                        "user.status.traffic_low",
+                                        " (⚠️ осталось {gb:.2f} ГБ)",
+                                        gb=remaining_gb,
+                                    )
                                 else:
-                                    traffic_text += f" (осталось {remaining_gb:.2f} ГБ)"
+                                    traffic_text += t(
+                                        "user.status.traffic_remaining",
+                                        " (осталось {gb:.2f} ГБ)",
+                                        gb=remaining_gb,
+                                    )
                                 break
                 except Exception as e:
                     logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
-                    traffic_text += " (ошибка получения данных)"
+                    traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
 
             # Add connection status indicator
             conn_status = "✅" if conn.is_connection_active else "❌"
-            text += f"      {conn_status} {inbound.remark} ({server.name})\n"
-            text += f"        📅 Срок: {conn_expiry}\n"
-            text += f"        📊 Трафик: {traffic_text}\n"
+            text += t(
+                "user.status.conn_info",
+                "      {status} {remark} ({server})\n",
+                status=conn_status,
+                remark=inbound.remark,
+                server=server.name,
+            )
+            text += t("user.status.conn_expiry", "        📅 Срок: {expiry}\n", expiry=conn_expiry)
+            text += t(
+                "user.status.conn_traffic", "        📊 Трафик: {traffic}\n", traffic=traffic_text
+            )
 
         text += "\n"
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 Назад к подпискам", callback_data="my_subscriptions")
+    builder.button(
+        text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+        callback_data="my_subscriptions",
+    )
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
@@ -460,27 +550,35 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 async def start_subscription_request(callback: CallbackQuery, client) -> None:
     """Start subscription request process for user."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     async with async_session_factory() as session:
         req_service = SubscriptionRequestService(session)
         pending_count = await req_service.get_pending_requests_count(client.id)
         if pending_count >= 5:
-            await callback.answer("У вас слишком много ожидающих заявок.", show_alert=True)
+            await callback.answer(
+                t("user.req.too_many", "У вас слишком много ожидающих заявок."), show_alert=True
+            )
             return
 
         tpl_service = SubscriptionTemplateService(session)
         public_templates = await tpl_service.get_public_templates()
 
     if not public_templates:
-        await callback.answer("В данный момент запросы недоступны.", show_alert=True)
+        await callback.answer(
+            t("user.req.unavailable", "В данный момент запросы недоступны."), show_alert=True
+        )
         return
 
-    text = "Выберите шаблон для новой подписки:\n\n"
+    text = t("user.req.choose_template", "Выберите шаблон для новой подписки:\n\n")
     for tpl in public_templates:
-        desc = tpl.description or "Нет описания"
-        text += f"📦 <b>{tpl.name}</b>\n   {desc}\n\n"
+        desc = tpl.description or t("user.req.no_description", "Нет описания")
+        text += t(
+            "user.req.template_item", "📦 <b>{name}</b>\n   {desc}\n\n", name=tpl.name, desc=desc
+        )
 
     keyboard = get_public_templates_keyboard(public_templates)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
@@ -491,7 +589,9 @@ async def start_subscription_request(callback: CallbackQuery, client) -> None:
 async def handle_template_selection(callback: CallbackQuery, state: FSMContext, client) -> None:
     """Handle template selection for subscription request."""
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
         return
 
     template_id = int(callback.data.split("_")[-1])
@@ -499,7 +599,10 @@ async def handle_template_selection(callback: CallbackQuery, state: FSMContext, 
     await state.set_state(UserRequestSubscription.waiting_for_name)
 
     await callback.message.answer(
-        "Введите понятное название для вашей подписки (например: Мой Телефон):",
+        t(
+            "user.req.enter_name",
+            "Введите понятное название для вашей подписки (например: Мой Телефон):",
+        ),
         reply_markup=get_cancel_keyboard(),
     )
     await callback.answer()
@@ -516,7 +619,7 @@ async def process_subscription_request_name(message: Message, state: FSMContext,
 
     requested_name = message.text.strip()
     if not requested_name:
-        await message.answer("Пожалуйста, введите корректное название.")
+        await message.answer(t("user.req.invalid_name", "Пожалуйста, введите корректное название."))
         return
 
     data = await state.get_data()
@@ -539,6 +642,9 @@ async def process_subscription_request_name(message: Message, state: FSMContext,
         await notification_service.notify_admins_new_request(request, template.name)
 
     await message.answer(
-        "✅ Ваш запрос отправлен администратору. В ближайшее время вы получите ответ"
+        t(
+            "user.req.success",
+            "✅ Ваш запрос отправлен администратору. В ближайшее время вы получите ответ",
+        )
     )
     await state.clear()

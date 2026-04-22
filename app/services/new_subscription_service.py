@@ -129,18 +129,137 @@ class NewSubscriptionService:
         # Return subscription and an empty list for connections, as they are created later
         return reloaded_subscription, []
 
+    async def rebuild_subscription(
+        self,
+        subscription_id: int,
+        new_name: str,
+        new_total_gb: int,
+        new_expiry_days: int | None,
+        new_inbound_ids: list[int],
+        template_id: int | None = None,
+        notes: str | None = None,
+    ) -> tuple[Subscription, list[InboundConnection]]:
+        """Rebuild subscription with new configuration while keeping token/UUID.
+
+        Args:
+            subscription_id: ID of the existing subscription
+            new_name: New subscription name
+            new_total_gb: New traffic limit in GB (0 = unlimited)
+            new_expiry_days: New expiry days
+            new_inbound_ids: New list of inbound IDs
+            template_id: Optional template ID if rebuilt from template
+            notes: Optional notes
+
+        Returns:
+            A tuple containing the updated subscription and list of connections.
+        """
+        subscription = await self.get_subscription(subscription_id)
+        if not subscription:
+            raise XUIError("Subscription not found")
+
+        current_connections = subscription.inbound_connections
+        current_inbound_ids = {c.inbound_id for c in current_connections}
+        new_inbound_ids_set = set(new_inbound_ids)
+
+        # Capture old UUID if possible
+        client_uuid = None
+        if current_connections:
+            client_uuid = current_connections[0].uuid
+        else:
+            import uuid
+
+            client_uuid = str(uuid.uuid4())
+
+        # Update subscription properties
+        subscription.name = new_name
+        subscription.total_gb = new_total_gb
+        subscription.template_id = template_id
+        if notes is not None:
+            subscription.notes = notes
+
+        expiry_date = None
+        if new_expiry_days:
+            expiry_date = datetime.now(UTC) + timedelta(days=new_expiry_days)
+        subscription.expiry_date = expiry_date
+
+        await self.session.flush()
+
+        # Determine removed, added, and kept inbounds
+        removed_ids = current_inbound_ids - new_inbound_ids_set
+        added_ids = new_inbound_ids_set - current_inbound_ids
+        kept_ids = current_inbound_ids & new_inbound_ids_set
+
+        # Process removed
+        for ib_id in removed_ids:
+            await self.remove_inbound_from_subscription(subscription_id, ib_id)
+
+        # Process kept (reset traffic, update limits and expiry)
+        for conn in current_connections:
+            if conn.inbound_id in kept_ids:
+                conn.total_gb = new_total_gb
+                conn.expiry_date = expiry_date
+
+                # Update in XUI and reset traffic
+                try:
+                    inbound_result = await self.session.execute(
+                        select(Inbound)
+                        .where(Inbound.id == conn.inbound_id)
+                        .options(selectinload(Inbound.server))
+                    )
+                    inbound = inbound_result.scalar_one()
+                    xui_client = await self._get_xui_client(inbound.server)
+
+                    # First, reset the traffic so it starts from 0 for the new period
+                    await xui_client.reset_client_traffic(inbound.xui_id, conn.email)
+
+                    # Update limits
+                    expiry_time_ms = int(expiry_date.timestamp() * 1000) if expiry_date else 0
+                    total_bytes = new_total_gb * 1024 * 1024 * 1024
+
+                    # XUI expects a dict or Client object for update
+                    # We can use the XUIAddClientRequest model which is used in add_client too
+                    update_req = XUIAddClientRequest(
+                        id=conn.uuid,
+                        enable=True,
+                        email=conn.email,
+                        flow="xtls-rprx-vision",
+                        totalGB=total_bytes,
+                        expiryTime=expiry_time_ms,
+                        subId=subscription.subscription_token,
+                        tgId=int(subscription.client.telegram_id)
+                        if subscription.client.telegram_id
+                        else 0,
+                    )
+                    await xui_client.update_client(inbound.xui_id, update_req)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to update kept inbound {conn.inbound_id} for sub {subscription_id}: {e}"
+                    )
+
+        # Process added
+        for ib_id in added_ids:
+            await self.add_inbound_to_subscription(subscription_id, ib_id, client_uuid=client_uuid)
+
+        await self.session.flush()
+
+        # Reload to get fresh connections
+        reloaded_subscription = await self.get_subscription(subscription.id)
+        return reloaded_subscription, list(reloaded_subscription.inbound_connections)
+
     # Inbound Connection methods
 
     async def add_inbound_to_subscription(
         self,
         subscription_id: int,
         inbound_id: int,
+        client_uuid: str | None = None,
     ) -> InboundConnection:
         """Add inbound connection to subscription.
 
         Args:
             subscription_id: Subscription ID
             inbound_id: Inbound ID
+            client_uuid: Optional UUID to use (for rebuilding subscriptions)
 
         Returns:
             Created inbound connection
@@ -175,7 +294,7 @@ class NewSubscriptionService:
         # Generate UUID and email with uniqueness check
         import uuid
 
-        client_uuid = str(uuid.uuid4())
+        client_uuid = client_uuid or str(uuid.uuid4())
 
         base_email = f"{subscription.name}-{subscription.client.name}"
 

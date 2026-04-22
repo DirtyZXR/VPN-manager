@@ -21,6 +21,7 @@ from app.bot.states.admin import TemplateManagement
 from app.database import async_session_factory
 from app.services.client_service import ClientService
 from app.services.subscription_template_service import SubscriptionTemplateService
+from app.utils.texts import t
 
 router = Router()
 
@@ -29,7 +30,9 @@ router = Router()
 async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
     """Show clients search menu."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     current_state = await state.get_state()
@@ -41,16 +44,23 @@ async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContex
         from aiogram.utils.keyboard import InlineKeyboardBuilder
 
         kb = InlineKeyboardBuilder()
-        kb.button(text="📋 Все клиенты", callback_data="clients_list")
-        kb.button(text="🔍 Поиск клиентов", callback_data="client_search")
-        kb.button(text="➕ Добавить клиента", callback_data="client_add")
-        kb.button(text="🔙 Назад", callback_data="admin_menu")
+        kb.button(
+            text=t("admin.clients.btn.all_clients", "📋 Все клиенты"), callback_data="clients_list"
+        )
+        kb.button(
+            text=t("admin.clients.btn.search", "🔍 Поиск клиентов"), callback_data="client_search"
+        )
+        kb.button(
+            text=t("admin.clients.btn.add", "➕ Добавить клиента"), callback_data="client_add"
+        )
+        kb.button(text=t("admin.clients.btn.back", "🔙 Назад"), callback_data="admin_clients_menu")
         kb.adjust(1)
 
         await callback.message.edit_text(
-            "👥 Управление клиентами\n\n"
-            "Для эффективной работы с большим количеством клиентов "
-            "используйте поиск по различным критериям.",
+            t(
+                "admin.clients.main_menu",
+                "👥 Управление клиентами\n\nДля эффективной работы с большим количеством клиентов используйте поиск по различным критериям.",
+            ),
             reply_markup=kb.as_markup(),
         )
     except Exception:
@@ -63,13 +73,15 @@ async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContex
 async def start_add_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Start adding new client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     await state.set_state(ClientManagement.waiting_for_name)
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "➕ Добавление нового клиента\n\nВведите имя клиента:",
+            t("admin.clients.add.title", "➕ Добавление нового клиента\n\nВведите имя клиента:"),
             reply_markup=get_back_keyboard("admin_clients"),
         )
     await callback.answer()
@@ -82,13 +94,14 @@ async def process_client_name(message: Message, state: FSMContext) -> None:
 
     if not name:
         await message.answer(
-            "❌ Имя не может быть пустым.", reply_markup=get_back_keyboard("admin_clients")
+            t("admin.clients.add.empty_name", "❌ Имя не может быть пустым."),
+            reply_markup=get_back_keyboard("admin_clients"),
         )
         return
 
     if len(name) > 100:
         await message.answer(
-            "❌ Имя не должно превышать 100 символов.",
+            t("admin.clients.add.name_too_long", "❌ Имя не должно превышать 100 символов."),
             reply_markup=get_back_keyboard("admin_clients"),
         )
         return
@@ -96,7 +109,10 @@ async def process_client_name(message: Message, state: FSMContext) -> None:
     await state.update_data(name=name)
     await state.set_state(ClientManagement.waiting_for_email)
     await message.answer(
-        "Введите email клиента (или отправьте '-' для автоматической генерации):",
+        t(
+            "admin.clients.add.email_prompt",
+            "Введите email клиента (или отправьте '-' для автоматической генерации):",
+        ),
         reply_markup=get_back_keyboard("admin_clients"),
     )
 
@@ -108,15 +124,18 @@ async def process_client_email(message: Message, state: FSMContext) -> None:
 
     if email != "-" and ("@" not in email or "." not in email):
         await message.answer(
-            "❌ Некорректный формат email.", reply_markup=get_back_keyboard("admin_clients")
+            t("admin.clients.add.invalid_email", "❌ Некорректный формат email."),
+            reply_markup=get_back_keyboard("admin_clients"),
         )
         return
 
     await state.update_data(email=email if email != "-" else None)
     await state.set_state(ClientManagement.waiting_for_telegram_id)
     await message.answer(
-        "Введите Telegram ID клиента (число) или отправьте '-' для пропуска.\n\n"
-        "Примечание: Telegram ID будет использоваться для синхронизации с XUI панелями.",
+        t(
+            "admin.clients.add.telegram_prompt",
+            "Введите Telegram ID клиента (число) или отправьте '-' для пропуска.\n\nПримечание: Telegram ID будет использоваться для синхронизации с XUI панелями.",
+        ),
         reply_markup=get_back_keyboard("admin_clients"),
     )
 
@@ -135,7 +154,10 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
             telegram_id = int(input_text)
         except ValueError:
             await message.answer(
-                "❌ Telegram ID должен быть числом или '-'.",
+                t(
+                    "admin.clients.add.invalid_telegram",
+                    "❌ Telegram ID должен быть числом или '-'.",
+                ),
                 reply_markup=get_back_keyboard("admin_clients"),
             )
             return
@@ -151,17 +173,22 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
             await session.commit()
             await state.clear()
             await message.answer(
-                f"✅ Клиент '{client.name}' успешно создан!\n\n"
-                f"ID: {client.id}\n"
-                f"Email: {client.email}\n"
-                f"Telegram ID: {client.telegram_id or 'Не указан'}",
+                t(
+                    "admin.clients.add.success",
+                    "✅ Клиент '{name}' успешно создан!\n\nID: {id}\nEmail: {email}\nTelegram ID: {telegram_id}",
+                    name=client.name,
+                    id=client.id,
+                    email=client.email,
+                    telegram_id=client.telegram_id
+                    or t("admin.clients.add.not_specified", "Не указан"),
+                ),
                 reply_markup=get_back_keyboard("admin_clients"),
             )
         except Exception as e:
             logger.error(f"Failed to create client: {e}", exc_info=True)
             await session.rollback()
             await message.answer(
-                f"❌ Ошибка при создании клиента: {e}",
+                t("admin.clients.add.error", "❌ Ошибка при создании клиента: {e}", e=str(e)),
                 reply_markup=get_back_keyboard("admin_clients"),
             )
             await state.clear()
@@ -171,7 +198,9 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
 async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Show client details and actions."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     await state.clear()
@@ -182,44 +211,80 @@ async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
         client = await service.get_client_by_id(client_id)
 
     if not client:
-        await callback.answer("❌ Клиент не найден.", show_alert=True)
+        await callback.answer(t("admin.clients.not_found", "❌ Клиент не найден."), show_alert=True)
         return
 
-    status = "✅ Активен" if client.is_active else "❌ Неактивен"
-    admin_status = "✅ Админ" if client.is_admin else "👤 Клиент"
+    status = (
+        t("admin.clients.details.active", "✅ Активен")
+        if client.is_active
+        else t("admin.clients.details.inactive", "❌ Неактивен")
+    )
+    admin_status = (
+        t("admin.clients.details.admin", "✅ Админ")
+        if client.is_admin
+        else t("admin.clients.details.client", "👤 Клиент")
+    )
 
-    text = (
-        f"👤 Клиент: {client.name}\n\n"
-        f"ID: {client.id}\n"
-        f"Email: {client.email}\n"
-        f"Telegram ID: {client.telegram_id or 'Не указан'}\n"
-        f"Статус: {status}\n"
-        f"Роль: {admin_status}\n"
-        f"Подписок: {len(client.subscriptions)}\n"
-        f"Создан: {client.created_at.strftime('%d.%m.%Y %H:%M')}"
+    text = t(
+        "admin.clients.details.text",
+        "👤 Клиент: {name}\n\nID: {id}\nEmail: {email}\nTelegram ID: {telegram_id}\nСтатус: {status}\nРоль: {admin_status}\nПодписок: {sub_count}\nСоздан: {created_at}",
+        name=client.name,
+        id=client.id,
+        email=client.email,
+        telegram_id=client.telegram_id or t("admin.clients.add.not_specified", "Не указан"),
+        status=status,
+        admin_status=admin_status,
+        sub_count=len(client.subscriptions),
+        created_at=client.created_at.strftime("%d.%m.%Y %H:%M"),
     )
     if client.notes:
-        text += f"\n📝 Заметки: {client.notes}"
+        text += t("admin.clients.details.notes", "\n📝 Заметки: {notes}", notes=client.notes)
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="📝 Подписки клиента", callback_data=f"client_subscriptions_{client_id}")
     kb.button(
-        text="📋 Создать подписку по шаблону",
+        text=t("admin.clients.btn.subscriptions", "📝 Подписки клиента"),
+        callback_data=f"client_subscriptions_{client_id}",
+    )
+    kb.button(
+        text=t("admin.clients.btn.create_from_template", "📋 Создать подписку по шаблону"),
         callback_data=f"client_create_from_template_{client_id}",
     )
-    kb.button(text="📝 Изменить заметки", callback_data=f"client_edit_notes_{client_id}")
-    kb.button(text="✏️ Изменить имя", callback_data=f"client_rename_name_{client_id}")
-    kb.button(text="📱 Изменить Telegram ID", callback_data=f"client_rename_telegram_{client_id}")
+    kb.button(
+        text=t("admin.clients.btn.edit_notes", "📝 Изменить заметки"),
+        callback_data=f"client_edit_notes_{client_id}",
+    )
+    kb.button(
+        text=t("admin.clients.btn.rename_name", "✏️ Изменить имя"),
+        callback_data=f"client_rename_name_{client_id}",
+    )
+    kb.button(
+        text=t("admin.clients.btn.rename_telegram", "📱 Изменить Telegram ID"),
+        callback_data=f"client_rename_telegram_{client_id}",
+    )
     if client.is_admin:
-        kb.button(text="⬇️ Снять админа", callback_data=f"client_unadmin_{client_id}")
+        kb.button(
+            text=t("admin.clients.btn.unadmin", "⬇️ Снять админа"),
+            callback_data=f"client_unadmin_{client_id}",
+        )
     else:
-        kb.button(text="⬆️ Сделать админом", callback_data=f"client_make_admin_{client_id}")
+        kb.button(
+            text=t("admin.clients.btn.make_admin", "⬆️ Сделать админом"),
+            callback_data=f"client_make_admin_{client_id}",
+        )
     if client.is_active:
-        kb.button(text="❌ Отключить", callback_data=f"client_disable_{client_id}")
+        kb.button(
+            text=t("admin.clients.btn.disable", "❌ Отключить"),
+            callback_data=f"client_disable_{client_id}",
+        )
     else:
-        kb.button(text="✅ Включить", callback_data=f"client_enable_{client_id}")
-    kb.button(text="🗑️ Удалить", callback_data=f"client_delete_{client_id}")
-    kb.button(text="🔙 Назад", callback_data="admin_clients")
+        kb.button(
+            text=t("admin.clients.btn.enable", "✅ Включить"),
+            callback_data=f"client_enable_{client_id}",
+        )
+    kb.button(
+        text=t("admin.clients.btn.delete", "🗑️ Удалить"), callback_data=f"client_delete_{client_id}"
+    )
+    kb.button(text=t("admin.clients.btn.back", "🔙 Назад"), callback_data="admin_clients")
     kb.adjust(1)
 
     with contextlib.suppress(Exception):
@@ -233,7 +298,9 @@ async def show_client_subscriptions(
 ) -> None:
     """Show client subscriptions."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     await state.clear()
@@ -246,33 +313,49 @@ async def show_client_subscriptions(
         subscriptions = await service.get_client_subscriptions(client_id)
 
     if not subscriptions:
-        text = (
-            "📝 У клиента нет подписок.\n\n"
-            "Нажмите '➕ Создать подписку' для добавления первой подписки."
+        text = t(
+            "admin.clients.subscriptions.empty",
+            "📝 У клиента нет подписок.\n\nНажмите '➕ Создать подписку' для добавления первой подписки.",
         )
     else:
-        text = "📝 Подписки клиента:\n\n"
+        text = t("admin.clients.subscriptions.title", "📝 Подписки клиента:\n\n")
 
     kb = InlineKeyboardBuilder()
 
     if subscriptions:
         for sub in subscriptions:
             status = "✅" if sub.is_active else "❌"
-            expiry = sub.expiry_date.strftime("%d.%m.%Y") if sub.expiry_date else "Бессрочно"
-            traffic = "Безлимит" if sub.is_unlimited else f"{sub.total_gb} GB"
+            expiry = (
+                sub.expiry_date.strftime("%d.%m.%Y")
+                if sub.expiry_date
+                else t("admin.clients.subscriptions.no_expiry", "Бессрочно")
+            )
+            traffic = (
+                t("admin.clients.subscriptions.unlimited", "Безлимит")
+                if sub.is_unlimited
+                else f"{sub.total_gb} GB"
+            )
 
-            text += (
-                f"{status} <b>{sub.name}</b>\n"
-                f"   Трафик: {traffic}\n"
-                f"   Срок: {expiry}\n"
-                f"   Подключений: {len(sub.inbound_connections)}\n\n"
+            text += t(
+                "admin.clients.subscriptions.item",
+                "{status} <b>{name}</b>\n   Трафик: {traffic}\n   Срок: {expiry}\n   Подключений: {conn_count}\n\n",
+                status=status,
+                name=sub.name,
+                traffic=traffic,
+                expiry=expiry,
+                conn_count=len(sub.inbound_connections),
             )
 
             # Add button for each subscription
             kb.button(text=f"📝 {sub.name}", callback_data=f"client_sub_detail_{sub.id}")
 
-    kb.button(text="➕ Создать подписку", callback_data=f"client_create_subscription_{client_id}")
-    kb.button(text="🔙 Назад", callback_data=f"client_select_{client_id}")
+    kb.button(
+        text=t("admin.clients.btn.create_subscription", "➕ Создать подписку"),
+        callback_data=f"client_create_subscription_{client_id}",
+    )
+    kb.button(
+        text=t("admin.clients.btn.back", "🔙 Назад"), callback_data=f"client_select_{client_id}"
+    )
     kb.adjust(1)
 
     try:
@@ -293,7 +376,9 @@ async def start_create_subscription_for_client(
 ) -> None:
     """Start creating subscription for specific client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -306,13 +391,15 @@ async def start_create_subscription_for_client(
         servers = await service.get_active_servers()
 
     if not servers:
-        await callback.answer("❌ Нет активных серверов.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.servers.no_active", "❌ Нет активных серверов."), show_alert=True
+        )
         return
 
     await state.set_state(SubscriptionManagement.waiting_for_server_selection)
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "Выберите сервер:",
+            t("admin.clients.servers.select", "Выберите сервер:"),
             reply_markup=get_servers_keyboard(
                 servers, action="sub_select", back_target=f"client_subscriptions_{client_id}"
             ),
@@ -326,7 +413,9 @@ async def start_create_subscription_from_template(
 ) -> None:
     """Start creating subscription from template for specific client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -338,16 +427,20 @@ async def start_create_subscription_from_template(
 
     if not templates:
         await callback.answer(
-            "❌ Нет доступных шаблонов. Сначала создайте шаблон.", show_alert=True
+            t(
+                "admin.clients.templates.empty",
+                "❌ Нет доступных шаблонов. Сначала создайте шаблон.",
+            ),
+            show_alert=True,
         )
         return
 
     await state.set_state(TemplateManagement.waiting_for_template_selection)
 
-    text = (
-        f"📋 <b>Создание подписки по шаблону</b>\n\n"
-        f"Всего шаблонов: {len(templates)}\n\n"
-        f"Выберите шаблон:"
+    text = t(
+        "admin.clients.templates.title",
+        "📋 <b>Создание подписки по шаблону</b>\n\nВсего шаблонов: {count}\n\nВыберите шаблон:",
+        count=len(templates),
     )
 
     builder = InlineKeyboardBuilder()
@@ -355,10 +448,18 @@ async def start_create_subscription_from_template(
         status = "✅" if template.is_active else "❌"
         inbounds_count = len(template.template_inbounds)
         builder.button(
-            text=f"{status} {template.name} ({inbounds_count} подключений)",
+            text=t(
+                "admin.clients.templates.btn",
+                "{status} {name} ({count} подключений)",
+                status=status,
+                name=template.name,
+                count=inbounds_count,
+            ),
             callback_data=f"template_for_client_{template.id}",
         )
-    builder.button(text="🔙 Назад", callback_data=f"client_select_{client_id}")
+    builder.button(
+        text=t("admin.clients.btn.back", "🔙 Назад"), callback_data=f"client_select_{client_id}"
+    )
     builder.adjust(1)
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
@@ -383,12 +484,12 @@ async def select_template_for_client(callback: CallbackQuery, state: FSMContext)
         client_service = ClientService(session)
         client = await client_service.get_client_by_id(client_id)
 
-    text = (
-        f"📋 <b>Создание подписки из шаблона</b>\n\n"
-        f"📋 <b>Шаблон:</b> {template.name}\n"
-        f"👤 <b>Клиент:</b> {client.name}\n"
-        f"🔌 <b>Подключений:</b> {len(template.template_inbounds)}\n\n"
-        f"Введите название подписки:"
+    text = t(
+        "admin.clients.templates.create",
+        "📋 <b>Создание подписки из шаблона</b>\n\n📋 <b>Шаблон:</b> {template_name}\n👤 <b>Клиент:</b> {client_name}\n🔌 <b>Подключений:</b> {conn_count}\n\nВведите название подписки:",
+        template_name=template.name,
+        client_name=client.name,
+        conn_count=len(template.template_inbounds),
     )
 
     await callback.message.edit_text(text)
@@ -401,7 +502,9 @@ async def start_rename_client_name(
 ) -> None:
     """Start renaming client name."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -410,7 +513,7 @@ async def start_rename_client_name(
 
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "✏️ Изменение имени клиента\n\nВведите новое имя:",
+            t("admin.clients.rename.title", "✏️ Изменение имени клиента\n\nВведите новое имя:"),
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     await callback.answer()
@@ -424,11 +527,13 @@ async def process_rename_client_name(message: Message, state: FSMContext) -> Non
     name = message.text.strip()
 
     if not name:
-        await message.answer("❌ Имя не может быть пустым.")
+        await message.answer(t("admin.clients.add.empty_name", "❌ Имя не может быть пустым."))
         return
 
     if len(name) > 100:
-        await message.answer("❌ Имя не должно превышать 100 символов.")
+        await message.answer(
+            t("admin.clients.add.name_too_long", "❌ Имя не должно превышать 100 символов.")
+        )
         return
 
     async with async_session_factory() as session:
@@ -437,7 +542,7 @@ async def process_rename_client_name(message: Message, state: FSMContext) -> Non
         await session.commit()
     await state.clear()
     await message.answer(
-        f"✅ Клиент переименован в '{client.name}'",
+        t("admin.clients.rename.success", "✅ Клиент переименован в '{name}'", name=client.name),
         reply_markup=get_back_keyboard(f"client_select_{client_id}"),
     )
 
@@ -448,7 +553,9 @@ async def start_rename_client_telegram(
 ) -> None:
     """Start changing client Telegram ID."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -457,7 +564,10 @@ async def start_rename_client_telegram(
 
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "📱 Изменение Telegram ID\n\nВведите новый Telegram ID (или '-' для удаления):",
+            t(
+                "admin.clients.rename_telegram.title",
+                "📱 Изменение Telegram ID\n\nВведите новый Telegram ID (или '-' для удаления):",
+            ),
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     await callback.answer()
@@ -476,7 +586,12 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
         try:
             telegram_id = int(telegram_id_input)
         except ValueError:
-            await message.answer("❌ Telegram ID должен быть числом или '-'.")
+            await message.answer(
+                t(
+                    "admin.clients.add.invalid_telegram",
+                    "❌ Telegram ID должен быть числом или '-'.",
+                )
+            )
             return
     elif telegram_id_input == "-":
         telegram_id = None
@@ -491,12 +606,16 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
     await state.clear()
     if telegram_id:
         await message.answer(
-            f"✅ Telegram ID изменен на {telegram_id}",
+            t(
+                "admin.clients.rename_telegram.success",
+                "✅ Telegram ID изменен на {id}",
+                id=telegram_id,
+            ),
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     else:
         await message.answer(
-            "✅ Telegram ID удален",
+            t("admin.clients.rename_telegram.removed", "✅ Telegram ID удален"),
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
 
@@ -505,7 +624,9 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
 async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
     """Enable client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -525,8 +646,14 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
             await session.commit()
 
-            await callback.answer(f"✅ Клиент включен. Активировано {toggled} подключений в XUI.")
-            await select_client(callback, is_admin)
+            await callback.answer(
+                t(
+                    "admin.clients.enable.success",
+                    "✅ Клиент включен. Активировано {count} подключений в XUI.",
+                    count=toggled,
+                )
+            )
+            await select_client(callback, is_admin, state=None)  # type: ignore
         except Exception:
             await session.rollback()
             raise
@@ -538,7 +665,9 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
 async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
     """Disable client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -559,9 +688,13 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
             await session.commit()
 
             await callback.answer(
-                f"✅ Клиент отключен. Деактивировано {toggled} подключений в XUI."
+                t(
+                    "admin.clients.disable.success",
+                    "✅ Клиент отключен. Деактивировано {count} подключений в XUI.",
+                    count=toggled,
+                )
             )
-            await select_client(callback, is_admin)
+            await select_client(callback, is_admin, state=None)  # type: ignore
         except Exception:
             await session.rollback()
             raise
@@ -578,7 +711,9 @@ async def start_edit_client_notes(
 ) -> None:
     """Start editing client notes."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -587,7 +722,10 @@ async def start_edit_client_notes(
 
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "📝 Изменение заметок клиента\n\nВведите новые заметки (для удаления отправьте `-`):",
+            t(
+                "admin.clients.notes.title",
+                "📝 Изменение заметок клиента\n\nВведите новые заметки (для удаления отправьте `-`):",
+            ),
             reply_markup=get_back_keyboard(f"client_select_{client_id}"),
         )
     await callback.answer()
@@ -609,7 +747,7 @@ async def process_client_notes(message: Message, state: FSMContext) -> None:
         await session.commit()
     await state.clear()
     await message.answer(
-        "✅ Заметки клиента обновлены.",
+        t("admin.clients.notes.success", "✅ Заметки клиента обновлены."),
         reply_markup=get_back_keyboard(f"client_select_{client_id}"),
     )
 
@@ -618,7 +756,9 @@ async def process_client_notes(message: Message, state: FSMContext) -> None:
 async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Confirm client deletion."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -627,8 +767,10 @@ async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_a
 
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "⚠️ Вы уверены, что хотите удалить этого клиента?\n\n"
-            "Все его подписки и подключения будут также удалены!",
+            t(
+                "admin.clients.delete.confirm",
+                "⚠️ Вы уверены, что хотите удалить этого клиента?\n\nВсе его подписки и подключения будут также удалены!",
+            ),
             reply_markup=get_confirm_keyboard(f"client_delete_{client_id}", "admin_clients"),
         )
     await callback.answer()
@@ -638,7 +780,9 @@ async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_a
 async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Delete client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     data = await state.get_data()
@@ -659,7 +803,13 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
             await session.commit()
 
             await state.clear()
-            await callback.answer(f"✅ Клиент удален. Удалено {deleted_count} подключений из XUI.")
+            await callback.answer(
+                t(
+                    "admin.clients.delete.success",
+                    "✅ Клиент удален. Удалено {count} подключений из XUI.",
+                    count=deleted_count,
+                )
+            )
             await show_clients(callback, is_admin, state)
         except Exception:
             await session.rollback()
@@ -672,7 +822,9 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
 async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
     """Make client admin."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -682,15 +834,17 @@ async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
         await service.set_client_admin(client_id, True)
         await session.commit()
 
-    await callback.answer("✅ Клиент теперь админ.")
-    await select_client(callback, is_admin)
+    await callback.answer(t("admin.clients.admin.made", "✅ Клиент теперь админ."))
+    await select_client(callback, is_admin, state=None)  # type: ignore
 
 
 @router.callback_query(F.data.startswith("client_unadmin_"))
 async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
     """Remove admin status from client."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     client_id = int(callback.data.split("_")[-1])
@@ -700,8 +854,8 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
         await service.set_client_admin(client_id, False)
         await session.commit()
 
-    await callback.answer("✅ Клиент больше не админ.")
-    await select_client(callback, is_admin)
+    await callback.answer(t("admin.clients.admin.removed", "✅ Клиент больше не админ."))
+    await select_client(callback, is_admin, state=None)  # type: ignore
 
 
 # ==================== CLIENT LIST (PAGINATED) ====================
@@ -711,7 +865,9 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
 async def show_clients_list(callback: CallbackQuery, is_admin: bool) -> None:
     """Show paginated list of all active clients (first page)."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     await _render_clients_page(callback, page=0)
@@ -721,7 +877,9 @@ async def show_clients_list(callback: CallbackQuery, is_admin: bool) -> None:
 async def navigate_clients_page(callback: CallbackQuery, is_admin: bool) -> None:
     """Navigate between client list pages."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     # Ignore the "current page" indicator button
@@ -748,17 +906,22 @@ async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page:
     if not clients:
         with contextlib.suppress(Exception):
             await callback.message.edit_text(
-                "👥 Список клиентов пуст.\n\n"
-                "Нажмите '➕ Добавить клиента' для создания первого клиента.",
+                t(
+                    "admin.clients.list.empty",
+                    "👥 Список клиентов пуст.\n\nНажмите '➕ Добавить клиента' для создания первого клиента.",
+                ),
                 reply_markup=get_back_keyboard("admin_clients"),
             )
         await callback.answer()
         return
 
     total_pages = max(1, -(-total_count // per_page))
-    text = (
-        f"👥 <b>Список клиентов</b> (страница {page + 1}/{total_pages})\n"
-        f"Всего активных: {total_count}\n\n"
+    text = t(
+        "admin.clients.list.title",
+        "👥 <b>Список клиентов</b> (страница {page}/{total})\nВсего активных: {count}\n\n",
+        page=page + 1,
+        total=total_pages,
+        count=total_count,
     )
 
     for client in clients:
@@ -768,7 +931,11 @@ async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page:
         if client.telegram_id:
             text += f"   📱 Telegram: {client.telegram_id}\n"
         text += f"   📧 {client.email}\n"
-        text += f"   📝 Подписок: {len(client.subscriptions)}\n\n"
+        text += t(
+            "admin.clients.list.subs",
+            "   📝 Подписок: {count}\n\n",
+            count=len(client.subscriptions),
+        )
 
     keyboard = get_clients_page_keyboard(clients, page, total_count, per_page)
 
@@ -784,12 +951,14 @@ async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page:
 async def start_client_search(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Start client search flow."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            "🔍 Поиск клиентов\n\nВыберите критерий поиска:",
+            t("admin.clients.search.title", "🔍 Поиск клиентов\n\nВыберите критерий поиска:"),
             reply_markup=get_client_search_keyboard(),
         )
     await callback.answer()
@@ -799,7 +968,9 @@ async def start_client_search(callback: CallbackQuery, state: FSMContext, is_adm
 async def select_search_field(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Handle search field selection."""
     if not is_admin:
-        await callback.answer("❌ У вас нет прав администратора.", show_alert=True)
+        await callback.answer(
+            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
         return
 
     # Extract field from callback data: "search_field_<field>"
@@ -809,20 +980,29 @@ async def select_search_field(callback: CallbackQuery, state: FSMContext, is_adm
     await state.set_state(ClientManagement.waiting_for_search_query)
 
     field_messages = {
-        "name": "Введите имя клиента (частичное совпадение):",
-        "email": "Введите email клиента (частичное совпадение):",
-        "telegram": "Введите Telegram ID (цифры) или @username клиента:",
-        "xui_email": "Введите email из XUI inbound (частичное совпадение):",
-        "all": "Введите поисковый запрос (проверит ВСЕ поля одновременно):\n"
-        "• Имя\n"
-        "• Email клиента\n"
-        "• Telegram ID\n"
-        "• Email из XUI inbound",
+        "name": t(
+            "admin.clients.search.prompt.name", "Введите имя клиента (частичное совпадение):"
+        ),
+        "email": t(
+            "admin.clients.search.prompt.email", "Введите email клиента (частичное совпадение):"
+        ),
+        "telegram": t(
+            "admin.clients.search.prompt.telegram",
+            "Введите Telegram ID (цифры) или @username клиента:",
+        ),
+        "xui_email": t(
+            "admin.clients.search.prompt.xui_email",
+            "Введите email из XUI inbound (частичное совпадение):",
+        ),
+        "all": t(
+            "admin.clients.search.prompt.all",
+            "Введите поисковый запрос (проверит ВСЕ поля одновременно):\n• Имя\n• Email клиента\n• Telegram ID\n• Email из XUI inbound",
+        ),
     }
 
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
-            f"🔍 {field_messages.get(field, 'Введите поисковый запрос:')}",
+            f"🔍 {field_messages.get(field, t('admin.clients.search.prompt.default', 'Введите поисковый запрос:'))}",
             reply_markup=get_back_keyboard("client_search"),
         )
     await callback.answer()
@@ -838,7 +1018,9 @@ async def process_search_query(message: Message, state: FSMContext) -> None:
     query = message.text.strip()
 
     if not query:
-        await message.answer("❌ Поисковый запрос не может быть пустым.")
+        await message.answer(
+            t("admin.clients.search.empty", "❌ Поисковый запрос не может быть пустым.")
+        )
         return
 
     # Prepare search parameters
@@ -866,17 +1048,18 @@ async def process_search_query(message: Message, state: FSMContext) -> None:
 
         if not clients:
             await message.answer(
-                "🔍 Поиск не дал результатов.\n\n"
-                "Комплексный поиск проверяет все поля:\n"
-                "• Имя клиента\n"
-                "• Email клиента\n"
-                "• Telegram ID\n"
-                "• XUI email (из inbound подключений)\n\n"
-                "Попробуйте изменить поисковый запрос.",
+                t(
+                    "admin.clients.search.no_results_all",
+                    "🔍 Поиск не дал результатов.\n\nКомплексный поиск проверяет все поля:\n• Имя клиента\n• Email клиента\n• Telegram ID\n• XUI email (из inbound подключений)\n\nПопробуйте изменить поисковый запрос.",
+                ),
                 reply_markup=get_back_keyboard("client_search"),
             )
         else:
-            text = f"🔍 Результаты поиска по всем полям ({len(clients)}):\n\n"
+            text = t(
+                "admin.clients.search.results_all",
+                "🔍 Результаты поиска по всем полям ({count}):\n\n",
+                count=len(clients),
+            )
             for client in clients:
                 status = "✅" if client.is_active else "❌"
                 admin_badge = "👤" if not client.is_admin else "🛡️"
@@ -902,15 +1085,18 @@ async def process_search_query(message: Message, state: FSMContext) -> None:
 
     if not clients:
         await message.answer(
-            "🔍 Поиск не дал результатов.\n\n"
-            "Советы:\n"
-            "• Для поиска по имени можно использовать несколько слов\n"
-            "• Для поиска по email используйте символ @\n"
-            "• Для Telegram ID используйте только цифры",
+            t(
+                "admin.clients.search.no_results",
+                "🔍 Поиск не дал результатов.\n\nСоветы:\n• Для поиска по имени можно использовать несколько слов\n• Для поиска по email используйте символ @\n• Для Telegram ID используйте только цифры",
+            ),
             reply_markup=get_back_keyboard("client_search"),
         )
     else:
-        text = f"🔍 Результаты поиска ({len(clients)}):\n\n"
+        text = t(
+            "admin.clients.search.results",
+            "🔍 Результаты поиска ({count}):\n\n",
+            count=len(clients),
+        )
         for client in clients:
             status = "✅" if client.is_active else "❌"
             admin_badge = "👤" if not client.is_admin else "🛡️"

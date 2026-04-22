@@ -87,6 +87,20 @@ class SubscriptionManagement(StatesGroup):
     waiting_for_add_days = State()
 
 
+class SubscriptionRebuild(StatesGroup):
+    """Subscription rebuild/token reuse states."""
+
+    waiting_for_mode_selection = State()
+    waiting_for_template_selection = State()
+    waiting_for_server_selection = State()
+    waiting_for_inbound_selection = State()
+    inbounds_multi_select_mode = State()
+    waiting_for_subscription_name = State()
+    waiting_for_traffic_limit = State()
+    waiting_for_expiry_days = State()
+    confirm_rebuild = State()
+
+
 class ExportData(StatesGroup):
     """Export data states."""
 
@@ -128,3 +142,10 @@ class TemplateManagement(StatesGroup):
 
     # Template deletion
     confirm_delete_template = State()
+
+
+class BroadcastManagement(StatesGroup):
+    """Broadcast messages to users states."""
+
+    waiting_for_message = State()
+    confirm_broadcast = State()
