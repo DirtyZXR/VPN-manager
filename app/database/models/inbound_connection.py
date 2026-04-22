@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, SyncMixin, TimestampMixin
@@ -36,9 +36,10 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
         ForeignKey("inbounds.id", ondelete="CASCADE"),
         nullable=False,
     )
-    xui_client_id: Mapped[str] = mapped_column(String(100), nullable=False)  # UUID from XUI
-    email: Mapped[str] = mapped_column(String(200), nullable=False)  # Email from XUI
-    uuid: Mapped[str] = mapped_column(String(100), nullable=False)  # UUID from XUI
+    xui_client_id: Mapped[str | None] = mapped_column(String(100), nullable=True)  # UUID from XUI
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Email from XUI
+    uuid: Mapped[str | None] = mapped_column(String(100), nullable=True)  # UUID from XUI
+    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Per-connection traffic and expiry settings (can differ per inbound)

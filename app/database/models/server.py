@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Integer, String, Text
+from sqlalchemy import Boolean, Integer, String, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import DateTime as SADateTime
 
@@ -26,14 +26,14 @@ class Server(Base, TimestampMixin, SyncMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Custom paths for panel and subscriptions
-    panel_path: Mapped[str] = mapped_column(String(500), nullable=False, server_default="/")
-    subscription_path: Mapped[str] = mapped_column(
-        String(500), nullable=False, server_default="/sub/"
-    )
-    subscription_json_path: Mapped[str] = mapped_column(
-        String(500), nullable=False, server_default="/subjson/"
-    )
+    # Provider architecture
+    panel_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="xui")
+    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Custom paths for panel and subscriptions (Legacy)
+    panel_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    subscription_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    subscription_json_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Session management
     session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

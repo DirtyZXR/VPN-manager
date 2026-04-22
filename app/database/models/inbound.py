@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, SyncMixin, TimestampMixin
@@ -27,8 +27,9 @@ class Inbound(Base, TimestampMixin, SyncMixin):
     xui_id: Mapped[int] = mapped_column(Integer, nullable=False)
     remark: Mapped[str] = mapped_column(String(200), nullable=False)
     protocol: Mapped[str] = mapped_column(String(50), nullable=False)
-    port: Mapped[int] = mapped_column(Integer, nullable=False)
-    settings_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     client_count: Mapped[int] = mapped_column(
         Integer, default=0, nullable=False
     )  # Number of XUI clients
