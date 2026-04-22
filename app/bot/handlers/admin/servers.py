@@ -61,13 +61,48 @@ async def start_add_server(callback: CallbackQuery, state: FSMContext, is_admin:
         )
         return
 
+    from app.bot.keyboards.inline import get_server_panel_type_keyboard
+
+    await callback.message.edit_text(
+        t("admin.servers.select_type", "Выберите тип панели для нового сервера:"),
+        reply_markup=get_server_panel_type_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_server_type_xui")
+async def add_server_type_xui(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start adding new XUI server."""
+    if not is_admin:
+        return
+
     await state.set_state(ServerManagement.waiting_for_name)
     await callback.message.edit_text(
         t(
             "admin.servers.add_name",
-            "➕ Добавление нового сервера\n\nВведите название сервера (например, 'NL-Server-1'):",
+            "➕ Добавление нового сервера 3x-ui\n\nВведите название сервера (например, 'NL-Server-1'):",
         ),
-        reply_markup=get_back_keyboard("admin_servers"),
+        reply_markup=get_back_keyboard("server_add"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "add_server_type_amnezia")
+async def add_server_type_amnezia(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
+    """Start adding new Amnezia server."""
+    if not is_admin:
+        return
+
+    await state.update_data(panel_type="amnezia")
+    await state.set_state(ServerManagement.waiting_for_amnezia_api_url)
+    await callback.message.edit_text(
+        t(
+            "admin.servers.add_amnezia_url",
+            "🛡 Добавление Amnezia PHP Panel\n\nВведите API URL сервера Amnezia (например, https://vpn.example.com):",
+        ),
+        reply_markup=get_back_keyboard("server_add"),
     )
     await callback.answer()
 
@@ -376,9 +411,9 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
 
             # Sync inbounds automatically
             try:
-                synced_inbounds = await service.sync_server_inbounds(server.id)
+                synced_inbounds = await service.sync_server_inbounds(server_id)
                 await session.commit()
-                logger.info(f"✅ Автосинхронизация сервера {server.id}: {synced_inbounds} inbounds")
+                logger.info(f"✅ Автосинхронизация сервера {server_id}: {synced_inbounds} inbounds")
             except Exception as sync_error:
                 logger.error(f"❌ Ошибка синхронизации inbounds: {sync_error}", exc_info=True)
                 await session.rollback()  # Rollback sync but keep server
@@ -513,11 +548,15 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
             )
             await session.flush()
 
+            server_name = server.name
+            server_url = server.url
+            server_id = server.id
+
             # Sync inbounds automatically
             try:
-                synced_inbounds = await service.sync_server_inbounds(server.id)
+                synced_inbounds = await service.sync_server_inbounds(server_id)
                 await session.commit()
-                logger.info(f"✅ Автосинхронизация сервера {server.id}: {synced_inbounds} inbounds")
+                logger.info(f"✅ Автосинхронизация сервера {server_id}: {synced_inbounds} inbounds")
             except Exception as sync_error:
                 logger.error(f"❌ Ошибка синхронизации inbounds: {sync_error}", exc_info=True)
                 await session.rollback()  # Rollback sync but keep server
@@ -534,8 +573,8 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
                 t(
                     "admin.servers.added_success_no_ssl",
                     "✅ Сервер '{name}' успешно добавлен!\n\nURL: {url}\n⚠️ Проверка SSL: ОТКЛЮЧЕНА\nНайдено inbounds: {inbounds_count}\nСинхронизировано inbounds: {synced_count}",
-                    name=server.name,
-                    url=server.url,
+                    name=server_name,
+                    url=server_url,
                     inbounds_count=len(inbounds),
                     synced_count=synced_text,
                 ),
@@ -1001,7 +1040,7 @@ async def delete_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
     await state.clear()
     await callback.answer(t("admin.servers.deleted", "✅ Сервер удален."))
-    await show_servers(callback, is_admin)
+    await show_servers(callback, is_admin, state)
 
 
 @router.callback_query(F.data.startswith("server_edit_"))
@@ -1850,3 +1889,206 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     kb.adjust(1)
 
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+
+# ==========================================
+# Amnezia Server Addition Flow
+# ==========================================
+
+
+@router.message(ServerManagement.waiting_for_amnezia_api_url)
+async def process_amnezia_api_url(message: TgMessage, state: FSMContext) -> None:
+    """Process Amnezia API URL input."""
+    url = message.text.strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+
+    await state.update_data(url=url)
+    await state.set_state(ServerManagement.waiting_for_amnezia_username)
+    await message.answer(
+        t("admin.servers.add_amnezia_email", "Введите Email (логин) для Amnezia:"),
+        reply_markup=get_back_keyboard("server_add"),
+    )
+
+
+@router.message(ServerManagement.waiting_for_amnezia_username)
+async def process_amnezia_username(message: TgMessage, state: FSMContext) -> None:
+    """Process Amnezia username input."""
+    await state.update_data(username=message.text.strip())
+    await state.set_state(ServerManagement.waiting_for_amnezia_password)
+    await message.answer(
+        t("admin.servers.add_amnezia_password", "Введите пароль для Amnezia:"),
+        reply_markup=get_back_keyboard("server_add"),
+    )
+
+
+@router.message(ServerManagement.waiting_for_amnezia_password)
+async def process_amnezia_password(message: TgMessage, state: FSMContext) -> None:
+    """Process Amnezia password input and ask for SSL verification."""
+    await state.update_data(password=message.text.strip())
+    await state.set_state(ServerManagement.waiting_for_amnezia_verify_ssl)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text=t("admin.servers.buttons.verify_ssl_yes", "✅ Да (рекомендуется)"),
+        callback_data="amnezia_verify_ssl_yes",
+    )
+    kb.button(
+        text=t("admin.servers.buttons.verify_ssl_no", "❌ Нет (для самоподписанных сертификатов)"),
+        callback_data="amnezia_verify_ssl_no",
+    )
+    kb.adjust(1)
+
+    await message.answer(
+        t(
+            "admin.servers.add_amnezia_ssl",
+            "Включить проверку SSL сертификата?\n\n"
+            "Рекомендуется оставить включенной. Отключайте только если "
+            "вы используете самоподписанный сертификат.",
+        ),
+        reply_markup=kb.as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("amnezia_verify_ssl_"))
+async def process_amnezia_verify_ssl(callback: CallbackQuery, state: FSMContext) -> None:
+    """Process SSL verification selection and save Amnezia server."""
+    verify_ssl = callback.data == "amnezia_verify_ssl_yes"
+    data = await state.get_data()
+
+    await callback.message.edit_text(
+        t("admin.servers.saving", "⏳ Подключение и сохранение сервера..."),
+        reply_markup=None,
+    )
+
+    from urllib.parse import urlparse
+
+    parsed = urlparse(data.get("url", ""))
+    name = f"Amnezia {parsed.netloc}"
+    if "name" in data:
+        name = data["name"]
+
+    from sqlalchemy import select
+
+    from app.database.models import Server
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+
+        try:
+            original_name = name
+            counter = 1
+            while True:
+                existing = await session.execute(select(Server).where(Server.name == name))
+                if not existing.scalar_one_or_none():
+                    break
+                name = f"{original_name} ({counter})"
+                counter += 1
+
+            server = await service.create_server(
+                name=name,
+                url=data.get("url", ""),
+                username=data.get("username", ""),
+                password=data.get("password", ""),
+                verify_ssl=verify_ssl,
+            )
+            server.panel_type = "amnezia"
+
+            # Access properties before commit to avoid lazy loading
+            server_name = server.name
+            server_url = server.url
+            server_id = server.id
+
+            await session.commit()
+
+            synced_text = "0"
+            try:
+                from app.amnezia_client.client import AmneziaClient
+                from app.database.models import Inbound
+
+                api_url = data.get("url", "")
+                if not api_url.startswith("http://") and not api_url.startswith("https://"):
+                    api_url = f"https://{api_url}"
+                if not api_url.endswith("/api"):
+                    api_url = api_url.rstrip("/") + "/api"
+
+                client = AmneziaClient(
+                    base_url=api_url,
+                    email=data.get("username", ""),
+                    password=data.get("password", ""),
+                    verify_ssl=verify_ssl,
+                )
+                await client.__aenter__()
+                try:
+                    await client.login()
+                    amnezia_servers = await client.get_servers()
+
+                    synced_count = 0
+                    for am_srv in amnezia_servers:
+                        result = await session.execute(
+                            select(Inbound).where(
+                                Inbound.server_id == server_id, Inbound.xui_id == am_srv.id
+                            )
+                        )
+                        inbound = result.scalar_one_or_none()
+                        if not inbound:
+                            inbound = Inbound(
+                                server_id=server_id,
+                                xui_id=am_srv.id,
+                                remark=am_srv.name,
+                                protocol="amnezia",
+                                port=0,
+                                settings_json="{}",
+                                provider_payload={"amnezia_server_id": am_srv.id},
+                                is_active=True,
+                            )
+                            session.add(inbound)
+                        else:
+                            inbound.remark = am_srv.name
+                            inbound.provider_payload = {"amnezia_server_id": am_srv.id}
+                        synced_count += 1
+
+                    await session.commit()
+                    synced_text = str(synced_count)
+                finally:
+                    await client.close()
+                    await client.__aexit__(None, None, None)
+            except Exception as sync_error:
+                logger.error(f"Failed to sync Amnezia inbounds: {sync_error}", exc_info=True)
+                await session.rollback()
+                synced_text = t(
+                    "admin.servers.sync_error",
+                    "❌ Ошибка при синхронизации: {error}",
+                    error=str(sync_error),
+                )
+
+            await state.clear()
+            ssl_status_text = (
+                t("admin.servers.ssl_enabled", "Включена")
+                if verify_ssl
+                else t("admin.servers.ssl_disabled", "Отключена")
+            )
+            await callback.message.edit_text(
+                t(
+                    "admin.servers.amnezia_added_success",
+                    "✅ Сервер Amnezia '{name}' успешно добавлен!\n\nURL: {url}\nПроверка SSL: {ssl_status}\nСинхронизировано inbounds: {synced_count}",
+                    name=server_name,
+                    url=server_url,
+                    ssl_status=ssl_status_text,
+                    synced_count=synced_text,
+                ),
+                reply_markup=get_back_keyboard("admin_servers"),
+            )
+
+        except Exception as e:
+            logger.error(f"Error saving amnezia server: {e}", exc_info=True)
+            await callback.message.edit_text(
+                t(
+                    "admin.servers.errors.save_failed",
+                    "❌ Ошибка при сохранении сервера: {error}",
+                    error=str(e),
+                ),
+                reply_markup=get_back_keyboard("admin_servers"),
+            )
