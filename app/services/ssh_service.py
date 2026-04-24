@@ -1,7 +1,6 @@
 """SSH Service for executing commands on servers."""
 
 import logging
-from urllib.parse import urlparse
 
 import asyncssh
 
@@ -24,12 +23,6 @@ class SSHManager:
 
         if server.ip_address:
             self.host = server.ip_address
-        elif server.url:
-            parsed = urlparse(server.url)
-            if parsed.hostname:
-                self.host = parsed.hostname
-            else:
-                self.host = server.url.split(":")[0]
         else:
             self.host = "127.0.0.1"
 

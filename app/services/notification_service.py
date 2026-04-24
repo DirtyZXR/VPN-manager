@@ -103,8 +103,14 @@ class NotificationService:
                         if not subscription_path:
                             subscription_path = getattr(server, "subscription_path", "/sub/")
 
+                        # If ip_address already has http/https, use it. Otherwise assume http for subscription.
+                        server_url = (
+                            server.ip_address
+                            if server.ip_address and server.ip_address.startswith("http")
+                            else f"http://{server.ip_address}"
+                        )
                         url = urljoin(
-                            server.url, f"{subscription_path}{subscription.subscription_token}"
+                            server_url, f"{subscription_path}{subscription.subscription_token}"
                         )
                         urls.append(url)
 
@@ -195,8 +201,14 @@ class NotificationService:
                         if not subscription_path:
                             subscription_path = getattr(server, "subscription_path", "/sub/")
 
+                        # If ip_address already has http/https, use it. Otherwise assume http for subscription.
+                        server_url = (
+                            server.ip_address
+                            if server.ip_address and server.ip_address.startswith("http")
+                            else f"http://{server.ip_address}"
+                        )
                         url = urljoin(
-                            server.url, f"{subscription_path}{subscription.subscription_token}"
+                            server_url, f"{subscription_path}{subscription.subscription_token}"
                         )
                         urls.append(url)
 
@@ -393,7 +405,12 @@ class NotificationService:
                 if not subscription_path:
                     subscription_path = getattr(server, "subscription_path", "/sub/")
 
-                url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
+                server_url = (
+                    server.ip_address
+                    if server.ip_address and server.ip_address.startswith("http")
+                    else f"http://{server.ip_address}"
+                )
+                url = urljoin(server_url, f"{subscription_path}{subscription.subscription_token}")
 
                 message += f"\n🔗 <b>URL подписки:</b>\n<code>{url}</code>"
 

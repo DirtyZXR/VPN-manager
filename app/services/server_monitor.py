@@ -64,14 +64,19 @@ class ServerMonitor:
             if not server:
                 return False
 
-            # If ip_address is provided use it, else parse from url
+            # If ip_address is provided use it
             if server.ip_address:
                 host = server.ip_address
+                # Strip http:// or https:// if present
+                if host.startswith("http://"):
+                    host = host[7:]
+                elif host.startswith("https://"):
+                    host = host[8:]
+                # Strip port if present
+                if ":" in host:
+                    host = host.split(":")[0]
             else:
-                from urllib.parse import urlparse
-
-                parsed = urlparse(server.url)
-                host = parsed.hostname or server.url.split(":")[0]
+                return False
 
             if not host:
                 return False

@@ -236,24 +236,22 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
     status = (
         t("admin.servers.status.active", "✅ Активен")
-        if server.is_active
+        if server.is_online
         else t("admin.servers.status.inactive", "❌ Неактивен")
     )
     last_sync = (
         server.last_sync_at.strftime("%d.%m.%Y %H:%M")
-        if server.last_sync_at
+        if hasattr(server, "last_sync_at") and server.last_sync_at
         else t("admin.servers.sync.never", "Никогда")
     )
 
     ip_info = f"\n🌐 IP: {server.ip_address}" if server.ip_address else ""
-    url_info = f"\n🔗 URL: {server.url}" if server.url else ""
 
     text = t(
         "admin.servers.info_new",
-        "🖥️ Сервер: {name}{ip_info}{url_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+        "🖥️ Сервер: {name}{ip_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
         name=server.name,
         ip_info=ip_info,
-        url_info=url_info,
         status=status,
         last_sync=last_sync,
     )
@@ -295,20 +293,6 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
             "callback_data": f"server_test_{server_id}",
         }
     )
-    if server.is_active:
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.disable", "❌ Отключить"),
-                "callback_data": f"server_disable_{server_id}",
-            }
-        )
-    else:
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.enable", "✅ Включить"),
-                "callback_data": f"server_enable_{server_id}",
-            }
-        )
     builder.append(
         {
             "text": t("admin.servers.buttons.delete", "🗑️ Удалить"),
@@ -599,46 +583,6 @@ async def show_inbound_stats(callback: CallbackQuery, is_admin: bool) -> None:
             )
         finally:
             await service.close_all_clients()
-
-
-@router.callback_query(F.data.startswith("server_enable_"))
-async def enable_server(callback: CallbackQuery, is_admin: bool) -> None:
-    """Enable server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
-    server_id = int(callback.data.split("_")[-1])
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        await service.update_server(server_id, is_active=True)
-        await session.commit()
-
-    await callback.answer(t("admin.servers.enabled", "✅ Сервер включен."))
-    await select_server(callback, is_admin)
-
-
-@router.callback_query(F.data.startswith("server_disable_"))
-async def disable_server(callback: CallbackQuery, is_admin: bool) -> None:
-    """Disable server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
-    server_id = int(callback.data.split("_")[-1])
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        await service.update_server(server_id, is_active=False)
-        await session.commit()
-
-    await callback.answer(t("admin.servers.disabled", "✅ Сервер отключен."))
-    await select_server(callback, is_admin)
 
 
 @router.callback_query(F.data.startswith("server_delete_"))
@@ -933,24 +877,22 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
 
     status = (
         t("admin.servers.status.active", "✅ Активен")
-        if server.is_active
+        if server.is_online
         else t("admin.servers.status.inactive", "❌ Неактивен")
     )
     last_sync = (
         server.last_sync_at.strftime("%d.%m.%Y %H:%M")
-        if server.last_sync_at
+        if hasattr(server, "last_sync_at") and server.last_sync_at
         else t("admin.servers.sync.never", "Никогда")
     )
 
     ip_info = f"\n🌐 IP: {server.ip_address}" if server.ip_address else ""
-    url_info = f"\n🔗 URL: {server.url}" if server.url else ""
 
     text = t(
         "admin.servers.info_new",
-        "🖥️ Сервер: {name}{ip_info}{url_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+        "🖥️ Сервер: {name}{ip_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
         name=server.name,
         ip_info=ip_info,
-        url_info=url_info,
         status=status,
         last_sync=last_sync,
     )
@@ -992,20 +934,6 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
             "callback_data": f"server_test_{server_id}",
         }
     )
-    if server.is_active:
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.disable", "❌ Отключить"),
-                "callback_data": f"server_disable_{server_id}",
-            }
-        )
-    else:
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.enable", "✅ Включить"),
-                "callback_data": f"server_enable_{server_id}",
-            }
-        )
     builder.append(
         {
             "text": t("admin.servers.buttons.delete", "🗑️ Удалить"),
@@ -1153,7 +1081,6 @@ async def process_ssh_auth(message: TgMessage, state: FSMContext) -> None:
 
         dummy_server = Server(
             ip_address=server.ip_address,
-            url=server.url,
             ssh_port=ssh_port,
             ssh_user=ssh_user,
         )
@@ -1184,3 +1111,234 @@ async def process_ssh_auth(message: TgMessage, state: FSMContext) -> None:
     await status_msg.delete()
     await message.answer(t("admin.servers.ssh_success", "✅ SSH успешно настроен и проверен!"))
     await show_server_details(message, state, server_id)
+
+
+@router.callback_query(F.data.startswith("server_services_"))
+async def show_server_services(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Show services installed on the server."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    server_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(
+                selectinload(Server.xui_panel),
+                selectinload(Server.awg_service),
+                selectinload(Server.mtproxy_service),
+            )
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server:
+        await callback.answer(
+            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
+        )
+        return
+
+    text = t(
+        "admin.servers.services.title",
+        "⚙️ Управление сервисами сервера: <b>{name}</b>\n\n",
+        name=server.name,
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+
+    # 3x-ui
+    if server.xui_panel:
+        text += "✅ <b>3x-ui</b>: Установлен\n"
+        kb.button(
+            text=t("admin.servers.services.edit_xui", "✏️ 3x-ui"),
+            callback_data=f"server_edit_xui_{server_id}",
+        )
+    else:
+        text += "❌ <b>3x-ui</b>: Не установлен\n"
+        kb.button(
+            text=t("admin.servers.services.install_xui", "➕ Добавить 3x-ui"),
+            callback_data=f"server_install_xui_{server_id}",
+        )
+
+    # AmneziaWG
+    if server.awg_service:
+        text += "✅ <b>AmneziaWG</b>: Установлен\n"
+        kb.button(
+            text=t("admin.servers.services.edit_awg", "✏️ AmneziaWG"),
+            callback_data=f"server_edit_awg_{server_id}",
+        )
+    else:
+        text += "❌ <b>AmneziaWG</b>: Не установлен\n"
+        kb.button(
+            text=t("admin.servers.services.install_awg", "➕ Добавить AmneziaWG"),
+            callback_data=f"server_install_awg_{server_id}",
+        )
+
+    # MTProxy
+    if server.mtproxy_service:
+        text += "✅ <b>MTProxy</b>: Установлен\n"
+        kb.button(
+            text=t("admin.servers.services.edit_mtproxy", "✏️ MTProxy"),
+            callback_data=f"server_edit_mtproxy_{server_id}",
+        )
+    else:
+        text += "❌ <b>MTProxy</b>: Не установлен\n"
+        kb.button(
+            text=t("admin.servers.services.install_mtproxy", "➕ Добавить MTProxy"),
+            callback_data=f"server_install_mtproxy_{server_id}",
+        )
+
+    text += "\nВы можете запустить автообнаружение сервисов через SSH."
+
+    kb.button(
+        text=t("admin.servers.services.autodiscover", "🔍 Автообнаружение сервисов"),
+        callback_data=f"server_autodiscover_{server_id}",
+    )
+    kb.button(
+        text=t("admin.servers.buttons.back", "🔙 Назад"), callback_data=f"server_select_{server_id}"
+    )
+
+    kb.adjust(1)
+
+    await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("server_autodiscover_"))
+async def run_server_autodiscover(
+    callback: CallbackQuery, state: FSMContext, is_admin: bool
+) -> None:
+    """Run AutoDiscoveryService over SSH."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    server_id = int(callback.data.split("_")[-1])
+
+    await callback.message.edit_text(
+        t(
+            "admin.servers.services.autodiscovering",
+            "🔍 Запущено автообнаружение сервисов по SSH...\nПожалуйста, подождите.",
+        ),
+        reply_markup=None,
+    )
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+        from app.database.models.services import AWGService, MTProxyService, XUIPanel
+
+        result = await session.execute(
+            select(Server)
+            .options(
+                selectinload(Server.xui_panel),
+                selectinload(Server.awg_service),
+                selectinload(Server.mtproxy_service),
+            )
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+        if not server:
+            await callback.answer(
+                t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
+            )
+            return
+
+        if not server.ssh_user:
+            await callback.message.edit_text(
+                t(
+                    "admin.servers.services.ssh_not_configured",
+                    "❌ SSH не настроен для этого сервера. Сначала настройте SSH.",
+                ),
+                reply_markup=get_back_keyboard(f"server_select_{server_id}"),
+            )
+            return
+
+        from app.services.auto_discovery import AutoDiscoveryService
+
+        discovery = AutoDiscoveryService(server)
+
+        try:
+            discovered = await discovery.discover_all()
+        except Exception as e:
+            logger.error(f"Discovery error on server {server_id}: {e}", exc_info=True)
+            await callback.message.edit_text(
+                t(
+                    "admin.servers.services.discovery_error",
+                    "❌ Ошибка при выполнении автообнаружения: {error}",
+                    error=str(e),
+                ),
+                reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            )
+            return
+
+        discovered_list = []
+        if "3x-ui" in discovered:
+            if not server.xui_panel:
+                details = discovered["3x-ui"]
+                panel = XUIPanel(
+                    server_id=server.id,
+                    username=details.get("username"),
+                    panel_path=details.get("base_path"),
+                    subscription_path=details.get("sub_path"),
+                )
+                session.add(panel)
+                discovered_list.append("3x-ui")
+            else:
+                discovered_list.append("3x-ui (уже был)")
+
+        if "amnezia-awg" in discovered:
+            if not server.awg_service:
+                awg = AWGService(server_id=server.id)
+                session.add(awg)
+                discovered_list.append("AmneziaWG")
+            else:
+                discovered_list.append("AmneziaWG (уже был)")
+
+        if "mtproxy" in discovered:
+            if not server.mtproxy_service:
+                mtproxy = MTProxyService(server_id=server.id)
+                session.add(mtproxy)
+                discovered_list.append("MTProxy")
+            else:
+                discovered_list.append("MTProxy (уже был)")
+
+        if discovered_list:
+            await session.commit()
+            msg = t(
+                "admin.servers.services.discovery_success",
+                "✅ Автообнаружение завершено. Найдено:\n- {items}",
+                items="\n- ".join(discovered_list),
+            )
+        else:
+            msg = t(
+                "admin.servers.services.discovery_empty",
+                "❌ Никаких известных сервисов не найдено.",
+            )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text=t("admin.servers.buttons.back", "🔙 Назад"),
+        callback_data=f"server_services_{server_id}",
+    )
+
+    await callback.message.edit_text(msg, reply_markup=kb.as_markup())
+    await callback.answer()

@@ -131,7 +131,7 @@ class SyncService:
         """
         from sqlalchemy import select
 
-        result = await self.session.execute(select(Server).where(Server.is_active))
+        result = await self.session.execute(select(Server).where(Server.is_online))
         servers = result.scalars().all()
 
         logger.info(

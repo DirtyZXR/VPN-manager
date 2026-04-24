@@ -60,6 +60,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         db_ips = []
 
         from sqlalchemy import select
+
         from app.database import async_session_factory
 
         async with async_session_factory() as session:

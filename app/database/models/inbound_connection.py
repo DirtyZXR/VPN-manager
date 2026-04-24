@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class InboundConnection(Base, TimestampMixin, SyncMixin):
-    """Unique connection to an inbound (within a subscription)."""
+    """Base unique connection to an inbound (within a subscription)."""
 
     __tablename__ = "inbound_connections"
     __table_args__ = (
@@ -36,15 +36,17 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
         ForeignKey("inbounds.id", ondelete="CASCADE"),
         nullable=False,
     )
-    xui_client_id: Mapped[str | None] = mapped_column(String(100), nullable=True)  # UUID from XUI
-    email: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Email from XUI
-    uuid: Mapped[str | None] = mapped_column(String(100), nullable=True)  # UUID from XUI
-    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Per-connection traffic and expiry settings (can differ per inbound)
     total_gb: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0 = unlimited
     expiry_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __mapper_args__ = {
+        "polymorphic_on": "type",
+        "polymorphic_identity": "inbound_connection",
+    }
 
     # Relationships
     subscription: Mapped["Subscription"] = relationship(
@@ -54,7 +56,7 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
     inbound: Mapped["Inbound"] = relationship("Inbound", back_populates="client_connections")
 
     def __repr__(self) -> str:
-        return f"<InboundConnection(id={self.id}, uuid='{self.uuid}', enabled={self.is_enabled})>"
+        return f"<{self.__class__.__name__}(id={self.id}, enabled={self.is_enabled})>"
 
     @property
     def is_unlimited(self) -> bool:
@@ -109,3 +111,50 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
         now = datetime.now(UTC)
         delta = expiry - now
         return math.ceil(delta.total_seconds() / 86400)
+
+
+class XUIInboundConnection(InboundConnection):
+    """3x-ui specific inbound connection."""
+
+    __tablename__ = "xui_inbound_connections"
+
+    id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("inbound_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "xui_inbound_connection",
+    }
+
+    xui_client_id: Mapped[str | None] = mapped_column(String(100), nullable=True)  # UUID from XUI
+    email: Mapped[str | None] = mapped_column(String(200), nullable=True)  # Email from XUI
+    uuid: Mapped[str | None] = mapped_column(String(100), nullable=True)  # UUID from XUI
+    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class AWGInboundConnection(InboundConnection):
+    """AmneziaWG specific inbound connection."""
+
+    __tablename__ = "awg_inbound_connections"
+
+    id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("inbound_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "awg_inbound_connection",
+    }
+
+
+class MTProxyInboundConnection(InboundConnection):
+    """MTProxy specific inbound connection."""
+
+    __tablename__ = "mtproxy_inbound_connections"
+
+    id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("inbound_connections.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "mtproxy_inbound_connection",
+    }
