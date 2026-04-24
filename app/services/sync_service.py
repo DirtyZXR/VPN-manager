@@ -235,6 +235,18 @@ class SyncService:
             return False
 
         except Exception as e:
+            # Check for Amnezia errors without importing at top level
+            if type(e).__name__ == "AmneziaConnectionError":
+                server.sync_status = "offline"
+                server.sync_error = f"Connection failed: {str(e)}"
+                logger.warning(f"[WARN] Сервер {server.id} недоступен (Amnezia)")
+                return False
+            elif type(e).__name__ == "AmneziaError":
+                server.sync_status = "error"
+                server.sync_error = str(e)
+                logger.error(f"[ERROR] Ошибка Amnezia сервера {server.id}: {e}")
+                return False
+
             server.sync_status = "error"
             server.sync_error = f"Unexpected: {str(e)}"
             logger.error(f"[ERROR] Неожиданная ошибка сервера {server.id}: {e}", exc_info=True)
@@ -264,6 +276,12 @@ class SyncService:
         try:
             for inbound in inbounds:
                 try:
+                    if getattr(inbound.server, "panel_type", "xui") == "amnezia":
+                        logger.debug(
+                            f"Пропуск синхронизации клиентов для Amnezia inbound {inbound.id}"
+                        )
+                        continue
+
                     # Получить XUI клиент для сервера
                     xui_client = await self._xui_service._get_client(inbound.server)
 
@@ -303,6 +321,10 @@ class SyncService:
         server = await self.session.get(Server, server_id)
         if not server:
             logger.warning(f"Сервер {server_id} не найден")
+            return 0
+
+        if getattr(server, "panel_type", "xui") == "amnezia":
+            logger.info(f"[LOG] Пропуск синхронизации клиентов для Amnezia сервера {server_id}")
             return 0
 
         # Получить все активные inbounds этого сервера
@@ -600,6 +622,10 @@ class SyncService:
                 try:
                     inbound = connection.inbound
                     if inbound and hasattr(inbound, "server"):
+                        if getattr(inbound.server, "panel_type", "xui") == "amnezia":
+                            # Skip XUI integrity check for Amnezia
+                            continue
+
                         xui_client = await self._xui_service._get_client(inbound.server)
                         xui_data = await xui_client.get_client(inbound.xui_id, connection.uuid)
 

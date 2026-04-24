@@ -785,6 +785,11 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
         )
         return
 
+    await callback.answer()
+    await callback.message.edit_text(
+        "⏳ Удаление клиента, пожалуйста подождите...", reply_markup=None
+    )
+
     data = await state.get_data()
     client_id = data["client_id"]
 

@@ -1,12 +1,11 @@
 """Subscription request service."""
 
-from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.database.models import Client, SubscriptionRequest, SubscriptionTemplate
+from app.database.models import SubscriptionRequest
 
 
 class SubscriptionRequestService:

@@ -1,7 +1,8 @@
-import yaml
 from pathlib import Path
-from loguru import logger
 from typing import Any
+
+import yaml
+from loguru import logger
 
 
 class TextManager:
@@ -16,7 +17,7 @@ class TextManager:
             return
 
         try:
-            with open(self.filepath, "r", encoding="utf-8") as f:
+            with open(self.filepath, encoding="utf-8") as f:
                 self._texts = yaml.safe_load(f) or {}
         except Exception as e:
             logger.warning(f"Failed to load text file {self.filepath}: {e}")

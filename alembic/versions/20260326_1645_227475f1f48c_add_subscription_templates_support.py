@@ -1,5 +1,3 @@
-"""Mako template for migration scripts."""
-
 """Add subscription templates support
 
 Revision ID: 227475f1f48c
@@ -7,9 +5,9 @@ Revises: 20260326_2000
 Create Date: 2026-03-26 16:45:51.350081
 
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '227475f1f48c'

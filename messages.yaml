@@ -993,19 +993,9 @@ user:
     conn_expiry: "      Срок: {expiry}\n"
     conn_info: "    └ {status} {remark} ({protocol}) | {server}\n"
     conn_traffic: "      Трафик: {traffic}\n"
-    conn_url: "  • URL: {url}\n"
-    details_header: "📝 Подписка: <b>{name}</b>
-
-
-      Статус: {status}
-
-      Создана: {created}
-
-      Активных подключений: {active}/{total}
-
-      Токен: <code>{token}</code>
-
-      \n"
+    conn_url: "  • URL: <code>{url}</code>\n"
+    details_header: "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n"
+    details_token: "\nТокен: <code>{token}</code>"
     empty: "📝 У вас пока нет подписок.
 
 

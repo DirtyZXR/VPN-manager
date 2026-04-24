@@ -1,5 +1,3 @@
-"""Mako template for migration scripts."""
-
 """add notification_logs table for expiry and traffic warnings
 
 Revision ID: 65f261c1a3b2
@@ -7,9 +5,9 @@ Revises: 227475f1f48c
 Create Date: 2026-03-27 17:24:46.295361
 
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '65f261c1a3b2'

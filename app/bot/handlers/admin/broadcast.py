@@ -1,10 +1,10 @@
 """Broadcast handlers for admin."""
 
 import asyncio
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
 from app.bot.keyboards.inline import get_back_keyboard, get_confirm_keyboard

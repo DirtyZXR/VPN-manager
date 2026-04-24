@@ -1,7 +1,8 @@
 """Create initial schema with all tables."""
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '1700_initial_schema'

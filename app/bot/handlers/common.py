@@ -19,7 +19,7 @@ from app.bot.keyboards import (
 from app.bot.states.user import InstructionViewing
 from app.config import load_instructions, reload_instructions
 from app.database.models import Client
-from app.utils.texts import t, reload_texts
+from app.utils.texts import reload_texts, t
 
 router = Router()
 
@@ -204,7 +204,7 @@ async def instruction_prev_step(callback: CallbackQuery, state: FSMContext) -> N
     os_name = data.get("os_name", "")
 
     instructions = load_instructions()
-    steps = instructions.get(os_name, {}).get("step_by_step", {}).get("steps", [])
+    _steps = instructions.get(os_name, {}).get("step_by_step", {}).get("steps", [])
 
     prev_step = max(current_step - 1, 0)
     await state.update_data(step=prev_step)

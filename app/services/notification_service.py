@@ -181,6 +181,29 @@ class NotificationService:
                     f"📅 <b>Срок действия:</b> {expiry_text}\n"
                 )
 
+                connections = getattr(subscription, "inbound_connections", [])
+
+                # Add subscription URLs
+                if connections:
+                    from urllib.parse import urljoin
+
+                    servers = {conn.inbound.server for conn in connections}
+                    urls = []
+                    for server in servers:
+                        # Prioritize JSON URL, fallback to standard URL
+                        subscription_path = getattr(server, "subscription_json_path", None)
+                        if not subscription_path:
+                            subscription_path = getattr(server, "subscription_path", "/sub/")
+
+                        url = urljoin(
+                            server.url, f"{subscription_path}{subscription.subscription_token}"
+                        )
+                        urls.append(url)
+
+                    if urls:
+                        message += "\n🔗 <b>Все URL подписки:</b>\n"
+                        message += "\n\n".join([f"<code>{u}</code>" for u in urls])
+
                 await bot.send_message(
                     chat_id=client.telegram_id,
                     text=message,

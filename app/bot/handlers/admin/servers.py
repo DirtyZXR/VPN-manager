@@ -61,6 +61,7 @@ async def start_add_server(callback: CallbackQuery, state: FSMContext, is_admin:
         )
         return
 
+    await state.clear()
     await state.set_state(ServerManagement.waiting_for_name)
     await callback.message.edit_text(
         t(
@@ -374,13 +375,17 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
             )
             await session.flush()
 
+            server_id = server.id
+
             # Sync inbounds automatically
             try:
-                synced_inbounds = await service.sync_server_inbounds(server.id)
+                synced_inbounds = await service.sync_server_inbounds(server_id)
                 await session.commit()
-                logger.info(f"✅ Автосинхронизация сервера {server.id}: {synced_inbounds} inbounds")
+                logger.info(
+                    "✅ Автосинхронизация сервера {}: {} inbounds", server_id, synced_inbounds
+                )
             except Exception as sync_error:
-                logger.error(f"❌ Ошибка синхронизации inbounds: {sync_error}", exc_info=True)
+                logger.error("❌ Ошибка синхронизации inbounds: {}", sync_error, exc_info=True)
                 await session.rollback()  # Rollback sync but keep server
                 # Re-commit just the server creation
                 await session.commit()
@@ -410,7 +415,7 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
             )
 
         except XUIError as e:
-            logger.error(f"Connection test failed: {e}", exc_info=True)
+            logger.error("Connection test failed: {}", e, exc_info=True)
 
             # Check if it's an SSL error
             if "SSL" in str(e) or "tls" in str(e).lower():
@@ -449,7 +454,7 @@ async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContex
                 await state.clear()
 
         except Exception as e:
-            logger.error(f"Unexpected error: {e}", exc_info=True)
+            logger.error("Unexpected error: {}", e, exc_info=True)
             await callback.message.edit_text(
                 t(
                     "admin.servers.errors.unexpected",
@@ -513,13 +518,19 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
             )
             await session.flush()
 
+            server_name = server.name
+            server_url = server.url
+            server_id = server.id
+
             # Sync inbounds automatically
             try:
-                synced_inbounds = await service.sync_server_inbounds(server.id)
+                synced_inbounds = await service.sync_server_inbounds(server_id)
                 await session.commit()
-                logger.info(f"✅ Автосинхронизация сервера {server.id}: {synced_inbounds} inbounds")
+                logger.info(
+                    "✅ Автосинхронизация сервера {}: {} inbounds", server_id, synced_inbounds
+                )
             except Exception as sync_error:
-                logger.error(f"❌ Ошибка синхронизации inbounds: {sync_error}", exc_info=True)
+                logger.error("❌ Ошибка синхронизации inbounds: {}", sync_error, exc_info=True)
                 await session.rollback()  # Rollback sync but keep server
                 # Re-commit just the server creation
                 await session.commit()
@@ -534,8 +545,8 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
                 t(
                     "admin.servers.added_success_no_ssl",
                     "✅ Сервер '{name}' успешно добавлен!\n\nURL: {url}\n⚠️ Проверка SSL: ОТКЛЮЧЕНА\nНайдено inbounds: {inbounds_count}\nСинхронизировано inbounds: {synced_count}",
-                    name=server.name,
-                    url=server.url,
+                    name=server_name,
+                    url=server_url,
                     inbounds_count=len(inbounds),
                     synced_count=synced_text,
                 ),
@@ -543,7 +554,7 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
             )
 
         except XUIError as e:
-            logger.error(f"Connection test failed even without SSL: {e}", exc_info=True)
+            logger.error("Connection test failed even without SSL: {}", e, exc_info=True)
             await callback.message.edit_text(
                 t(
                     "admin.servers.errors.connection_failed_no_ssl",
@@ -555,7 +566,7 @@ async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
             await state.clear()
 
         except Exception as e:
-            logger.error(f"Unexpected error: {e}", exc_info=True)
+            logger.error("Unexpected error: {}", e, exc_info=True)
             await callback.message.edit_text(
                 t(
                     "admin.servers.errors.unexpected",
@@ -620,17 +631,17 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
 
     text = t(
         "admin.servers.info",
-        "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
-        name=server.name,
-        url=server.url,
-        panel_path=panel_path,
-        sub_path=subscription_path,
-        json_path=subscription_json_path,
-        username=server.username,
-        ssl_status=ssl_status,
-        status=status,
-        last_sync=last_sync,
-    )
+            "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+            name=server.name,
+            url=server.url,
+            panel_path=panel_path,
+            sub_path=subscription_path,
+            json_path=subscription_json_path,
+            username=server.username,
+            ssl_status=ssl_status,
+            status=status,
+            last_sync=last_sync,
+        )
 
     builder = []
     builder.append(
@@ -727,7 +738,7 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
                     t("admin.servers.errors.not_found", "❌ Сервер не найден"), show_alert=True
                 )
         except Exception as e:
-            logger.error(f"Error syncing server {server_id}: {e}", exc_info=True)
+            logger.error("Error syncing server {}: {}", server_id, e, exc_info=True)
             await callback.answer(
                 t(
                     "admin.servers.errors.sync_failed",
@@ -751,7 +762,15 @@ async def test_server(callback: CallbackQuery, is_admin: bool) -> None:
 
     async with async_session_factory() as session:
         service = XUIService(session)
-        success, message = await service.test_server_connection(server_id)
+        server = await service.get_server_by_id(server_id)
+        if not server:
+            await callback.answer(
+                t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
+            )
+            return
+
+            success, message = await service.test_server_connection(server_id)
+
         await service.close_all_clients()
 
     if success:
@@ -785,7 +804,7 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
             return
 
         # Get inbounds from database
-        inbounds = await service.get_server_inbounds(server_id)
+        inbounds = await service.get_server_inbounds_all_status(server_id)
 
         if not inbounds:
             await callback.message.edit_text(
@@ -819,6 +838,8 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
                 clients=inbound.client_count,
             )
 
+        has_inactive = any(not inbound.is_active for inbound in inbounds)
+
         from aiogram.utils.keyboard import InlineKeyboardBuilder
 
         kb = InlineKeyboardBuilder()
@@ -826,6 +847,11 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
             text=t("admin.servers.buttons.update_stats", "🔄 Обновить статистику"),
             callback_data=f"inbound_stats_{server_id}",
         )
+        if has_inactive:
+            kb.button(
+                text=t("admin.servers.buttons.cleanup_inbounds", "🧹 Очистить удаленные inbounds"),
+                callback_data=f"cleanup_inbounds_{server_id}",
+            )
         kb.button(
             text=t("admin.servers.buttons.back", "🔙 Назад"),
             callback_data=f"server_select_{server_id}",
@@ -834,6 +860,34 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
 
         await callback.message.edit_text(text, reply_markup=kb.as_markup())
         await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cleanup_inbounds_"))
+async def cleanup_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
+    """Cleanup inactive inbounds for a server."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    server_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import delete
+
+        from app.database.models import Inbound
+
+        await session.execute(
+            delete(Inbound).where(Inbound.server_id == server_id, Inbound.is_active.is_(False))
+        )
+        await session.commit()
+
+    await callback.answer(
+        t("admin.servers.inbounds.cleanup_success", "✅ Удаленные inbounds очищены"),
+        show_alert=True,
+    )
+    await show_server_inbounds(callback, is_admin)
 
 
 @router.callback_query(F.data.startswith("inbound_stats_"))
@@ -911,7 +965,7 @@ async def show_inbound_stats(callback: CallbackQuery, is_admin: bool) -> None:
             await callback.answer(t("admin.servers.stats.updated", "✅ Статистика обновлена"))
 
         except Exception as e:
-            logger.error(f"Error getting inbound stats: {e}", exc_info=True)
+            logger.error("Error getting inbound stats: {}", e, exc_info=True)
             await callback.answer(
                 t("admin.servers.errors.generic", "❌ Ошибка: {error}", error=str(e)),
                 show_alert=True,
@@ -1001,7 +1055,7 @@ async def delete_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
     await state.clear()
     await callback.answer(t("admin.servers.deleted", "✅ Сервер удален."))
-    await show_servers(callback, is_admin)
+    await show_servers(callback, is_admin, state)
 
 
 @router.callback_query(F.data.startswith("server_edit_"))
@@ -1044,24 +1098,25 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
             "callback_data": "edit_server_url",
         }
     )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_panel_path", "📁 Путь панели"),
-            "callback_data": "edit_server_panel_path",
-        }
-    )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_sub_path", "📝 Путь подписок"),
-            "callback_data": "edit_server_sub_path",
-        }
-    )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_json_path", "📋 Путь JSON"),
-            "callback_data": "edit_server_json_path",
-        }
-    )
+    if server.panel_type == "xui":
+        builder.append(
+            {
+                "text": t("admin.servers.buttons.edit_panel_path", "📁 Путь панели"),
+                "callback_data": "edit_server_panel_path",
+            }
+        )
+        builder.append(
+            {
+                "text": t("admin.servers.buttons.edit_sub_path", "📝 Путь подписок"),
+                "callback_data": "edit_server_sub_path",
+            }
+        )
+        builder.append(
+            {
+                "text": t("admin.servers.buttons.edit_json_path", "📋 Путь JSON"),
+                "callback_data": "edit_server_json_path",
+            }
+        )
     builder.append(
         {
             "text": t("admin.servers.buttons.edit_username", "👤 Логин"),
@@ -1093,14 +1148,14 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
 
     text = t(
         "admin.servers.edit_menu",
-        "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
-        name=server.name,
-        url=server.url,
-        panel_path=panel_path,
-        sub_path=subscription_path,
-        json_path=subscription_json_path,
-        username=server.username,
-    )
+            "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
+            name=server.name,
+            url=server.url,
+            panel_path=panel_path,
+            sub_path=subscription_path,
+            json_path=subscription_json_path,
+            username=server.username,
+        )
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
     await callback.answer()
@@ -1687,24 +1742,25 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
             "callback_data": "edit_server_url",
         }
     )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_panel_path", "📁 Путь панели"),
-            "callback_data": "edit_server_panel_path",
-        }
-    )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_sub_path", "📝 Путь подписок"),
-            "callback_data": "edit_server_sub_path",
-        }
-    )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_json_path", "📋 Путь JSON"),
-            "callback_data": "edit_server_json_path",
-        }
-    )
+    if server.panel_type == "xui":
+        builder.append(
+            {
+                "text": t("admin.servers.buttons.edit_panel_path", "📁 Путь панели"),
+                "callback_data": "edit_server_panel_path",
+            }
+        )
+        builder.append(
+            {
+                "text": t("admin.servers.buttons.edit_sub_path", "📝 Путь подписок"),
+                "callback_data": "edit_server_sub_path",
+            }
+        )
+        builder.append(
+            {
+                "text": t("admin.servers.buttons.edit_json_path", "📋 Путь JSON"),
+                "callback_data": "edit_server_json_path",
+            }
+        )
     builder.append(
         {
             "text": t("admin.servers.buttons.edit_username", "👤 Логин"),
@@ -1736,14 +1792,14 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
 
     text = t(
         "admin.servers.edit_menu",
-        "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
-        name=server.name,
-        url=server.url,
-        panel_path=panel_path,
-        sub_path=subscription_path,
-        json_path=subscription_json_path,
-        username=server.username,
-    )
+            "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
+            name=server.name,
+            url=server.url,
+            panel_path=panel_path,
+            sub_path=subscription_path,
+            json_path=subscription_json_path,
+            username=server.username,
+        )
 
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
@@ -1781,17 +1837,17 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
 
     text = t(
         "admin.servers.info",
-        "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
-        name=server.name,
-        url=server.url,
-        panel_path=panel_path,
-        sub_path=subscription_path,
-        json_path=subscription_json_path,
-        username=server.username,
-        ssl_status=ssl_status,
-        status=status,
-        last_sync=last_sync,
-    )
+            "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+            name=server.name,
+            url=server.url,
+            panel_path=panel_path,
+            sub_path=subscription_path,
+            json_path=subscription_json_path,
+            username=server.username,
+            ssl_status=ssl_status,
+            status=status,
+            last_sync=last_sync,
+        )
 
     builder = []
     builder.append(
@@ -1850,3 +1906,5 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     kb.adjust(1)
 
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+

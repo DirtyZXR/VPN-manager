@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 class ServerManagement(StatesGroup):
     """Server management states."""
 
+    waiting_for_panel_type = State()
     waiting_for_name = State()
     waiting_for_base_url = State()
     waiting_for_panel_path = State()
@@ -65,7 +66,7 @@ class SubscriptionManagement(StatesGroup):
     # Select client
     waiting_for_client_selection = State()
 
-    # Select server
+    # Select server (multiple selection)
     waiting_for_server_selection = State()
 
     # Select inbound (multiple selection)
