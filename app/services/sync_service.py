@@ -188,20 +188,18 @@ class SyncService:
                 logger.debug(f"✓ Сервер {server.id} в актуальном состоянии")
                 return False
 
-            if not server.xui_panel:
-                logger.debug(f"✓ Сервер {server.id} не имеет XUI панели, пропуск XUI синхронизации")
-                # TODO: add sync for other panel types
-                return False
-
             logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
 
-            # Получить XUI клиент
-            xui_client = await self._xui_service._get_client(server)
+            xui_client = None
+            if server.xui_panel:
+                # Получить XUI клиент
+                xui_client = await self._xui_service._get_client(server)
+                # Синхронизировать inbounds
+                await self._sync_server_inbounds(server, xui_client)
+            else:
+                logger.debug(f"Сервер {server.id} не имеет XUI панели, пропуск XUI inbounds синхронизации")
 
-            # Синхронизировать inbounds
-            await self._sync_server_inbounds(server, xui_client)
-
-            # Синхронизировать клиентов для всех inbounds этого сервера
+            # Синхронизация клиентов для всех inbounds этого сервера
             from sqlalchemy import select
             from sqlalchemy.orm import with_polymorphic
 
@@ -383,6 +381,8 @@ class SyncService:
             xui_client = await self._xui_service._get_client(server)
 
             for inbound in inbounds:
+                if inbound.type != "xui_inbound":
+                    continue
                 try:
                     synced = await self._sync_inbound_clients(inbound, xui_client)
                     total_synced += synced
