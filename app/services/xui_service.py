@@ -180,7 +180,7 @@ class XUIService:
         result = await self.session.execute(
             select(Server)
             .options(selectinload(Server.xui_panel))
-            .where(Server.is_online)
+            .where(Server.is_active)
             .order_by(Server.name)
         )
         return result.scalars().all()

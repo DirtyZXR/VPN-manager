@@ -133,7 +133,7 @@ class SyncService:
 
         result = await self.session.execute(
             select(Server)
-            .where(Server.is_online)
+            .where(Server.is_active)
             .options(
                 selectinload(Server.xui_panel),
                 selectinload(Server.awg_service),

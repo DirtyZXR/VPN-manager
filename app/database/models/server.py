@@ -25,6 +25,9 @@ class Server(Base, TimestampMixin, SyncMixin):
     is_online: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default="0"
     )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="1"
+    )
 
     # SSH Access for direct management
     ssh_port: Mapped[int] = mapped_column(Integer, default=22, nullable=False, server_default="22")
