@@ -202,9 +202,14 @@ class SyncService:
 
             # Синхронизировать клиентов для всех inbounds этого сервера
             from sqlalchemy import select
+            from sqlalchemy.orm import with_polymorphic
+
+            inbound_poly = with_polymorphic(Inbound, "*")
 
             inbounds_result = await self.session.execute(
-                select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active)
+                select(inbound_poly).where(
+                    inbound_poly.server_id == server.id, inbound_poly.is_active
+                )
             )
             inbounds = inbounds_result.scalars().all()
 
@@ -271,18 +276,21 @@ class SyncService:
         #         await xui_service.close_all_clients()
 
     async def sync_all_clients(self) -> int:
-        """Синхронизировать всех клиентов со всех активных inbounds.
+        """Синхронизировать всех клиентов на всех активных inbounds.
 
         Returns:
             Количество синхронизированных клиентов
         """
         from sqlalchemy import select
+        from sqlalchemy.orm import with_polymorphic
+
+        inbound_poly = with_polymorphic(Inbound, "*")
 
         # Получить все активные inbounds с серверами
         result = await self.session.execute(
-            select(Inbound)
-            .where(Inbound.is_active)
-            .options(selectinload(Inbound.server).selectinload(Server.xui_panel))
+            select(inbound_poly)
+            .where(inbound_poly.is_active)
+            .options(selectinload(inbound_poly.server).selectinload(Server.xui_panel))
         )
         inbounds = result.scalars().all()
 
@@ -335,6 +343,7 @@ class SyncService:
             Количество синхронизированных клиентов
         """
         from sqlalchemy import select
+        from sqlalchemy.orm import with_polymorphic
 
         # Получить сервер
         server = await self.session.get(
@@ -354,9 +363,11 @@ class SyncService:
             logger.info(f"[LOG] Пропуск синхронизации клиентов для не-XUI сервера {server_id}")
             return 0
 
+        inbound_poly = with_polymorphic(Inbound, "*")
+
         # Получить все активные inbounds этого сервера
         result = await self.session.execute(
-            select(Inbound).where(Inbound.server_id == server_id, Inbound.is_active)
+            select(inbound_poly).where(inbound_poly.server_id == server_id, inbound_poly.is_active)
         )
         inbounds = result.scalars().all()
 
@@ -429,13 +440,21 @@ class SyncService:
         # Получить inbounds из XUI
         xui_inbounds = await xui_client.get_inbounds()
 
+        from sqlalchemy.orm import with_polymorphic
+
+        inbound_poly = with_polymorphic(Inbound, "*")
+
         # Сопоставить с существующими
         existing_inbounds = await self.session.execute(
-            select(Inbound)
-            .where(Inbound.server_id == server.id)
-            .options(selectinload(Inbound.server))
+            select(inbound_poly)
+            .where(inbound_poly.server_id == server.id)
+            .options(selectinload(inbound_poly.server))
         )
-        existing_map = {ib.xui_id: ib for ib in existing_inbounds.scalars().all()}
+        existing_map = {
+            getattr(ib, "xui_id", None): ib
+            for ib in existing_inbounds.scalars().all()
+            if getattr(ib, "xui_id", None) is not None
+        }
 
         # Обновить или создать inbounds
         for xui_ib in xui_inbounds:
@@ -528,12 +547,21 @@ class SyncService:
             logger.debug(f"Пример данных клиента: {xui_clients[0]}")
 
         # Сопоставить с существующими в базе по UUID
+        from sqlalchemy.orm import with_polymorphic
+
+        conn_poly = with_polymorphic(InboundConnection, "*")
+
         existing_connections = await self.session.execute(
-            select(InboundConnection)
-            .where(InboundConnection.inbound_id == inbound.id)
-            .options(selectinload(InboundConnection.subscription).selectinload(Subscription.client))
+            select(conn_poly)
+            .where(conn_poly.inbound_id == inbound.id)
+            .options(selectinload(conn_poly.subscription).selectinload(Subscription.client))
         )
-        existing_map = {conn.uuid: conn for conn in existing_connections.scalars().all()}
+        # Using getattr since some polymorphic instances might not have uuid, though for XUI they do
+        existing_map = {
+            getattr(conn, "uuid", None): conn
+            for conn in existing_connections.scalars().all()
+            if getattr(conn, "uuid", None)
+        }
         logger.info(
             f"[LOG] _sync_inbound_clients: в базе найдено {len(existing_map)} подключений для inbound {inbound.id}"
         )
@@ -630,11 +658,15 @@ class SyncService:
             True если целостность в порядке
         """
         from sqlalchemy import select
+        from sqlalchemy.orm import with_polymorphic
+
+        conn_poly = with_polymorphic(InboundConnection, "*")
+        inbound_poly = with_polymorphic(Inbound, "*")
 
         result = await self.session.execute(
-            select(InboundConnection).options(
-                selectinload(InboundConnection.inbound)
-                .selectinload(Inbound.server)
+            select(conn_poly).options(
+                selectinload(conn_poly.inbound.of_type(inbound_poly))
+                .selectinload(inbound_poly.server)
                 .selectinload(Server.xui_panel)
             )
         )
