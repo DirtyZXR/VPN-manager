@@ -7,9 +7,10 @@ Revises: f61af02614a9
 Create Date: 2026-04-24 19:50:45.336083
 
 """
-from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import sqlite
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "6ef042042a42"
@@ -44,6 +45,7 @@ def upgrade() -> None:
         "xui_panels",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("server_id", sa.Integer(), nullable=False),
+        sa.Column("url", sa.String(length=500), nullable=True),
         sa.Column("username", sa.String(length=100), nullable=True),
         sa.Column("password_encrypted", sa.Text(), nullable=True),
         sa.Column("verify_ssl", sa.Boolean(), nullable=False),
@@ -107,10 +109,30 @@ def upgrade() -> None:
 
     # --- ETL: Migrate Data from Parent to Child tables ---
     op.execute("""
-        INSERT INTO xui_panels (server_id, username, password_encrypted, verify_ssl, panel_type, provider_payload, panel_path, subscription_path, subscription_json_path, session_cookies_encrypted, session_created_at, created_at, updated_at)
-        SELECT id, username, password_encrypted, COALESCE(verify_ssl, 1), COALESCE(panel_type, 'xui'), provider_payload, panel_path, subscription_path, subscription_json_path, session_cookies_encrypted, session_created_at, created_at, updated_at
+        INSERT INTO xui_panels (server_id, url, username, password_encrypted, verify_ssl, panel_type, provider_payload, panel_path, subscription_path, subscription_json_path, session_cookies_encrypted, session_created_at, created_at, updated_at)
+        SELECT id, url, username, password_encrypted, COALESCE(verify_ssl, 1), COALESCE(panel_type, 'xui'), provider_payload, panel_path, subscription_path, subscription_json_path, session_cookies_encrypted, session_created_at, created_at, updated_at
         FROM servers
     """)
+
+    from urllib.parse import urlparse
+
+    connection = op.get_bind()
+    servers_data = connection.execute(
+        sa.text("SELECT id, url FROM servers WHERE url IS NOT NULL")
+    ).fetchall()
+    for row in servers_data:
+        try:
+            parsed = urlparse(row.url if "//" in row.url else "//" + row.url)
+            host = parsed.hostname
+            if host:
+                connection.execute(
+                    sa.text(
+                        "UPDATE servers SET ip_address = COALESCE(ip_address, :host) WHERE id = :id"
+                    ),
+                    {"host": host, "id": row.id},
+                )
+        except Exception:
+            pass
 
     op.execute("""
         INSERT INTO xui_inbounds (id, xui_id, settings_json, provider_payload, client_count)
@@ -230,7 +252,8 @@ def downgrade() -> None:
     # --- ETL: Migrate Data from Child to Parent tables ---
     op.execute("""
         UPDATE servers
-        SET username = xui_panels.username,
+        SET url = xui_panels.url,
+            username = xui_panels.username,
             password_encrypted = xui_panels.password_encrypted,
             verify_ssl = COALESCE(xui_panels.verify_ssl, 1),
             panel_type = COALESCE(xui_panels.panel_type, 'xui'),

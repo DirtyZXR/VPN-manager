@@ -25,6 +25,7 @@ class XUIPanel(Base, TimestampMixin):
     server: Mapped["Server"] = relationship("Server", back_populates="xui_panel")
 
     # 3x-ui specific connections
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     username: Mapped[str | None] = mapped_column(String(100), nullable=True)
     password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

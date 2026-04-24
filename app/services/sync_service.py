@@ -131,7 +131,15 @@ class SyncService:
         """
         from sqlalchemy import select
 
-        result = await self.session.execute(select(Server).where(Server.is_online))
+        result = await self.session.execute(
+            select(Server)
+            .where(Server.is_online)
+            .options(
+                selectinload(Server.xui_panel),
+                selectinload(Server.awg_service),
+                selectinload(Server.mtproxy_service),
+            )
+        )
         servers = result.scalars().all()
 
         logger.info(
@@ -177,6 +185,11 @@ class SyncService:
             # Проверить, нужна ли синхронизация
             if not force and not self._needs_sync(server):
                 logger.debug(f"✓ Сервер {server.id} в актуальном состоянии")
+                return False
+
+            if not server.xui_panel:
+                logger.debug(f"✓ Сервер {server.id} не имеет XUI панели, пропуск XUI синхронизации")
+                # TODO: add sync for other panel types
                 return False
 
             logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
@@ -267,7 +280,9 @@ class SyncService:
 
         # Получить все активные inbounds с серверами
         result = await self.session.execute(
-            select(Inbound).where(Inbound.is_active).options(selectinload(Inbound.server))
+            select(Inbound)
+            .where(Inbound.is_active)
+            .options(selectinload(Inbound.server).selectinload(Server.xui_panel))
         )
         inbounds = result.scalars().all()
 
@@ -276,10 +291,14 @@ class SyncService:
         try:
             for inbound in inbounds:
                 try:
-                    if getattr(inbound.server, "panel_type", "xui") == "amnezia":
+                    if inbound.type != "xui_inbound":
                         logger.debug(
-                            f"Пропуск синхронизации клиентов для Amnezia inbound {inbound.id}"
+                            f"Пропуск синхронизации клиентов для не-XUI inbound {inbound.id}"
                         )
+                        continue
+
+                    if not inbound.server.xui_panel:
+                        logger.debug(f"Сервер {inbound.server.id} не имеет XUI панели, пропуск")
                         continue
 
                     # Получить XUI клиент для сервера
@@ -318,13 +337,21 @@ class SyncService:
         from sqlalchemy import select
 
         # Получить сервер
-        server = await self.session.get(Server, server_id)
+        server = await self.session.get(
+            Server,
+            server_id,
+            options=[
+                selectinload(Server.xui_panel),
+                selectinload(Server.awg_service),
+                selectinload(Server.mtproxy_service),
+            ],
+        )
         if not server:
             logger.warning(f"Сервер {server_id} не найден")
             return 0
 
-        if getattr(server, "panel_type", "xui") == "amnezia":
-            logger.info(f"[LOG] Пропуск синхронизации клиентов для Amnezia сервера {server_id}")
+        if not server.xui_panel:
+            logger.info(f"[LOG] Пропуск синхронизации клиентов для не-XUI сервера {server_id}")
             return 0
 
         # Получить все активные inbounds этого сервера
@@ -606,7 +633,9 @@ class SyncService:
 
         result = await self.session.execute(
             select(InboundConnection).options(
-                selectinload(InboundConnection.inbound).selectinload(Inbound.server)
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel)
             )
         )
         connections = result.scalars().all()
@@ -622,8 +651,11 @@ class SyncService:
                 try:
                     inbound = connection.inbound
                     if inbound and hasattr(inbound, "server"):
-                        if getattr(inbound.server, "panel_type", "xui") == "amnezia":
-                            # Skip XUI integrity check for Amnezia
+                        if inbound.type != "xui_inbound":
+                            # Skip XUI integrity check for non-XUI inbounds
+                            continue
+
+                        if not inbound.server.xui_panel:
                             continue
 
                         xui_client = await self._xui_service._get_client(inbound.server)
@@ -684,7 +716,15 @@ class SyncService:
                 if entity_type == "server":
                     if entity_id:
                         logger.info(f"[LOG] Синхронизация сервера {entity_id} (с клиентами)")
-                        server = await self.session.get(Server, entity_id)
+                        server = await self.session.get(
+                            Server,
+                            entity_id,
+                            options=[
+                                selectinload(Server.xui_panel),
+                                selectinload(Server.awg_service),
+                                selectinload(Server.mtproxy_service),
+                            ],
+                        )
                         if server:
                             await self.sync_server(server, force=True)
                             results["synced"] = 1  # Один сервер синхронизирован
