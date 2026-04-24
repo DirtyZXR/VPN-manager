@@ -262,7 +262,7 @@ class XUIService:
         url: str | None = None,
         username: str | None = None,
         password: str | None = None,
-        is_active: bool | None = None,
+        is_online: bool | None = None,
         verify_ssl: bool | None = None,
         panel_path: str | None = None,
         subscription_path: str | None = None,
@@ -281,7 +281,7 @@ class XUIService:
             url: New URL (optional)
             username: New username (optional)
             password: New password (optional)
-            is_active: New active status (optional)
+            is_online: New online status (optional)
             verify_ssl: New SSL verification status (optional)
             panel_path: New panel path (optional)
             subscription_path: New subscription path (optional)
@@ -305,10 +305,8 @@ class XUIService:
         if new_ip is not None:
             server.ip_address = new_ip
 
-        if is_active is not None:
-            # is_active was removed from Server. We ignore it or map it to is_online if strictly needed.
-            # But the monitor will override is_online anyway, so we just ignore it.
-            pass
+        if is_online is not None:
+            server.is_online = is_online
 
         if ssh_user is not None:
             server.ssh_user = ssh_user

@@ -54,7 +54,7 @@ async def select_server_for_subscription(callback: CallbackQuery, state: FSMCont
 
         builder = InlineKeyboardBuilder()
         for server in servers:
-            status = "✅" if server.is_active else "❌"
+            status = "✅" if server.is_online else "❌"
             sel_icon = "🔘" if server.id in selected_servers else "⚪"
             builder.button(
                 text=f"{sel_icon} {status} {server.name}",

@@ -1,0 +1,4 @@
+app/bot/keyboards/inline.py:159: if server.is_active
+app/bot/keyboards/inline.py:213: if server.is_active
+app/bot/handlers/admin/dashboard.py:40: select(func.count(Server.id)).where(Server.is_active.is_(True))
+app/bot/handlers/admin/subscriptions.py:57: status = "✅" if server.is_active else "❌"

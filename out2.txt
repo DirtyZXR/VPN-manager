@@ -1,0 +1,41 @@
+app/services/client_service.py:87: .where(Client.is_active)
+app/services/client_service.py:105: count_result = await self.session.execute(select(Client).where(Client.is_active))
+app/services/client_service.py:111: .where(Client.is_active)
+app/services/client_service.py:208: is_active=True,
+app/services/client_service.py:223: is_active: bool | None = _SENTINEL,
+app/services/client_service.py:234: is_active: New active status (optional)
+app/services/client_service.py:262: if is_active is not _SENTINEL:
+app/services/client_service.py:263: client.is_active = is_active
+app/services/client_service.py:304: async def set_client_active(self, client_id: int, is_active: bool) -> Client | None:
+app/services/client_service.py:309: is_active: Active status
+app/services/client_service.py:314: return await self.update_client(client_id, is_active=is_active)
+app/services/new_subscription_service.py:127: is_active=True,
+app/services/new_subscription_service.py:693: is_active: bool | None = None,
+app/services/new_subscription_service.py:704: is_active: New active status (optional)
+app/services/new_subscription_service.py:736: if is_active is not None:
+app/services/new_subscription_service.py:737: subscription.is_active = is_active
+app/services/new_subscription_service.py:745: or is_active is not None
+app/services/new_subscription_service.py:759: connection.is_enabled = subscription.is_active
+app/services/notification_checker.py:65: select(Client.id).where(Client.telegram_id.isnot(None)).where(Client.is_active)
+app/services/notification_checker.py:80: .where(Subscription.is_active)
+app/services/notification_service.py:172: f"✅ <b>Статус:</b> {'Активна' if subscription.is_active else 'Отключена'}\n"
+app/services/subscription_template_service.py:46: .where(SubscriptionTemplate.is_active)
+app/services/subscription_template_service.py:64: .where(SubscriptionTemplate.is_active, SubscriptionTemplate.is_public)
+app/services/subscription_template_service.py:125: is_active=True,
+app/services/subscription_template_service.py:144: is_active: bool | None = None,
+app/services/subscription_template_service.py:156: is_active: New active status (optional)
+app/services/subscription_template_service.py:176: if is_active is not None:
+app/services/subscription_template_service.py:177: template.is_active = is_active
+app/services/sync_service.py:211: inbound_poly.server_id == server.id, inbound_poly.is_active
+app/services/sync_service.py:292: .where(inbound_poly.is_active)
+app/services/sync_service.py:370: select(inbound_poly).where(inbound_poly.server_id == server_id, inbound_poly.is_active)
+app/services/sync_service.py:499: is_active=True,
+app/services/xui_service.py:265: is_active: bool | None = None,
+app/services/xui_service.py:284: is_active: New active status (optional)
+app/services/xui_service.py:308: if is_active is not None:
+app/services/xui_service.py:309: # is_active was removed from Server. We ignore it or map it to is_online if strictly needed.
+app/services/xui_service.py:433: inbound.is_active = xui_inbound.enable
+app/services/xui_service.py:443: is_active=xui_inbound.enable,
+app/services/xui_service.py:452: db_ib.is_active = False
+app/services/xui_service.py:472: .where(Inbound.server_id == server_id, Inbound.is_active)
+app/services/xui_service.py:500: .where(Inbound.is_active)

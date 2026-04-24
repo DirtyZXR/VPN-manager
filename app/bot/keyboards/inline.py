@@ -156,7 +156,7 @@ def get_servers_keyboard(
     for server in servers:
         status = (
             t("keyboards.common.status.active", "Активен")
-            if server.is_active
+            if server.is_online
             else t("keyboards.common.status.inactive", "Неактивен")
         )
         panel_marker = "[Amnezia] " if getattr(server, "panel_type", "xui") == "amnezia" else ""
@@ -210,7 +210,7 @@ def get_servers_keyboard_for_template_edit(
     for server in servers:
         status = (
             t("keyboards.common.status.active", "Активен")
-            if server.is_active
+            if server.is_online
             else t("keyboards.common.status.inactive", "Неактивен")
         )
         builder.button(

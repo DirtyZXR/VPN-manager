@@ -37,7 +37,7 @@ async def show_admin_dashboard(callback: CallbackQuery, is_admin: bool, state: F
         # Count servers
         total_servers = await session.scalar(select(func.count(Server.id)))
         active_servers = await session.scalar(
-            select(func.count(Server.id)).where(Server.is_active.is_(True))
+            select(func.count(Server.id)).where(Server.is_online.is_(True))
         )
 
         # Count clients
