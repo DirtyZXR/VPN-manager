@@ -33,6 +33,7 @@ class Inbound(Base, TimestampMixin, SyncMixin):
     __mapper_args__ = {
         "polymorphic_on": "type",
         "polymorphic_identity": "inbound",
+        "with_polymorphic": "*",
     }
 
     # Relationships

@@ -457,7 +457,7 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
                 remark=inbound.remark,
                 protocol=inbound.protocol,
                 port=inbound.port,
-                clients=inbound.client_count,
+                clients=getattr(inbound, "client_count", 0),
             )
 
         has_inactive = any(not inbound.is_active for inbound in inbounds)

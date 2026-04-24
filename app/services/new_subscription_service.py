@@ -331,7 +331,8 @@ class NewSubscriptionService:
             await self.session.flush()
 
             # Update inbound client count
-            inbound.client_count += 1
+            if hasattr(inbound, "client_count"):
+                inbound.client_count += 1
 
             return connection
 
@@ -375,7 +376,8 @@ class NewSubscriptionService:
         if inbound and inbound.server:
             provider = await self._get_provider(inbound.server)
             await provider.remove_client(inbound, connection)
-            inbound.client_count -= 1
+            if hasattr(inbound, "client_count"):
+                inbound.client_count -= 1
 
         # Delete from database
         await self.session.delete(connection)
@@ -959,7 +961,8 @@ class NewSubscriptionService:
                 if inbound and inbound.server:
                     provider = await self._get_provider(inbound.server)
                     await provider.remove_client(inbound, connection)
-                    inbound.client_count -= 1
+                    if hasattr(inbound, "client_count"):
+                        inbound.client_count -= 1
             except Exception as e:
                 logger.warning(f"Failed to delete VPN client for connection {connection.id}: {e}")
 
