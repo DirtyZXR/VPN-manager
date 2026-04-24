@@ -31,7 +31,15 @@ class PortManager:
         try:
             # -t: tcp, -u: udp, -l: listening, -n: numeric
             # We parse the local address column (e.g. 0.0.0.0:443 or :::80)
-            output = await self.ssh.run_command("ss -tuln | awk '{print $5}' | grep -o '[0-9]*$'")
+            try:
+                output = await self.ssh.run_command(
+                    "ss -tuln | awk '{print $5}' | grep -o '[0-9]*$'"
+                )
+            except Exception:
+                # Fallback to netstat if ss is not available
+                output = await self.ssh.run_command(
+                    "netstat -tuln | awk '{print $4}' | grep -o '[0-9]*$'"
+                )
 
             used_ports = set()
             for line in output.strip().split("\n"):

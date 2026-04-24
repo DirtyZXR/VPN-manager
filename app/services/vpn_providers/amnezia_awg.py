@@ -58,10 +58,19 @@ class AmneziaAWGProvider(BaseVPNProvider):
 
         # 2. Find all IPs currently assigned in the database for this inbound
         db_ips = []
-        for conn in inbound.connections:
-            payload = conn.provider_payload or {}
-            if ip := payload.get("client_ip"):
-                db_ips.append(ip)
+
+        from sqlalchemy import select
+        from app.database import async_session_factory
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(InboundConnection).where(InboundConnection.inbound_id == inbound.id)
+            )
+            connections = result.scalars().all()
+            for conn in connections:
+                payload = conn.provider_payload or {}
+                if ip := payload.get("client_ip"):
+                    db_ips.append(ip)
 
         # Combine all used IPs
         all_used_ips = set(file_ips + db_ips)
@@ -147,12 +156,23 @@ class AmneziaAWGProvider(BaseVPNProvider):
             kick_cmd = f"docker exec -i {self.container_name} awg set {self.interface_name} peer {public_key} remove"
             await self.ssh.run_command(kick_cmd)
 
-            # 2. Remove from config file
-            # Simple sed or awk. Let's use awk to remove the Peer block
-            # This awk script deletes from [Peer] block containing the PublicKey until the next empty line or [
-            awk_script = f'awk \'/^\\[Peer\\]/ {{p=1; buf=$0; next}} p && /PublicKey\\s*=\\s*{re.escape(public_key)}/ {{del=1}} p && /^(\\[|$)/ {{if(!del) print buf; p=0; del=0; buf=""}} p {{buf=buf "\\n" $0}} !p {{print}} END {{if(p && !del) print buf}}\' {self.config_path} > {self.config_path}.tmp && mv {self.config_path}.tmp {self.config_path}'
-            update_cmd = f"docker exec -i {self.container_name} bash -c '{awk_script}'"
-            await self.ssh.run_command(update_cmd)
+            # 2. Remove from config file using Python directly to avoid bash quoting issues
+            config_text = await self.ssh.run_command(
+                f"docker exec -i {self.container_name} cat {self.config_path}"
+            )
+
+            blocks = config_text.split("[Peer]")
+            new_blocks = [blocks[0]]  # Add the [Interface] block back
+
+            for block in blocks[1:]:
+                if public_key not in block:
+                    new_blocks.append(block)
+
+            new_config_text = "[Peer]".join(new_blocks)
+
+            # Write it back via stdin
+            write_cmd = f"docker exec -i {self.container_name} bash -c 'cat > {self.config_path}'"
+            await self.ssh.run_command(write_cmd, input_data=new_config_text)
 
             # 3. Sync again for consistency (optional but safe)
             sync_cmd = f"docker exec -i {self.container_name} bash -c 'awg syncconf {self.interface_name} <(awg-quick strip {self.config_path})'"
