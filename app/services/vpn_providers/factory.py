@@ -1,7 +1,6 @@
 """Factory for getting the appropriate VPN Provider."""
 
 from app.database.models import Server
-from app.services.vpn_providers.amnezia_provider import AmneziaProvider
 from app.services.vpn_providers.base import BaseVPNProvider
 from app.services.vpn_providers.xui_provider import XUIProvider
 
@@ -22,7 +21,5 @@ def get_vpn_provider(server: Server) -> BaseVPNProvider:
 
     if panel_type == "xui":
         return XUIProvider(server)
-    elif panel_type == "amnezia":
-        return AmneziaProvider(server)
     else:
         raise ValueError(f"Unknown panel_type: {panel_type} for server {server.id}")

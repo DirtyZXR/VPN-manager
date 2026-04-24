@@ -782,9 +782,7 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
             config = await provider.get_client_config(conn.inbound, conn)
 
             if config.get("config_data"):
-                import io
 
-                import qrcode
                 from aiogram.types import BufferedInputFile
 
                 config_data = config["config_data"]

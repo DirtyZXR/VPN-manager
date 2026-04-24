@@ -181,113 +181,37 @@ class SyncService:
 
             logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
 
-            if getattr(server, "panel_type", "xui") == "amnezia":
-                from app.services.vpn_providers.factory import get_vpn_provider
+            # Получить XUI клиент
+            xui_client = await self._xui_service._get_client(server)
 
-                provider = get_vpn_provider(server)
-                # Simply connect to verify the server is alive and sync inbounds
+            # Синхронизировать inbounds
+            await self._sync_server_inbounds(server, xui_client)
+
+            # Синхронизировать клиентов для всех inbounds этого сервера
+            from sqlalchemy import select
+
+            inbounds_result = await self.session.execute(
+                select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active)
+            )
+            inbounds = inbounds_result.scalars().all()
+
+            clients_synced = 0
+            logger.info(
+                f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}"
+            )
+            for inbound in inbounds:
                 try:
-                    if hasattr(provider, "_get_client"):
-                        am_client = await provider._get_client()
-
-                        # Fetch Amnezia servers (inbounds)
-                        amnezia_servers = await am_client.get_servers()
-
-                        # Update inbounds in DB
-                        from sqlalchemy import select
-
-                        existing_inbounds = await self.session.execute(
-                            select(Inbound).where(Inbound.server_id == server.id)
-                        )
-                        existing_map = {
-                            (ib.xui_id, ib.protocol): ib for ib in existing_inbounds.scalars().all()
-                        }
-                        seen_inbounds = set()
-
-                        for am_srv in amnezia_servers:
-                            xui_id = am_srv.id
-                            protocols = am_srv.protocols if am_srv.protocols else []
-
-                            if not protocols:
-                                # Fallback if no protocols are returned
-                                protocols = [
-                                    type("DummyProtocol", (), {"slug": "amnezia", "id": None})()
-                                ]
-
-                            for p in protocols:
-                                p_slug = p.slug
-                                p_id = p.id
-                                remark_str = am_srv.name
-                                seen_inbounds.add((xui_id, p_slug))
-
-                                if (xui_id, p_slug) in existing_map:
-                                    db_ib = existing_map[(xui_id, p_slug)]
-                                    db_ib.remark = remark_str
-                                    db_ib.sync_status = "synced"
-                                    db_ib.last_sync_at = datetime.now(UTC)
-                                    payload = {"amnezia_server_id": xui_id}
-                                    if p_id is not None:
-                                        payload["amnezia_protocol_id"] = p_id
-                                    db_ib.provider_payload = payload
-                                    db_ib.is_active = True
-                                else:
-                                    payload = {"amnezia_server_id": xui_id}
-                                    if p_id is not None:
-                                        payload["amnezia_protocol_id"] = p_id
-                                    new_ib = Inbound(
-                                        server_id=server.id,
-                                        xui_id=xui_id,
-                                        remark=remark_str,
-                                        protocol=p_slug,
-                                        port=0,
-                                        settings_json="{}",
-                                        provider_payload=payload,
-                                        is_active=True,
-                                        sync_status="synced",
-                                        last_sync_at=datetime.now(UTC),
-                                    )
-                                    self.session.add(new_ib)
-
-                        for key, db_ib in existing_map.items():
-                            if key not in seen_inbounds:
-                                db_ib.is_active = False
-                finally:
-                    await provider.close()
-                clients_synced = 0
-            else:
-                # Получить XUI клиент
-                xui_client = await self._xui_service._get_client(server)
-
-                # Синхронизировать inbounds
-                await self._sync_server_inbounds(server, xui_client)
-
-                # Синхронизировать клиентов для всех inbounds этого сервера
-                from sqlalchemy import select
-
-                inbounds_result = await self.session.execute(
-                    select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active)
-                )
-                inbounds = inbounds_result.scalars().all()
-
-                clients_synced = 0
-                logger.info(
-                    f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}"
-                )
-                for inbound in inbounds:
-                    try:
-                        logger.info(
-                            f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})"
-                        )
-                        synced = await self._sync_inbound_clients(inbound, xui_client)
-                        clients_synced += synced
-                        logger.info(
-                            f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано"
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
-                            exc_info=True,
-                        )
+                    logger.info(
+                        f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})"
+                    )
+                    synced = await self._sync_inbound_clients(inbound, xui_client)
+                    clients_synced += synced
+                    logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
+                except Exception as e:
+                    logger.error(
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        exc_info=True,
+                    )
 
             # Обновить статус синхронизации
             server.last_sync_at = datetime.now(UTC)

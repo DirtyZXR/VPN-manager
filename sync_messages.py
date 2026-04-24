@@ -1,5 +1,6 @@
-import os
 import ast
+import os
+
 import yaml
 
 
@@ -39,21 +40,23 @@ def main():
         for file in files:
             if file.endswith(".py"):
                 filepath = os.path.join(root, file)
-                with open(filepath, "r", encoding="utf-8") as f:
+                with open(filepath, encoding="utf-8") as f:
                     content = f.read()
 
                 try:
                     tree = ast.parse(content)
                     for node in ast.walk(tree):
-                        if isinstance(node, ast.Call):
-                            if isinstance(node.func, ast.Name) and node.func.id == "t":
-                                if len(node.args) >= 2:
-                                    if isinstance(node.args[0], ast.Constant) and isinstance(
-                                        node.args[1], ast.Constant
-                                    ):
-                                        key = node.args[0].value
-                                        default = node.args[1].value
-                                        set_nested(texts, key, default)
+                        if (
+                            isinstance(node, ast.Call)
+                            and isinstance(node.func, ast.Name)
+                            and node.func.id == "t"
+                            and len(node.args) >= 2
+                            and isinstance(node.args[0], ast.Constant)
+                            and isinstance(node.args[1], ast.Constant)
+                        ):
+                            key = node.args[0].value
+                            default = node.args[1].value
+                            set_nested(texts, key, default)
                 except SyntaxError:
                     pass
 
@@ -67,7 +70,7 @@ def main():
     existing_texts = {}
 
     if os.path.exists(messages_path):
-        with open(messages_path, "r", encoding="utf-8") as f:
+        with open(messages_path, encoding="utf-8") as f:
             existing_texts = yaml.safe_load(f) or {}
 
     merged_texts = deep_merge(existing_texts, texts)

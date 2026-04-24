@@ -45,8 +45,9 @@ async def select_server_for_subscription(callback: CallbackQuery, state: FSMCont
     await state.update_data(server_ids=selected_servers)
 
     async with async_session_factory() as session:
-        from app.database.models import Server
         from sqlalchemy import select
+
+        from app.database.models import Server
 
         result = await session.execute(select(Server))
         servers = result.scalars().all()
@@ -422,6 +423,17 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
             if inbounds:
                 all_inbounds.extend(inbounds)
         selected_inbounds = [ib for ib in all_inbounds if ib.id in data["selected_inbounds"]]
+
+    traffic_str = (
+        f"{data['total_gb']} GB"
+        if data["total_gb"] > 0
+        else t("admin.subscriptions.unlimited", "Безлимит")
+    )
+    expiry_str = (
+        t("admin.subscriptions.days_count", "{count} дней", count=data["expiry_days"])
+        if data["expiry_days"]
+        else t("admin.subscriptions.unlimited_time", "Бессрочно")
+    )
 
     text = t(
         "admin.subscriptions.confirm_creation",
@@ -927,7 +939,6 @@ async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> No
     """Confirm and add inbounds to subscription."""
     data = await state.get_data()
     selected_inbounds = data.get("selected_inbounds", set())
-    subscription_id = data.get("subscription_id")
 
     if not selected_inbounds:
         await callback.answer(

@@ -61,48 +61,14 @@ async def start_add_server(callback: CallbackQuery, state: FSMContext, is_admin:
         )
         return
 
-    from app.bot.keyboards.inline import get_server_panel_type_keyboard
-
-    await callback.message.edit_text(
-        t("admin.servers.select_type", "Выберите тип панели для нового сервера:"),
-        reply_markup=get_server_panel_type_keyboard(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "add_server_type_xui")
-async def add_server_type_xui(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    """Start adding new XUI server."""
-    if not is_admin:
-        return
-
+    await state.clear()
     await state.set_state(ServerManagement.waiting_for_name)
     await callback.message.edit_text(
         t(
             "admin.servers.add_name",
-            "➕ Добавление нового сервера 3x-ui\n\nВведите название сервера (например, 'NL-Server-1'):",
+            "➕ Добавление нового сервера\n\nВведите название сервера (например, 'NL-Server-1'):",
         ),
-        reply_markup=get_back_keyboard("server_add"),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "add_server_type_amnezia")
-async def add_server_type_amnezia(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
-) -> None:
-    """Start adding new Amnezia server."""
-    if not is_admin:
-        return
-
-    await state.update_data(panel_type="amnezia")
-    await state.set_state(ServerManagement.waiting_for_amnezia_api_url)
-    await callback.message.edit_text(
-        t(
-            "admin.servers.add_amnezia_url",
-            "🛡 Добавление Amnezia PHP Panel\n\nВведите API URL сервера Amnezia (например, https://vpn.example.com):",
-        ),
-        reply_markup=get_back_keyboard("server_add"),
+        reply_markup=get_back_keyboard("admin_servers"),
     )
     await callback.answer()
 
@@ -663,26 +629,14 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
     subscription_path = getattr(server, "subscription_path", "/sub/")
     subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
-    if server.panel_type == "xui":
-        text = t(
-            "admin.servers.info",
+    text = t(
+        "admin.servers.info",
             "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
             name=server.name,
             url=server.url,
             panel_path=panel_path,
             sub_path=subscription_path,
             json_path=subscription_json_path,
-            username=server.username,
-            ssl_status=ssl_status,
-            status=status,
-            last_sync=last_sync,
-        )
-    else:
-        text = t(
-            "admin.servers.info_amnezia",
-            "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
-            name=server.name,
-            url=server.url,
             username=server.username,
             ssl_status=ssl_status,
             status=status,
@@ -815,24 +769,6 @@ async def test_server(callback: CallbackQuery, is_admin: bool) -> None:
             )
             return
 
-        if getattr(server, "panel_type", "xui") == "amnezia":
-            from app.amnezia_client import AmneziaError
-            from app.services.vpn_providers.amnezia_provider import AmneziaProvider
-
-            try:
-                provider = AmneziaProvider(server)
-                client = await provider._get_client()
-                # Test connection with an API call
-                await client.get_server_stats(1)
-                success, message = True, "Подключение к Amnezia Panel успешно."
-            except AmneziaError as e:
-                success, message = False, f"Ошибка подключения: {e}"
-            except Exception as e:
-                success, message = False, f"Ошибка: {e}"
-            finally:
-                if "provider" in locals():
-                    await provider.close()
-        else:
             success, message = await service.test_server_connection(server_id)
 
         await service.close_all_clients()
@@ -1210,23 +1146,14 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
         kb.button(**btn)
     kb.adjust(1)
 
-    if server.panel_type == "xui":
-        text = t(
-            "admin.servers.edit_menu",
+    text = t(
+        "admin.servers.edit_menu",
             "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
             name=server.name,
             url=server.url,
             panel_path=panel_path,
             sub_path=subscription_path,
             json_path=subscription_json_path,
-            username=server.username,
-        )
-    else:
-        text = t(
-            "admin.servers.edit_menu_amnezia",
-            "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
-            name=server.name,
-            url=server.url,
             username=server.username,
         )
 
@@ -1863,23 +1790,14 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
         kb.button(**btn)
     kb.adjust(1)
 
-    if server.panel_type == "xui":
-        text = t(
-            "admin.servers.edit_menu",
+    text = t(
+        "admin.servers.edit_menu",
             "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
             name=server.name,
             url=server.url,
             panel_path=panel_path,
             sub_path=subscription_path,
             json_path=subscription_json_path,
-            username=server.username,
-        )
-    else:
-        text = t(
-            "admin.servers.edit_menu_amnezia",
-            "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
-            name=server.name,
-            url=server.url,
             username=server.username,
         )
 
@@ -1917,26 +1835,14 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     subscription_path = getattr(server, "subscription_path", "/sub/")
     subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
 
-    if server.panel_type == "xui":
-        text = t(
-            "admin.servers.info",
+    text = t(
+        "admin.servers.info",
             "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
             name=server.name,
             url=server.url,
             panel_path=panel_path,
             sub_path=subscription_path,
             json_path=subscription_json_path,
-            username=server.username,
-            ssl_status=ssl_status,
-            status=status,
-            last_sync=last_sync,
-        )
-    else:
-        text = t(
-            "admin.servers.info_amnezia",
-            "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
-            name=server.name,
-            url=server.url,
             username=server.username,
             ssl_status=ssl_status,
             status=status,
@@ -2002,239 +1908,3 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
 
-# ==========================================
-# Amnezia Server Addition Flow
-# ==========================================
-
-
-@router.message(ServerManagement.waiting_for_amnezia_api_url)
-async def process_amnezia_api_url(message: TgMessage, state: FSMContext) -> None:
-    """Process Amnezia API URL input."""
-    url = message.text.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-
-    await state.update_data(url=url)
-    await state.set_state(ServerManagement.waiting_for_amnezia_username)
-    await message.answer(
-        t("admin.servers.add_amnezia_email", "Введите Email (логин) для Amnezia:"),
-        reply_markup=get_back_keyboard("server_add"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_amnezia_username)
-async def process_amnezia_username(message: TgMessage, state: FSMContext) -> None:
-    """Process Amnezia username input."""
-    await state.update_data(username=message.text.strip())
-    await state.set_state(ServerManagement.waiting_for_amnezia_password)
-    await message.answer(
-        t("admin.servers.add_amnezia_password", "Введите пароль для Amnezia:"),
-        reply_markup=get_back_keyboard("server_add"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_amnezia_password)
-async def process_amnezia_password(message: TgMessage, state: FSMContext) -> None:
-    """Process Amnezia password input and ask for SSL verification."""
-    await state.update_data(password=message.text.strip())
-    await state.set_state(ServerManagement.waiting_for_amnezia_verify_ssl)
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-    kb = InlineKeyboardBuilder()
-    kb.button(
-        text=t("admin.servers.buttons.verify_ssl_yes", "✅ Да (рекомендуется)"),
-        callback_data="amnezia_verify_ssl_yes",
-    )
-    kb.button(
-        text=t("admin.servers.buttons.verify_ssl_no", "❌ Нет (для самоподписанных сертификатов)"),
-        callback_data="amnezia_verify_ssl_no",
-    )
-    kb.adjust(1)
-
-    await message.answer(
-        t(
-            "admin.servers.add_amnezia_ssl",
-            "Включить проверку SSL сертификата?\n\n"
-            "Рекомендуется оставить включенной. Отключайте только если "
-            "вы используете самоподписанный сертификат.",
-        ),
-        reply_markup=kb.as_markup(),
-    )
-
-
-@router.callback_query(F.data.startswith("amnezia_verify_ssl_"))
-async def process_amnezia_verify_ssl(callback: CallbackQuery, state: FSMContext) -> None:
-    """Process SSL verification selection and save Amnezia server."""
-    logger.info("Starting Amnezia server creation")
-    verify_ssl = callback.data == "amnezia_verify_ssl_yes"
-    data = await state.get_data()
-
-    await callback.message.edit_text(
-        t("admin.servers.saving", "⏳ Подключение и сохранение сервера..."),
-        reply_markup=None,
-    )
-
-    from urllib.parse import urlparse
-
-    from sqlalchemy import select
-
-    from app.amnezia_client.client import AmneziaClient
-    from app.database.models import Inbound, Server
-
-    api_url = data.get("url", "")
-    if not api_url.startswith("http://") and not api_url.startswith("https://"):
-        api_url = f"https://{api_url}"
-    if not api_url.endswith("/api"):
-        api_url = api_url.rstrip("/") + "/api"
-
-    # Validate credentials with Amnezia API BEFORE creating DB record
-    logger.info("Connecting to Amnezia API to validate credentials")
-    client = AmneziaClient(
-        base_url=api_url,
-        email=data.get("username", ""),
-        password=data.get("password", ""),
-        verify_ssl=verify_ssl,
-    )
-
-    amnezia_servers = []
-    try:
-        async with client:
-            await client.login()
-            amnezia_servers = await client.get_servers()
-            logger.info("Amnezia servers fetched successfully")
-    except Exception as api_error:
-        logger.error(
-            "Failed to authenticate or fetch servers from Amnezia API: {}", api_error, exc_info=True
-        )
-        error_msg = str(api_error)
-        if "login failed" in error_msg.lower() or "auth" in error_msg.lower():
-            err_text = t(
-                "admin.servers.errors.auth_failed",
-                "❌ Ошибка авторизации: неверный логин или пароль.\n\nДетали: {error}",
-                error=error_msg,
-            )
-        else:
-            err_text = t(
-                "admin.servers.errors.connection_failed",
-                "❌ Ошибка подключения: {error}",
-                error=error_msg,
-            )
-
-        await callback.message.edit_text(
-            err_text,
-            reply_markup=get_back_keyboard("admin_servers"),
-        )
-        await state.clear()
-        return
-
-    # If API calls succeed, proceed to DB operations
-    parsed = urlparse(data.get("url", ""))
-    name = f"Amnezia {parsed.netloc}"
-    if "name" in data:
-        name = data["name"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-
-        try:
-            original_name = name
-            counter = 1
-            while True:
-                existing = await session.execute(select(Server).where(Server.name == name))
-                if not existing.scalar_one_or_none():
-                    break
-                name = f"{original_name} ({counter})"
-                counter += 1
-
-            server = await service.create_server(
-                name=name,
-                url=data.get("url", ""),
-                username=data.get("username", ""),
-                password=data.get("password", ""),
-                verify_ssl=verify_ssl,
-            )
-            server.panel_type = "amnezia"
-
-            # Access properties before commit to avoid lazy loading
-            server_name = server.name
-            server_url = server.url
-            server_id = server.id
-
-            synced_count = 0
-            for am_srv in amnezia_servers:
-                protocols = (
-                    [{"slug": p.slug, "id": p.id} for p in am_srv.protocols]
-                    if am_srv.protocols
-                    else [{"slug": "amnezia", "id": None}]
-                )
-
-                for p in protocols:
-                    p_slug = p["slug"]
-                    p_id = p["id"]
-
-                    result = await session.execute(
-                        select(Inbound).where(
-                            Inbound.server_id == server_id,
-                            Inbound.xui_id == am_srv.id,
-                            Inbound.protocol == p_slug,
-                        )
-                    )
-                    inbound = result.scalar_one_or_none()
-
-                    remark_str = am_srv.name
-                    payload = {"amnezia_server_id": am_srv.id}
-                    if p_id is not None:
-                        payload["amnezia_protocol_id"] = p_id
-
-                    if not inbound:
-                        inbound = Inbound(
-                            server_id=server_id,
-                            xui_id=am_srv.id,
-                            remark=remark_str,
-                            protocol=p_slug,
-                            port=0,
-                            settings_json="{}",
-                            provider_payload=payload,
-                            is_active=True,
-                        )
-                        session.add(inbound)
-                    else:
-                        inbound.remark = remark_str
-                        inbound.provider_payload = payload
-                    synced_count += 1
-
-            await session.commit()
-            logger.info("Server and inbounds saved to DB successfully")
-
-            await state.clear()
-            ssl_status_text = (
-                t("admin.servers.ssl_enabled", "Включена")
-                if verify_ssl
-                else t("admin.servers.ssl_disabled", "Отключена")
-            )
-
-            logger.info("Sending success message")
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.amnezia_added_success",
-                    "✅ Сервер Amnezia '{name}' успешно добавлен!\n\nURL: {url}\nПроверка SSL: {ssl_status}\nСинхронизировано inbounds: {synced_count}",
-                    name=server_name,
-                    url=server_url,
-                    ssl_status=ssl_status_text,
-                    synced_count=str(synced_count),
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )
-
-        except Exception as e:
-            await session.rollback()
-            logger.exception("Amnezia server addition failed during DB save:")
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.errors.save_failed",
-                    "❌ Ошибка при сохранении сервера: {error}",
-                    error=str(e),
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )

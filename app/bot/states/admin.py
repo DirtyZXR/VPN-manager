@@ -17,12 +17,6 @@ class ServerManagement(StatesGroup):
     waiting_for_verify_ssl = State()
     confirm_delete = State()
 
-    # Amnezia Sync states
-    waiting_for_amnezia_api_url = State()
-    waiting_for_amnezia_username = State()
-    waiting_for_amnezia_password = State()
-    waiting_for_amnezia_verify_ssl = State()
-
     # Server editing states
     waiting_for_edit_name = State()
     waiting_for_edit_base_url = State()
