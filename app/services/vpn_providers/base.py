@@ -57,6 +57,7 @@ class BaseVPNProvider(ABC):
         Args:
             inbound: The inbound/protocol
             connection: The inbound connection
+            prefer_json: Whether to return config as JSON
 
         Returns:
             Dictionary containing config data, e.g.:
@@ -65,6 +66,45 @@ class BaseVPNProvider(ABC):
                 "config_data": "vless://...", # or raw file content for .conf
                 "qr_code_base64": "...", # optional
             }
+        """
+        pass
+
+    @abstractmethod
+    async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        """Remove a client's access (delete/revoke).
+
+        Args:
+            inbound: The inbound/protocol
+            connection: The inbound connection to remove
+
+        Returns:
+            True if successfully removed, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        """Temporarily disable a client without removing them.
+
+        Args:
+            inbound: The inbound/protocol
+            connection: The inbound connection to disable
+
+        Returns:
+            True if successfully disabled, False otherwise
+        """
+        pass
+
+    @abstractmethod
+    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        """Re-enable a previously disabled client.
+
+        Args:
+            inbound: The inbound/protocol
+            connection: The inbound connection to enable
+
+        Returns:
+            True if successfully enabled, False otherwise
         """
         pass
 

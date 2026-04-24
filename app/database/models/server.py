@@ -35,6 +35,13 @@ class Server(Base, TimestampMixin, SyncMixin):
     subscription_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     subscription_json_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # SSH Access for direct management
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22, nullable=False, server_default="22")
+    ssh_user: Mapped[str] = mapped_column(
+        String(100), default="root", nullable=False, server_default="root"
+    )
+    ssh_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Session management
     session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_created_at: Mapped[datetime | None] = mapped_column(

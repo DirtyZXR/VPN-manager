@@ -134,6 +134,50 @@ class XUIProvider(BaseVPNProvider):
         await client.update_client(x_id, req)
         return True
 
+    async def _set_client_enable_status(
+        self, inbound: Inbound, connection: InboundConnection, is_enabled: bool
+    ) -> bool:
+        """Helper to toggle client enable status."""
+        client = await self._get_client()
+
+        payload = connection.provider_payload or {}
+        c_uuid = connection.uuid or payload.get("uuid")
+        c_email = connection.email or payload.get("email")
+
+        if not c_uuid or not c_email:
+            raise ValueError("Missing UUID or email for XUI connection update")
+
+        expiry_time_ms = 0
+        if connection.subscription and connection.subscription.expiry_date:
+            expiry_time_ms = int(connection.subscription.expiry_date.timestamp() * 1000)
+
+        total_bytes = 0
+        if connection.subscription and connection.subscription.total_gb:
+            total_bytes = connection.subscription.total_gb * 1024 * 1024 * 1024
+
+        req = XUIAddClientRequest(
+            id=c_uuid,
+            enable=is_enabled,
+            email=c_email,
+            flow="xtls-rprx-vision",
+            totalGB=total_bytes,
+            expiryTime=expiry_time_ms,
+            subId=connection.subscription.subscription_token,
+            tgId=int(connection.subscription.client.telegram_id)
+            if connection.subscription.client.telegram_id
+            else 0,
+        )
+
+        x_id = getattr(inbound, "xui_id", inbound.id)
+        await client.update_client(x_id, req)
+        return True
+
+    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        return await self._set_client_enable_status(inbound, connection, False)
+
+    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        return await self._set_client_enable_status(inbound, connection, True)
+
     async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
         client = await self._get_client()
         payload = connection.provider_payload or {}
