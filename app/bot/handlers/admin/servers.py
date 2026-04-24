@@ -380,7 +380,7 @@ async def test_server(callback: CallbackQuery, is_admin: bool) -> None:
             )
             return
 
-            success, message = await service.test_server_connection(server_id)
+        success, message = await service.test_server_connection(server_id)
 
         await service.close_all_clients()
 
