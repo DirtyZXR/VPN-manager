@@ -58,7 +58,7 @@ class SyncService:
                 logger.debug("Waiting for next sync cycle...")
                 await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             except Exception as e:
-                logger.error(f"[ERROR] Ошибка цикла синхронизации: {e}", exc_info=True)
+                logger.error(f"[ERROR] Ошибка цикла синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
                 await asyncio.sleep(60)  # 1 минута при ошибке
 
         logger.info("[STOP] Фоновая синхронизация остановлена")
@@ -115,8 +115,8 @@ class SyncService:
                 return {"servers": servers_synced}
 
             except Exception as e:
-                logger.error(f"[ERROR] Ошибка в цикле синхронизации: {e}", exc_info=True)
-                return {"servers": 0, "error": str(e)}
+                logger.error(f"[ERROR] Ошибка в цикле синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
+                return {"servers": 0, "error": f"{type(e).__name__}: {str(e)}"}
 
     # === SERVER SYNC ===
 
@@ -163,7 +163,7 @@ class SyncService:
                     )
             except Exception as e:
                 logger.error(
-                    f"[ERROR] Ошибка синхронизации сервера {server.id}: {e}",
+                    f"[ERROR] Ошибка синхронизации сервера {server.id}: {type(e).__name__} - {str(e)}",
                     exc_info=True,
                 )
 
@@ -228,7 +228,7 @@ class SyncService:
                     logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
 
@@ -267,8 +267,11 @@ class SyncService:
                 return False
 
             server.sync_status = "error"
-            server.sync_error = f"Unexpected: {str(e)}"
-            logger.error(f"[ERROR] Неожиданная ошибка сервера {server.id}: {e}", exc_info=True)
+            server.sync_error = f"Unexpected: {type(e).__name__} - {str(e)}"
+            logger.error(
+                f"[ERROR] Неожиданная ошибка сервера {server.id}: {type(e).__name__} - {str(e)}",
+                exc_info=True,
+            )
             return False
 
         # Don't close clients - keep them cached for reuse
@@ -319,12 +322,12 @@ class SyncService:
 
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
 
         except Exception as e:
-            logger.error(f"[ERROR] Ошибка в sync_all_clients: {e}", exc_info=True)
+            logger.error(f"[ERROR] Ошибка в sync_all_clients: {type(e).__name__} - {str(e)}", exc_info=True)
 
         # Don't close clients - keep them cached for reuse
         # finally:
@@ -385,7 +388,7 @@ class SyncService:
                     total_synced += synced
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
 
@@ -791,9 +794,9 @@ class SyncService:
                         results["errors"] += 1
 
             except Exception as e:
-                logger.error(f"[ERROR] Ошибка ручной синхронизации: {e}", exc_info=True)
+                logger.error(f"[ERROR] Ошибка ручной синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
                 results["errors"] += 1
-                results["details"].append(str(e))
+                results["details"].append(f"{type(e).__name__}: {str(e)}")
 
         logger.info(f"[LOG] manual_sync завершен, финальные results={results}")
         return results

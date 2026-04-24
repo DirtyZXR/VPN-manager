@@ -51,7 +51,11 @@ class XUIService:
         Returns:
             Plain text password
         """
-        return self._cipher.decrypt(encrypted.encode()).decode()
+        try:
+            return self._cipher.decrypt(encrypted.encode()).decode()
+        except Exception as e:
+            logger.error(f"Failed to decrypt password: {e}")
+            return ""
 
     async def _get_client(self, server: Server) -> XUIClient:
         """Get or create XUI client for server.

@@ -36,7 +36,11 @@ class SSHManager:
 
         settings = get_settings()
         cipher = Fernet(settings.encryption_key.encode())
-        return cipher.decrypt(encrypted_data.encode()).decode()
+        try:
+            return cipher.decrypt(encrypted_data.encode()).decode()
+        except Exception as e:
+            logger.error(f"Failed to decrypt SSH credential: {e}")
+            return None
 
     def get_ssh_password(self) -> str | None:
         """Decrypt and return SSH password."""
