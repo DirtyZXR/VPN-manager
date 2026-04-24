@@ -190,6 +190,20 @@ class SyncService:
 
             logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
 
+            # Ping the server to update its online status
+            if server.ip_address:
+                from app.services.server_monitor import ServerMonitor
+                host = server.ip_address
+                if host.startswith("http://"):
+                    host = host[7:]
+                elif host.startswith("https://"):
+                    host = host[8:]
+                if ":" in host:
+                    host = host.split(":")[0]
+                is_online = await ServerMonitor.ping(host)
+                server.is_online = is_online
+                logger.debug(f"[SYNC] Сервер {server.id} ping: {'Успешно' if is_online else 'Неудачно'}")
+
             xui_client = None
             if server.xui_panel:
                 # Получить XUI клиент

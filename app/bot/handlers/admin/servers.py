@@ -234,6 +234,9 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
         )
         return
 
+    from app.services.server_monitor import ServerMonitor
+    is_online = await ServerMonitor.check_server_status(server_id)
+
     status = (
         t("admin.servers.status.active", "✅ Активен")
         if server.is_active
@@ -241,7 +244,7 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
     )
     online_status = (
         t("admin.servers.status.online", "✅ В сети")
-        if server.is_online
+        if is_online
         else t("admin.servers.status.offline", "❌ Офлайн")
     )
     last_sync = (
@@ -266,7 +269,7 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
     builder.append(
         {
             "text": t("admin.servers.buttons.edit", "✏️ Редактировать"),
-            "callback_data": f"server_edit_{server_id}",
+            "callback_data": f"server_edit_main_{server_id}",
         }
     )
     builder.append(
@@ -646,7 +649,7 @@ async def delete_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
     await show_servers(callback, is_admin, state)
 
 
-@router.callback_query(F.data.startswith("server_edit_"))
+@router.callback_query(F.data.startswith("server_edit_main_"))
 async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     """Show server edit menu."""
     if not is_admin:
@@ -892,6 +895,9 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
         await message.answer(t("admin.servers.errors.not_found", "❌ Сервер не найден."))
         return
 
+    from app.services.server_monitor import ServerMonitor
+    is_online = await ServerMonitor.check_server_status(server_id)
+
     status = (
         t("admin.servers.status.active", "✅ Активен")
         if server.is_active
@@ -899,7 +905,7 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     )
     online_status = (
         t("admin.servers.status.online", "✅ В сети")
-        if server.is_online
+        if is_online
         else t("admin.servers.status.offline", "❌ Офлайн")
     )
     last_sync = (
@@ -924,7 +930,7 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     builder.append(
         {
             "text": t("admin.servers.buttons.edit", "✏️ Редактировать"),
-            "callback_data": f"server_edit_{server_id}",
+            "callback_data": f"server_edit_main_{server_id}",
         }
     )
     builder.append(
