@@ -96,499 +96,120 @@ async def process_server_name(message: TgMessage, state: FSMContext) -> None:
         return
 
     await state.update_data(name=name)
-    await state.set_state(ServerManagement.waiting_for_base_url)
+    await state.set_state(ServerManagement.waiting_for_ip_address)
     await message.answer(
         t(
-            "admin.servers.add_url",
-            "Введите базовый адрес сервера (например, https://example.com):",
+            "admin.servers.add_ip",
+            "Введите IP-адрес сервера (например, 192.168.1.1):",
         ),
         reply_markup=get_back_keyboard("admin_servers"),
     )
 
 
-@router.message(ServerManagement.waiting_for_base_url)
-async def process_server_base_url(message: TgMessage, state: FSMContext) -> None:
-    """Process server base URL input."""
-    url = message.text.strip()
+@router.message(ServerManagement.waiting_for_ip_address)
+async def process_server_ip_address(message: TgMessage, state: FSMContext) -> None:
+    """Process server IP address input."""
+    ip_address = message.text.strip()
 
-    if not url:
+    if not ip_address:
         await message.answer(
-            t("admin.servers.errors.empty_url", "❌ URL не может быть пустым."),
+            t("admin.servers.errors.empty_ip", "❌ IP-адрес не может быть пустым."),
             reply_markup=get_back_keyboard("admin_servers"),
         )
         return
 
-    if not url.startswith(("http://", "https://")):
-        await message.answer(
+    await state.update_data(ip_address=ip_address)
+
+    msg = await message.answer(t("admin.servers.pinging", "🔄 Пингую сервер..."))
+
+    from app.services.server_monitor import ServerMonitor
+
+    is_online = await ServerMonitor.ping(ip_address)
+
+    if not is_online:
+        await state.set_state(ServerManagement.confirm_add_offline)
+
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+        kb = InlineKeyboardBuilder()
+        kb.button(
+            text=t("admin.servers.buttons.add_offline_yes", "✅ Да, добавить"),
+            callback_data="add_offline_yes",
+        )
+        kb.button(
+            text=t("admin.servers.buttons.add_offline_no", "❌ Нет, отменить"),
+            callback_data="add_offline_no",
+        )
+        kb.adjust(1)
+
+        await msg.edit_text(
             t(
-                "admin.servers.errors.invalid_url_scheme",
-                "❌ URL должен начинаться с http:// или https://",
+                "admin.servers.errors.server_offline",
+                "⚠️ Сервер не отвечает на ping.\nВы уверены, что хотите добавить его?",
             ),
-            reply_markup=get_back_keyboard("admin_servers"),
+            reply_markup=kb.as_markup(),
         )
         return
 
-    if len(url) > 500:
-        await message.answer(
-            t("admin.servers.errors.url_too_long", "❌ URL не должен превышать 500 символов."),
+    # Online, proceed to create
+    await _create_and_finish_server_addition(msg, state, ip_address, True)
+
+
+@router.callback_query(ServerManagement.confirm_add_offline)
+async def process_confirm_add_offline(callback: CallbackQuery, state: FSMContext) -> None:
+    """Process confirmation to add offline server."""
+    if callback.data == "add_offline_no":
+        await state.clear()
+        await callback.message.edit_text(
+            t("admin.servers.add_cancelled", "❌ Добавление сервера отменено."),
             reply_markup=get_back_keyboard("admin_servers"),
         )
+        await callback.answer()
         return
 
-    await state.update_data(url=url)
-    await state.set_state(ServerManagement.waiting_for_panel_path)
-    await message.answer(
-        t(
-            "admin.servers.add_panel_path",
-            "Введите путь к панели управления (опционально).\n\n❗ Важно: пути нужно указывать с обоих сторон со слешами (/path/)\n\nЕсли не указать, будет использоваться / (корневой путь).\n\nПримеры:\n• /panel/ - для стандартной установки\n• /xui/ - для кастомного пути\n\nОтправьте /skip чтобы использовать значение по умолчанию (/).",
-        ),
-        reply_markup=get_back_keyboard("admin_servers"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_panel_path)
-async def process_server_panel_path(message: TgMessage, state: FSMContext) -> None:
-    """Process panel path input."""
-    if message.text == "/skip":
-        await state.update_data(panel_path="/")
-    else:
-        panel_path = message.text.strip()
-        if panel_path:
-            if len(panel_path) > 500:
-                await message.answer(
-                    t(
-                        "admin.servers.errors.path_too_long",
-                        "❌ Путь не должен превышать 500 символов.",
-                    ),
-                    reply_markup=get_back_keyboard("admin_servers"),
-                )
-                return
-            # Ensure path starts with /
-            if not panel_path.startswith("/"):
-                panel_path = "/" + panel_path
-            # Ensure path ends with / (except for root)
-            if panel_path != "/" and not panel_path.endswith("/"):
-                panel_path = panel_path + "/"
-        else:
-            panel_path = "/"
-        await state.update_data(panel_path=panel_path)
-
-    await state.set_state(ServerManagement.waiting_for_subscription_path)
-    await message.answer(
-        t(
-            "admin.servers.add_sub_path",
-            "Введите путь для подписок (опционально).\n\n❗ Важно: пути нужно указывать с обоих сторон со слешами (/path/)\n\nЕсли не указать, будет использоваться /sub/\n\nПримеры:\n• /sub/ - стандартный путь\n• /custom/sub/ - кастомный путь\n\nОтправьте /skip чтобы использовать значение по умолчанию (/sub/).",
-        ),
-        reply_markup=get_back_keyboard("admin_servers"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_subscription_path)
-async def process_server_subscription_path(message: TgMessage, state: FSMContext) -> None:
-    """Process subscription path input."""
-    if message.text == "/skip":
-        await state.update_data(subscription_path="/sub/")
-    else:
-        subscription_path = message.text.strip()
-        if subscription_path:
-            if len(subscription_path) > 500:
-                await message.answer(
-                    t(
-                        "admin.servers.errors.path_too_long",
-                        "❌ Путь не должен превышать 500 символов.",
-                    ),
-                    reply_markup=get_back_keyboard("admin_servers"),
-                )
-                return
-            # Ensure path starts with /
-            if not subscription_path.startswith("/"):
-                subscription_path = "/" + subscription_path
-            # Ensure path ends with /
-            if not subscription_path.endswith("/"):
-                subscription_path = subscription_path + "/"
-        else:
-            subscription_path = "/sub/"
-        await state.update_data(subscription_path=subscription_path)
-
-    await state.set_state(ServerManagement.waiting_for_subscription_json_path)
-    await message.answer(
-        t(
-            "admin.servers.add_json_path",
-            "Введите путь для JSON подписок (опционально).\n\n❗ Важно: пути нужно указывать с обоих сторон со слешами (/path/)\n\nЕсли не указать, будет использоваться /subjson/\n\nПримеры:\n• /subjson/ - стандартный путь\n• /custom/json/ - кастомный путь\n\nОтправьте /skip чтобы использовать значение по умолчанию (/subjson/).",
-        ),
-        reply_markup=get_back_keyboard("admin_servers"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_subscription_json_path)
-async def process_server_subscription_json_path(message: TgMessage, state: FSMContext) -> None:
-    """Process subscription JSON path input."""
-    if message.text == "/skip":
-        await state.update_data(subscription_json_path="/subjson/")
-    else:
-        subscription_json_path = message.text.strip()
-        if subscription_json_path:
-            if len(subscription_json_path) > 500:
-                await message.answer(
-                    t(
-                        "admin.servers.errors.path_too_long",
-                        "❌ Путь не должен превышать 500 символов.",
-                    ),
-                    reply_markup=get_back_keyboard("admin_servers"),
-                )
-                return
-            # Ensure path starts with /
-            if not subscription_json_path.startswith("/"):
-                subscription_json_path = "/" + subscription_json_path
-            # Ensure path ends with /
-            if not subscription_json_path.endswith("/"):
-                subscription_json_path = subscription_json_path + "/"
-        else:
-            subscription_json_path = "/subjson/"
-        await state.update_data(subscription_json_path=subscription_json_path)
-
-    await state.set_state(ServerManagement.waiting_for_username)
-    await message.answer(
-        t(
-            "admin.servers.add_url",
-            "Введите базовый адрес сервера (например, https://example.com):",
-        ),
-        reply_markup=get_back_keyboard("admin_servers"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_username)
-async def process_server_username(message: TgMessage, state: FSMContext) -> None:
-    """Process server username input."""
-    username = message.text.strip()
-
-    if not username:
-        await message.answer(
-            t("admin.servers.errors.empty_username", "❌ Имя пользователя не может быть пустым."),
-            reply_markup=get_back_keyboard("admin_servers"),
-        )
-        return
-
-    if len(username) > 100:
-        await message.answer(
-            t(
-                "admin.servers.errors.username_too_long",
-                "❌ Имя пользователя не должно превышать 100 символов.",
-            ),
-            reply_markup=get_back_keyboard("admin_servers"),
-        )
-        return
-
-    await state.update_data(username=username)
-    await state.set_state(ServerManagement.waiting_for_password)
-    await message.answer(
-        t("admin.servers.add_password", "Введите пароль для входа в панель:"),
-        reply_markup=get_back_keyboard("admin_servers"),
-    )
-
-
-@router.message(ServerManagement.waiting_for_password)
-async def process_server_password(message: TgMessage, state: FSMContext) -> None:
-    """Process server password input and ask for SSL verification."""
-    await state.get_data()
-    password = message.text
-
-    if not password:
-        await message.answer(
-            t("admin.servers.errors.empty_password", "❌ Пароль не может быть пустым."),
-            reply_markup=get_back_keyboard("admin_servers"),
-        )
-        return
-
-    await state.update_data(password=password)
-    await state.set_state(ServerManagement.waiting_for_verify_ssl)
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-    kb = InlineKeyboardBuilder()
-    kb.button(
-        text=t("admin.servers.buttons.verify_ssl_yes", "✅ Да (рекомендуется)"),
-        callback_data="verify_ssl_yes",
-    )
-    kb.button(
-        text=t("admin.servers.buttons.verify_ssl_no", "❌ Нет (для самоподписанных сертификатов)"),
-        callback_data="verify_ssl_no",
-    )
-    kb.adjust(1)
-
-    await message.answer(
-        t(
-            "admin.servers.add_ssl",
-            "Проверять SSL сертификат при подключении к серверу?\n\n⚠️ Отключение проверки небезопасно и рекомендуется только для серверов с самоподписанными или проблемными сертификатами.",
-        ),
-        reply_markup=kb.as_markup(),
-    )
-
-
-@router.callback_query(F.data.startswith("verify_ssl_"))
-async def process_verify_ssl_selection(callback: CallbackQuery, state: FSMContext) -> None:
-    """Process SSL verification selection and create server."""
+    # Proceed to create
     data = await state.get_data()
-    verify_ssl = callback.data == "verify_ssl_yes"
-
-    # Test connection before creating server
-    await callback.message.edit_text(
-        t("admin.servers.testing_connection", "🔄 Проверка подключения к серверу..."),
-        reply_markup=None,
-    )
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-
-        try:
-            # Create temporary client to test connection
-            from urllib.parse import urljoin
-
-            from app.xui_client import XUIClient, XUIError
-
-            # Build full URL with panel path for testing
-            panel_path = data.get("panel_path", "/")
-            test_base_url = urljoin(data["url"], panel_path)
-
-            test_client = XUIClient(
-                base_url=test_base_url,
-                username=data["username"],
-                password=data["password"],
-                timeout=30,
-                verify_ssl=verify_ssl,
-            )
-
-            await test_client.connect()
-            inbounds = await test_client.get_inbounds()
-            await test_client.close()
-
-            # Connection successful, create server
-            server = await service.create_server(
-                name=data["name"],
-                url=data["url"],
-                username=data["username"],
-                password=data["password"],
-                verify_ssl=verify_ssl,
-                panel_path=data.get("panel_path", "/"),
-                subscription_path=data.get("subscription_path", "/sub/"),
-                subscription_json_path=data.get("subscription_json_path", "/subjson/"),
-            )
-            await session.flush()
-
-            server_id = server.id
-
-            # Sync inbounds automatically
-            try:
-                synced_inbounds = await service.sync_server_inbounds(server_id)
-                await session.commit()
-                logger.info(
-                    "✅ Автосинхронизация сервера {}: {} inbounds", server_id, synced_inbounds
-                )
-            except Exception as sync_error:
-                logger.error("❌ Ошибка синхронизации inbounds: {}", sync_error, exc_info=True)
-                await session.rollback()  # Rollback sync but keep server
-                # Re-commit just the server creation
-                await session.commit()
-
-            await state.clear()
-            ssl_status_text = (
-                t("admin.servers.ssl_enabled", "Включена")
-                if verify_ssl
-                else t("admin.servers.ssl_disabled", "Отключена")
-            )
-            synced_text = (
-                synced_inbounds
-                if "synced_inbounds" in locals()
-                else t("admin.servers.sync_error", "Ошибка")
-            )
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.added_success",
-                    "✅ Сервер '{name}' успешно добавлен!\n\nURL: {url}\nПроверка SSL: {ssl_status}\nНайдено inbounds: {inbounds_count}\nСинхронизировано inbounds: {synced_count}",
-                    name=server.name,
-                    url=server.url,
-                    ssl_status=ssl_status_text,
-                    inbounds_count=len(inbounds),
-                    synced_count=synced_text,
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )
-
-        except XUIError as e:
-            logger.error("Connection test failed: {}", e, exc_info=True)
-
-            # Check if it's an SSL error
-            if "SSL" in str(e) or "tls" in str(e).lower():
-                from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-                kb = InlineKeyboardBuilder()
-                kb.button(
-                    text=t("admin.servers.buttons.cancel", "❌ Нет, отменить"),
-                    callback_data="cancel_ssl_bypass",
-                )
-                kb.button(
-                    text=t(
-                        "admin.servers.buttons.retry_without_ssl", "✅ Да, попробовать без проверки"
-                    ),
-                    callback_data="retry_without_ssl",
-                )
-                kb.adjust(1)
-
-                await callback.message.edit_text(
-                    t(
-                        "admin.servers.errors.ssl_error",
-                        "❌ Ошибка SSL сертификата:\n{error}\n\nХотите попробовать подключиться без проверки SSL сертификата?",
-                        error=str(e),
-                    ),
-                    reply_markup=kb.as_markup(),
-                )
-            else:
-                await callback.message.edit_text(
-                    t(
-                        "admin.servers.errors.connection_failed",
-                        "❌ Не удалось подключиться к серверу:\n{error}\n\nПроверьте URL, логин и пароль.",
-                        error=str(e),
-                    ),
-                    reply_markup=get_back_keyboard("admin_servers"),
-                )
-                await state.clear()
-
-        except Exception as e:
-            logger.error("Unexpected error: {}", e, exc_info=True)
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.errors.unexpected",
-                    "❌ Ошибка при проверке сервера:\n{error}",
-                    error=str(e),
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )
-            await state.clear()
-
+    ip_address = data.get("ip_address")
+    await _create_and_finish_server_addition(callback.message, state, ip_address, False)
     await callback.answer()
 
 
-@router.callback_query(F.data == "retry_without_ssl")
-async def retry_without_ssl(callback: CallbackQuery, state: FSMContext) -> None:
-    """Retry connection without SSL verification."""
+async def _create_and_finish_server_addition(
+    message: TgMessage, state: FSMContext, ip_address: str, is_online: bool
+) -> None:
+    """Helper to create server and notify admin."""
     data = await state.get_data()
-
-    await callback.message.edit_text(
-        t(
-            "admin.servers.testing_connection_no_ssl",
-            "🔄 Повторная проверка подключения к серверу (без SSL)...",
-        ),
-        reply_markup=None,
-    )
+    name = data.get("name")
 
     async with async_session_factory() as session:
         service = XUIService(session)
+        server = await service.create_server(
+            name=name,
+            ip_address=ip_address,
+            url=None,
+            username=None,
+            password=None,
+        )
+        server.is_online = is_online
+        await session.commit()
 
-        try:
-            from urllib.parse import urljoin
-
-            from app.xui_client import XUIClient, XUIError
-
-            # Build full URL with panel path for testing
-            panel_path = data.get("panel_path", "/")
-            test_base_url = urljoin(data["url"], panel_path)
-
-            test_client = XUIClient(
-                base_url=test_base_url,
-                username=data["username"],
-                password=data["password"],
-                timeout=30,
-                verify_ssl=False,  # Disable SSL verification
-            )
-
-            await test_client.connect()
-            inbounds = await test_client.get_inbounds()
-            await test_client.close()
-
-            # Connection successful, create server with SSL verification disabled
-            server = await service.create_server(
-                name=data["name"],
-                url=data["url"],
-                username=data["username"],
-                password=data["password"],
-                verify_ssl=False,  # Store this setting
-                panel_path=data.get("panel_path", "/"),
-                subscription_path=data.get("subscription_path", "/sub/"),
-                subscription_json_path=data.get("subscription_json_path", "/subjson/"),
-            )
-            await session.flush()
-
-            server_name = server.name
-            server_url = server.url
-            server_id = server.id
-
-            # Sync inbounds automatically
-            try:
-                synced_inbounds = await service.sync_server_inbounds(server_id)
-                await session.commit()
-                logger.info(
-                    "✅ Автосинхронизация сервера {}: {} inbounds", server_id, synced_inbounds
-                )
-            except Exception as sync_error:
-                logger.error("❌ Ошибка синхронизации inbounds: {}", sync_error, exc_info=True)
-                await session.rollback()  # Rollback sync but keep server
-                # Re-commit just the server creation
-                await session.commit()
-
-            await state.clear()
-            synced_text = (
-                synced_inbounds
-                if "synced_inbounds" in locals()
-                else t("admin.servers.sync_error", "Ошибка")
-            )
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.added_success_no_ssl",
-                    "✅ Сервер '{name}' успешно добавлен!\n\nURL: {url}\n⚠️ Проверка SSL: ОТКЛЮЧЕНА\nНайдено inbounds: {inbounds_count}\nСинхронизировано inbounds: {synced_count}",
-                    name=server_name,
-                    url=server_url,
-                    inbounds_count=len(inbounds),
-                    synced_count=synced_text,
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )
-
-        except XUIError as e:
-            logger.error("Connection test failed even without SSL: {}", e, exc_info=True)
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.errors.connection_failed_no_ssl",
-                    "❌ Не удалось подключиться к серверу даже без проверки SSL:\n{error}\n\nПроверьте URL, логин и пароль.",
-                    error=str(e),
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )
-            await state.clear()
-
-        except Exception as e:
-            logger.error("Unexpected error: {}", e, exc_info=True)
-            await callback.message.edit_text(
-                t(
-                    "admin.servers.errors.unexpected",
-                    "❌ Ошибка при проверке сервера:\n{error}",
-                    error=str(e),
-                ),
-                reply_markup=get_back_keyboard("admin_servers"),
-            )
-            await state.clear()
-
-    await callback.answer()
-
-
-@router.callback_query(F.data == "cancel_ssl_bypass")
-async def cancel_ssl_bypass(callback: CallbackQuery, state: FSMContext) -> None:
-    """Cancel SSL bypass and return to server list."""
     await state.clear()
-    await callback.message.edit_text(
-        t("admin.servers.add_cancelled", "❌ Добавление сервера отменено."),
-        reply_markup=get_back_keyboard("admin_servers"),
+
+    status_text = (
+        t("admin.servers.status.online", "✅ В сети")
+        if is_online
+        else t("admin.servers.status.offline", "❌ Не в сети (добавлен принудительно)")
     )
-    await callback.answer()
+
+    text = t(
+        "admin.servers.added_success",
+        "✅ Сервер '{name}' успешно добавлен!\n\nIP: {ip}\nСтатус: {status}",
+        name=name,
+        ip=ip_address,
+        status=status_text,
+    )
+
+    await message.edit_text(text, reply_markup=get_back_keyboard("admin_servers"))
 
 
 @router.callback_query(F.data.startswith("server_select_"))
@@ -622,32 +243,37 @@ async def select_server(callback: CallbackQuery, is_admin: bool) -> None:
         if server.last_sync_at
         else t("admin.servers.sync.never", "Никогда")
     )
-    ssl_status = "✅" if server.verify_ssl else "❌"
 
-    # Get paths with defaults
-    panel_path = getattr(server, "panel_path", "/")
-    subscription_path = getattr(server, "subscription_path", "/sub/")
-    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
+    ip_info = f"\n🌐 IP: {server.ip_address}" if server.ip_address else ""
+    url_info = f"\n🔗 URL: {server.url}" if server.url else ""
 
     text = t(
-        "admin.servers.info",
-            "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
-            name=server.name,
-            url=server.url,
-            panel_path=panel_path,
-            sub_path=subscription_path,
-            json_path=subscription_json_path,
-            username=server.username,
-            ssl_status=ssl_status,
-            status=status,
-            last_sync=last_sync,
-        )
+        "admin.servers.info_new",
+        "🖥️ Сервер: {name}{ip_info}{url_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+        name=server.name,
+        ip_info=ip_info,
+        url_info=url_info,
+        status=status,
+        last_sync=last_sync,
+    )
 
     builder = []
     builder.append(
         {
             "text": t("admin.servers.buttons.edit", "✏️ Редактировать"),
             "callback_data": f"server_edit_{server_id}",
+        }
+    )
+    builder.append(
+        {
+            "text": t("admin.servers.buttons.ssh_setup", "🔑 Настроить SSH"),
+            "callback_data": f"server_ssh_{server_id}",
+        }
+    )
+    builder.append(
+        {
+            "text": t("admin.servers.buttons.manage_services", "⚙️ Управление сервисами"),
+            "callback_data": f"server_services_{server_id}",
         }
     )
     builder.append(
@@ -1080,11 +706,6 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
         )
         return
 
-    # Get paths with defaults
-    panel_path = getattr(server, "panel_path", "/")
-    subscription_path = getattr(server, "subscription_path", "/sub/")
-    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
-
     builder = []
     builder.append(
         {
@@ -1094,43 +715,9 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
     )
     builder.append(
         {
-            "text": t("admin.servers.buttons.edit_url", "🌐 URL сервера"),
-            "callback_data": "edit_server_url",
+            "text": t("admin.servers.buttons.edit_ip", "🌐 IP-адрес"),
+            "callback_data": "edit_server_ip",
         }
-    )
-    if server.panel_type == "xui":
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.edit_panel_path", "📁 Путь панели"),
-                "callback_data": "edit_server_panel_path",
-            }
-        )
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.edit_sub_path", "📝 Путь подписок"),
-                "callback_data": "edit_server_sub_path",
-            }
-        )
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.edit_json_path", "📋 Путь JSON"),
-                "callback_data": "edit_server_json_path",
-            }
-        )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_username", "👤 Логин"),
-            "callback_data": "edit_server_username",
-        }
-    )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_password", "🔒 Пароль"),
-            "callback_data": "edit_server_password",
-        }
-    )
-    builder.append(
-        {"text": t("admin.servers.buttons.edit_ssl", "🔐 SSL"), "callback_data": "edit_server_ssl"}
     )
     builder.append(
         {
@@ -1147,15 +734,11 @@ async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool
     kb.adjust(1)
 
     text = t(
-        "admin.servers.edit_menu",
-            "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
-            name=server.name,
-            url=server.url,
-            panel_path=panel_path,
-            sub_path=subscription_path,
-            json_path=subscription_json_path,
-            username=server.username,
-        )
+        "admin.servers.edit_menu_new",
+        "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 IP-адрес: {ip}\n\nВыберите поле для редактирования:",
+        name=server.name,
+        ip=server.ip_address,
+    )
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
     await callback.answer()
@@ -1224,9 +807,9 @@ async def process_edit_name(message: TgMessage, state: FSMContext) -> None:
             await edit_server_menu(message, state, server_id)
 
 
-@router.callback_query(F.data == "edit_server_url")
-async def start_edit_url(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing server URL."""
+@router.callback_query(F.data == "edit_server_ip")
+async def start_edit_ip_address(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start editing server IP address."""
     data = await state.get_data()
     server_id = data["server_id"]
 
@@ -1240,12 +823,12 @@ async def start_edit_url(callback: CallbackQuery, state: FSMContext) -> None:
         )
         return
 
-    await state.set_state(ServerManagement.waiting_for_edit_base_url)
+    await state.set_state(ServerManagement.waiting_for_edit_ip_address)
     await callback.message.edit_text(
         t(
-            "admin.servers.edit_url",
-            "✏️ Редактирование URL сервера\n\nТекущий URL: <b>{url}</b>\n\nВведите новый URL (или /skip чтобы оставить текущий):",
-            url=server.url,
+            "admin.servers.edit_ip",
+            "✏️ Редактирование IP-адреса сервера\n\nТекущий IP: <b>{ip}</b>\n\nВведите новый IP-адрес (или /skip чтобы оставить текущий):",
+            ip=server.ip_address or "Не указан",
         ),
         reply_markup=get_back_keyboard(f"server_select_{server_id}"),
         parse_mode="HTML",
@@ -1253,461 +836,33 @@ async def start_edit_url(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-@router.message(ServerManagement.waiting_for_edit_base_url)
-async def process_edit_url(message: TgMessage, state: FSMContext) -> None:
-    """Process server URL edit."""
+@router.message(ServerManagement.waiting_for_edit_ip_address)
+async def process_edit_ip_address(message: TgMessage, state: FSMContext) -> None:
+    """Process server IP edit."""
     data = await state.get_data()
     server_id = data["server_id"]
-    new_url = message.text.strip()
+    new_ip = message.text.strip()
 
-    if new_url == "/skip":
+    if new_ip == "/skip":
         await show_server_details(message, state, server_id)
         return
 
-    if not new_url:
-        await message.answer(t("admin.servers.errors.empty_url", "❌ URL не может быть пустым."))
-        return
-
-    if not new_url.startswith(("http://", "https://")):
+    if not new_ip:
         await message.answer(
-            t(
-                "admin.servers.errors.invalid_url_scheme",
-                "❌ URL должен начинаться с http:// или https://",
-            )
-        )
-        return
-
-    if len(new_url) > 500:
-        await message.answer(
-            t("admin.servers.errors.url_too_long", "❌ URL не должен превышать 500 символов.")
+            t("admin.servers.errors.empty_ip", "❌ IP-адрес не может быть пустым.")
         )
         return
 
     async with async_session_factory() as session:
         service = XUIService(session)
-        server = await service.update_server(server_id, url=new_url)
+        server = await service.update_server(server_id, ip_address=new_ip)
         if server:
             await session.commit()
             await message.answer(
-                t("admin.servers.url_changed", "✅ URL изменен на: {url}", url=new_url)
+                t("admin.servers.ip_changed", "✅ IP-адрес изменен на: {ip}", ip=new_ip)
             )
 
     await edit_server_menu(message, state, server_id)
-
-
-@router.callback_query(F.data == "edit_server_panel_path")
-async def start_edit_panel_path(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing panel path."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.get_server_by_id(server_id)
-
-    if not server:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
-        )
-        return
-
-    panel_path = getattr(server, "panel_path", "/")
-
-    await state.set_state(ServerManagement.waiting_for_edit_panel_path)
-    await callback.message.edit_text(
-        t(
-            "admin.servers.edit_panel_path",
-            "✏️ Редактирование пути панели\n\nТекущий путь: <b>{path}</b>\n\nВведите новый путь (или /skip чтобы оставить текущий).\n\n❗ Важно: путь нужно указывать с обоих сторон со слешами (/path/)",
-            path=panel_path,
-        ),
-        reply_markup=get_back_keyboard(f"server_select_{server_id}"),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.message(ServerManagement.waiting_for_edit_panel_path)
-async def process_edit_panel_path(message: TgMessage, state: FSMContext) -> None:
-    """Process panel path edit."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-    new_path = message.text.strip()
-
-    if new_path == "/skip":
-        await show_server_details(message, state, server_id)
-        return
-
-    if new_path:
-        if len(new_path) > 500:
-            await message.answer(
-                t("admin.servers.errors.path_too_long", "❌ Путь не должен превышать 500 символов.")
-            )
-            return
-        # Ensure path starts with /
-        if not new_path.startswith("/"):
-            new_path = "/" + new_path
-        # Ensure path ends with / (except for root)
-        if new_path != "/" and not new_path.endswith("/"):
-            new_path = new_path + "/"
-    else:
-        new_path = "/"
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.update_server(server_id, panel_path=new_path)
-        if server:
-            await session.commit()
-            await message.answer(
-                t(
-                    "admin.servers.panel_path_changed",
-                    "✅ Путь панели изменен на: {path}",
-                    path=new_path,
-                )
-            )
-
-    await edit_server_menu(message, state, server_id)
-
-
-@router.callback_query(F.data == "edit_server_sub_path")
-async def start_edit_subscription_path(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing subscription path."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.get_server_by_id(server_id)
-
-    if not server:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
-        )
-        return
-
-    subscription_path = getattr(server, "subscription_path", "/sub/")
-
-    await state.set_state(ServerManagement.waiting_for_edit_subscription_path)
-    await callback.message.edit_text(
-        t(
-            "admin.servers.edit_sub_path",
-            "✏️ Редактирование пути подписок\n\nТекущий путь: <b>{path}</b>\n\nВведите новый путь (или /skip чтобы оставить текущий).\n\n❗ Важно: путь нужно указывать с обоих сторон со слешами (/path/)",
-            path=subscription_path,
-        ),
-        reply_markup=get_back_keyboard(f"server_select_{server_id}"),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.message(ServerManagement.waiting_for_edit_subscription_path)
-async def process_edit_subscription_path(message: TgMessage, state: FSMContext) -> None:
-    """Process subscription path edit."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-    new_path = message.text.strip()
-
-    if new_path == "/skip":
-        await show_server_details(message, state, server_id)
-        return
-
-    if new_path:
-        if len(new_path) > 500:
-            await message.answer(
-                t("admin.servers.errors.path_too_long", "❌ Путь не должен превышать 500 символов.")
-            )
-            return
-        # Ensure path starts with /
-        if not new_path.startswith("/"):
-            new_path = "/" + new_path
-        # Ensure path ends with /
-        if not new_path.endswith("/"):
-            new_path = new_path + "/"
-    else:
-        new_path = "/sub/"
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.update_server(server_id, subscription_path=new_path)
-        if server:
-            await session.commit()
-            await message.answer(
-                t(
-                    "admin.servers.sub_path_changed",
-                    "✅ Путь подписок изменен на: {path}",
-                    path=new_path,
-                )
-            )
-
-    await edit_server_menu(message, state, server_id)
-
-
-@router.callback_query(F.data == "edit_server_json_path")
-async def start_edit_json_path(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing JSON subscription path."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.get_server_by_id(server_id)
-
-    if not server:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
-        )
-        return
-
-    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
-
-    await state.set_state(ServerManagement.waiting_for_edit_subscription_json_path)
-    await callback.message.edit_text(
-        t(
-            "admin.servers.edit_json_path",
-            "✏️ Редактирование пути JSON подписок\n\nТекущий путь: <b>{path}</b>\n\nВведите новый путь (или /skip чтобы оставить текущий).\n\n❗ Важно: путь нужно указывать с обоих сторон со слешами (/path/)",
-            path=subscription_json_path,
-        ),
-        reply_markup=get_back_keyboard(f"server_select_{server_id}"),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.message(ServerManagement.waiting_for_edit_subscription_json_path)
-async def process_edit_json_path(message: TgMessage, state: FSMContext) -> None:
-    """Process JSON subscription path edit."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-    new_path = message.text.strip()
-
-    if new_path == "/skip":
-        await show_server_details(message, state, server_id)
-        return
-
-    if new_path:
-        if len(new_path) > 500:
-            await message.answer(
-                t("admin.servers.errors.path_too_long", "❌ Путь не должен превышать 500 символов.")
-            )
-            return
-        # Ensure path starts with /
-        if not new_path.startswith("/"):
-            new_path = "/" + new_path
-        # Ensure path ends with /
-        if not new_path.endswith("/"):
-            new_path = new_path + "/"
-    else:
-        new_path = "/subjson/"
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.update_server(server_id, subscription_json_path=new_path)
-        if server:
-            await session.commit()
-            await message.answer(
-                t(
-                    "admin.servers.json_path_changed",
-                    "✅ Путь JSON подписок изменен на: {path}",
-                    path=new_path,
-                )
-            )
-
-    await edit_server_menu(message, state, server_id)
-
-
-@router.callback_query(F.data == "edit_server_username")
-async def start_edit_username(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing username."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.get_server_by_id(server_id)
-
-    if not server:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
-        )
-        return
-
-    await state.set_state(ServerManagement.waiting_for_edit_username)
-    await callback.message.edit_text(
-        t(
-            "admin.servers.edit_username",
-            "✏️ Редактирование логина\n\nТекущий логин: <b>{username}</b>\n\nВведите новый логин (или /skip чтобы оставить текущий):",
-            username=server.username,
-        ),
-        reply_markup=get_back_keyboard(f"server_select_{server_id}"),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.message(ServerManagement.waiting_for_edit_username)
-async def process_edit_username(message: TgMessage, state: FSMContext) -> None:
-    """Process username edit."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-    new_username = message.text.strip()
-
-    if new_username == "/skip":
-        await show_server_details(message, state, server_id)
-        return
-
-    if not new_username:
-        await message.answer(
-            t("admin.servers.errors.empty_username", "❌ Имя пользователя не может быть пустым.")
-        )
-        return
-
-    if len(new_username) > 100:
-        await message.answer(
-            t(
-                "admin.servers.errors.username_too_long",
-                "❌ Имя пользователя не должно превышать 100 символов.",
-            )
-        )
-        return
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.update_server(server_id, username=new_username)
-        if server:
-            await session.commit()
-            await message.answer(
-                t(
-                    "admin.servers.username_changed",
-                    "✅ Логин изменен на: {username}",
-                    username=new_username,
-                )
-            )
-
-    await edit_server_menu(message, state, server_id)
-
-
-@router.callback_query(F.data == "edit_server_password")
-async def start_edit_password(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing password."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.get_server_by_id(server_id)
-
-    if not server:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
-        )
-        return
-
-    await state.set_state(ServerManagement.waiting_for_edit_password)
-    await callback.message.edit_text(
-        t(
-            "admin.servers.edit_password",
-            "✏️ Редактирование пароля\n\nВведите новый пароль (или /skip чтобы оставить текущий):",
-        ),
-        reply_markup=get_back_keyboard(f"server_select_{server_id}"),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-@router.message(ServerManagement.waiting_for_edit_password)
-async def process_edit_password(message: TgMessage, state: FSMContext) -> None:
-    """Process password edit."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-    new_password = message.text
-
-    if new_password == "/skip":
-        await show_server_details(message, state, server_id)
-        return
-
-    if not new_password:
-        await message.answer(
-            t("admin.servers.errors.empty_password", "❌ Пароль не может быть пустым.")
-        )
-        return
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.update_server(server_id, password=new_password)
-        if server:
-            await session.commit()
-            await message.answer(t("admin.servers.password_changed", "✅ Пароль изменен"))
-
-    await edit_server_menu(message, state, server_id)
-
-
-@router.callback_query(F.data == "edit_server_ssl")
-async def start_edit_ssl(callback: CallbackQuery, state: FSMContext) -> None:
-    """Start editing SSL verification."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.get_server_by_id(server_id)
-
-    if not server:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
-        )
-        return
-
-    await state.set_state(ServerManagement.waiting_for_edit_verify_ssl)
-    current_ssl = (
-        t("admin.servers.ssl_enabled", "✅ Включена")
-        if server.verify_ssl
-        else t("admin.servers.ssl_disabled", "❌ Отключена")
-    )
-
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-    kb = InlineKeyboardBuilder()
-    kb.button(
-        text=t("admin.servers.buttons.enable_ssl", "✅ Включить"), callback_data="edit_ssl_enable"
-    )
-    kb.button(
-        text=t("admin.servers.buttons.disable_ssl", "❌ Отключить"),
-        callback_data="edit_ssl_disable",
-    )
-    kb.adjust(1)
-
-    await callback.message.edit_text(
-        t(
-            "admin.servers.edit_ssl",
-            "✏️ Редактирование проверки SSL\n\nТекущее состояние: {current}\n\nВыберите новое состояние:",
-            current=current_ssl,
-        ),
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("edit_ssl_"))
-async def process_edit_ssl(callback: CallbackQuery, state: FSMContext) -> None:
-    """Process SSL verification edit."""
-    data = await state.get_data()
-    server_id = data["server_id"]
-    new_ssl = callback.data == "edit_ssl_enable"
-
-    async with async_session_factory() as session:
-        service = XUIService(session)
-        server = await service.update_server(server_id, verify_ssl=new_ssl)
-        if server:
-            await session.commit()
-            ssl_text = (
-                t("admin.servers.ssl_enabled", "✅ Включена")
-                if new_ssl
-                else t("admin.servers.ssl_disabled", "❌ Отключена")
-            )
-            await callback.message.edit_text(
-                t("admin.servers.ssl_changed", "✅ Проверка SSL: {status}", status=ssl_text)
-            )
-
-    await edit_server_menu(callback.message, state, server_id)
 
 
 async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int) -> None:
@@ -1724,11 +879,6 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
         await message.answer(t("admin.servers.errors.not_found", "❌ Сервер не найден."))
         return
 
-    # Get paths with defaults
-    panel_path = getattr(server, "panel_path", "/")
-    subscription_path = getattr(server, "subscription_path", "/sub/")
-    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
-
     builder = []
     builder.append(
         {
@@ -1738,43 +888,9 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
     )
     builder.append(
         {
-            "text": t("admin.servers.buttons.edit_url", "🌐 URL сервера"),
-            "callback_data": "edit_server_url",
+            "text": t("admin.servers.buttons.edit_ip", "🌐 IP-адрес"),
+            "callback_data": "edit_server_ip",
         }
-    )
-    if server.panel_type == "xui":
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.edit_panel_path", "📁 Путь панели"),
-                "callback_data": "edit_server_panel_path",
-            }
-        )
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.edit_sub_path", "📝 Путь подписок"),
-                "callback_data": "edit_server_sub_path",
-            }
-        )
-        builder.append(
-            {
-                "text": t("admin.servers.buttons.edit_json_path", "📋 Путь JSON"),
-                "callback_data": "edit_server_json_path",
-            }
-        )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_username", "👤 Логин"),
-            "callback_data": "edit_server_username",
-        }
-    )
-    builder.append(
-        {
-            "text": t("admin.servers.buttons.edit_password", "🔒 Пароль"),
-            "callback_data": "edit_server_password",
-        }
-    )
-    builder.append(
-        {"text": t("admin.servers.buttons.edit_ssl", "🔐 SSL"), "callback_data": "edit_server_ssl"}
     )
     builder.append(
         {
@@ -1791,15 +907,11 @@ async def edit_server_menu(message: TgMessage, state: FSMContext, server_id: int
     kb.adjust(1)
 
     text = t(
-        "admin.servers.edit_menu",
-            "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n\nВыберите поле для редактирования:",
-            name=server.name,
-            url=server.url,
-            panel_path=panel_path,
-            sub_path=subscription_path,
-            json_path=subscription_json_path,
-            username=server.username,
-        )
+        "admin.servers.edit_menu_new",
+        "✏️ Редактирование сервера: <b>{name}</b>\n\n🌐 IP-адрес: {ip}\n\nВыберите поле для редактирования:",
+        name=server.name,
+        ip=server.ip_address,
+    )
 
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
@@ -1828,32 +940,37 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
         if server.last_sync_at
         else t("admin.servers.sync.never", "Никогда")
     )
-    ssl_status = "✅" if server.verify_ssl else "❌"
 
-    # Get paths with defaults
-    panel_path = getattr(server, "panel_path", "/")
-    subscription_path = getattr(server, "subscription_path", "/sub/")
-    subscription_json_path = getattr(server, "subscription_json_path", "/subjson/")
+    ip_info = f"\n🌐 IP: {server.ip_address}" if server.ip_address else ""
+    url_info = f"\n🔗 URL: {server.url}" if server.url else ""
 
     text = t(
-        "admin.servers.info",
-            "🖥️ Сервер: {name}\n\n🌐 URL: {url}\n📁 Путь панели: {panel_path}\n📝 Путь подписок: {sub_path}\n📋 Путь JSON: {json_path}\n👤 Логин: {username}\n🔒 SSL: {ssl_status}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
-            name=server.name,
-            url=server.url,
-            panel_path=panel_path,
-            sub_path=subscription_path,
-            json_path=subscription_json_path,
-            username=server.username,
-            ssl_status=ssl_status,
-            status=status,
-            last_sync=last_sync,
-        )
+        "admin.servers.info_new",
+        "🖥️ Сервер: {name}{ip_info}{url_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+        name=server.name,
+        ip_info=ip_info,
+        url_info=url_info,
+        status=status,
+        last_sync=last_sync,
+    )
 
     builder = []
     builder.append(
         {
             "text": t("admin.servers.buttons.edit", "✏️ Редактировать"),
             "callback_data": f"server_edit_{server_id}",
+        }
+    )
+    builder.append(
+        {
+            "text": t("admin.servers.buttons.ssh_setup", "🔑 Настроить SSH"),
+            "callback_data": f"server_ssh_{server_id}",
+        }
+    )
+    builder.append(
+        {
+            "text": t("admin.servers.buttons.manage_services", "⚙️ Управление сервисами"),
+            "callback_data": f"server_services_{server_id}",
         }
     )
     builder.append(
@@ -1906,5 +1023,3 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
     kb.adjust(1)
 
     await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
-
-

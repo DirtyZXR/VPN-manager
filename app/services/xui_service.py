@@ -64,6 +64,9 @@ class XUIService:
         if server.id in self._clients:
             return self._clients[server.id]
 
+        if not server.url or not server.username or not server.password_encrypted:
+            raise XUIError("Server credentials not configured. Please setup services first.")
+
         password = self._decrypt_password(server.password_encrypted)
         # Use verify_ssl from server model, default to True for existing servers
         verify_ssl = getattr(server, "verify_ssl", True)
@@ -179,9 +182,10 @@ class XUIService:
     async def create_server(
         self,
         name: str,
-        url: str,
-        username: str,
-        password: str,
+        ip_address: str | None = None,
+        url: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         verify_ssl: bool = True,
         panel_path: str = "/",
         subscription_path: str = "/sub/",
@@ -191,6 +195,7 @@ class XUIService:
 
         Args:
             name: Server name
+            ip_address: IP Address of the server
             url: Server base URL (e.g., https://example.com)
             username: Panel username
             password: Panel password
@@ -202,9 +207,10 @@ class XUIService:
         Returns:
             Created server
         """
-        encrypted_password = self._encrypt_password(password)
+        encrypted_password = self._encrypt_password(password) if password else None
         server = Server(
             name=name,
+            ip_address=ip_address,
             url=url,
             username=username,
             password_encrypted=encrypted_password,
@@ -222,6 +228,7 @@ class XUIService:
         self,
         server_id: int,
         name: str | None = None,
+        ip_address: str | None = None,
         url: str | None = None,
         username: str | None = None,
         password: str | None = None,
@@ -236,6 +243,7 @@ class XUIService:
         Args:
             server_id: Server ID
             name: New name (optional)
+            ip_address: New IP address (optional)
             url: New URL (optional)
             username: New username (optional)
             password: New password (optional)
@@ -254,6 +262,8 @@ class XUIService:
 
         if name is not None:
             server.name = name
+        if ip_address is not None:
+            server.ip_address = ip_address
         if url is not None:
             server.url = url
         if username is not None:

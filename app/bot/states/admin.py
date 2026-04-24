@@ -6,8 +6,16 @@ from aiogram.fsm.state import State, StatesGroup
 class ServerManagement(StatesGroup):
     """Server management states."""
 
-    waiting_for_panel_type = State()
     waiting_for_name = State()
+    waiting_for_ip_address = State()
+    confirm_add_offline = State()
+
+    # SSH setup flow
+    waiting_for_ssh_port = State()
+    waiting_for_ssh_user = State()
+    waiting_for_ssh_auth = State()  # Password or Key
+
+    # Legacy / XUI Panel
     waiting_for_base_url = State()
     waiting_for_panel_path = State()
     waiting_for_subscription_path = State()
@@ -19,6 +27,11 @@ class ServerManagement(StatesGroup):
 
     # Server editing states
     waiting_for_edit_name = State()
+    waiting_for_edit_ip_address = State()
+    waiting_for_edit_ssh_port = State()
+    waiting_for_edit_ssh_user = State()
+    waiting_for_edit_ssh_auth = State()
+
     waiting_for_edit_base_url = State()
     waiting_for_edit_panel_path = State()
     waiting_for_edit_subscription_path = State()

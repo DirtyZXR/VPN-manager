@@ -129,7 +129,7 @@ ${DOMAIN}:${HTTPS_PORT} {
     output file /data/access.log
   }
 
-  handle /sub/* {
+  handle /Хор/* {
     reverse_proxy 127.0.0.1:2096
   }
   

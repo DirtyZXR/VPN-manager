@@ -1,4 +1,4 @@
-"""Server model for 3x-ui panels."""
+"""Server model for 3x-ui panels and VPN services."""
 
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -14,20 +14,28 @@ if TYPE_CHECKING:
 
 
 class Server(Base, TimestampMixin, SyncMixin):
-    """3x-ui panel server configuration."""
+    """Physical Server and VPN configuration."""
 
     __tablename__ = "servers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
-    url: Mapped[str] = mapped_column(String(500), nullable=False)
-    username: Mapped[str] = mapped_column(String(100), nullable=False)
-    password_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Network & Status
+    ip_address: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_online: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="0"
+    )
+
+    # 3x-ui / Main Panel connection (Legacy/Primary)
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Provider architecture
-    panel_type: Mapped[str] = mapped_column(String(50), nullable=False, server_default="xui")
+    panel_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Custom paths for panel and subscriptions (Legacy)
@@ -41,6 +49,7 @@ class Server(Base, TimestampMixin, SyncMixin):
         String(100), default="root", nullable=False, server_default="root"
     )
     ssh_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ssh_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Session management
     session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
