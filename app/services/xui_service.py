@@ -84,9 +84,14 @@ class XUIService:
         from urllib.parse import urljoin
 
         # Build base url
-        ip = server.ip_address
-        url = ip if ip.startswith("http") else f"https://{ip}" if verify_ssl else f"http://{ip}"
-        base_url = urljoin(url, panel_path)
+        if getattr(server.xui_panel, "url", None):
+            base_url = server.xui_panel.url
+            if not base_url.endswith(panel_path) and panel_path != "/":
+                base_url = urljoin(base_url, panel_path)
+        else:
+            ip = server.ip_address
+            url = ip if ip.startswith("http") else f"https://{ip}" if verify_ssl else f"http://{ip}"
+            base_url = urljoin(url, panel_path)
 
         # Try to load saved cookies
         saved_cookies = None

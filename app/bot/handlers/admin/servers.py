@@ -331,9 +331,20 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
         sync_service = SyncService(session)
         try:
             # Sync inbounds and clients
+            from sqlalchemy.orm import selectinload
+
             from app.database.models import Server
 
-            server = await session.get(Server, server_id)
+            server = await session.get(
+                Server,
+                server_id,
+                options=[
+                    selectinload(Server.xui_panel),
+                    selectinload(Server.awg_service),
+                    selectinload(Server.mtproxy_service),
+                    selectinload(Server.inbounds),
+                ]
+            )
             if server:
                 await sync_service.sync_server(server, force=True)
                 await session.commit()

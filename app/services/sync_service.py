@@ -138,6 +138,7 @@ class SyncService:
                 selectinload(Server.xui_panel),
                 selectinload(Server.awg_service),
                 selectinload(Server.mtproxy_service),
+                selectinload(Server.inbounds),
             )
         )
         servers = result.scalars().all()
@@ -353,6 +354,7 @@ class SyncService:
                 selectinload(Server.xui_panel),
                 selectinload(Server.awg_service),
                 selectinload(Server.mtproxy_service),
+                selectinload(Server.inbounds),
             ],
         )
         if not server:
@@ -407,26 +409,31 @@ class SyncService:
         Returns:
             True если нужна синхронизация
         """
-        if hasattr(model, "sync_status") and model.sync_status == "offline":
+        # Используем __dict__, чтобы не вызывать lazy loading (MissingGreenlet в SQLAlchemy)
+        model_dict = getattr(model, "__dict__", {})
+
+        sync_status = model_dict.get("sync_status")
+        if sync_status == "offline" or sync_status == "error":
             return True  # Попробовать снова
 
-        if hasattr(model, "sync_status") and model.sync_status == "error":
-            return True  # Попробовать снова
+        if "last_sync_at" in model_dict:
+            last_sync_at = model_dict["last_sync_at"]
+            if last_sync_at is None:
+                return True  # Никогда не синхронизировали
 
-        if hasattr(model, "last_sync_at") and model.last_sync_at is None:
-            return True  # Никогда не синхронизировали
-
-        # Если прошло больше интервала (с учетом timezone-aware и timezone-naive)
-        if hasattr(model, "last_sync_at") and model.last_sync_at is not None:
+            # Если прошло больше интервала (с учетом timezone-aware и timezone-naive)
             now = datetime.now(UTC)
-            last_sync = model.last_sync_at
 
             # Если last_sync не имеет timezone, добавим ему UTC timezone
-            if last_sync.tzinfo is None:
-                last_sync = last_sync.replace(tzinfo=UTC)
+            if last_sync_at.tzinfo is None:
+                last_sync_at = last_sync_at.replace(tzinfo=UTC)
 
-            if now - last_sync > self.SYNC_INTERVAL:
+            if now - last_sync_at > self.SYNC_INTERVAL:
                 return True
+        else:
+            # Если поля нет даже в __dict__ (например, не загружено), считаем что нужна синхронизация
+            # Но для безопасности лучше просто вернуть True
+            return True
 
         return False
 
@@ -488,7 +495,8 @@ class SyncService:
                     db_ib.last_sync_at = datetime.now(UTC)
             else:
                 # Создать новый inbound
-                new_ib = Inbound(
+                from app.database.models import XUIInbound
+                new_ib = XUIInbound(
                     server_id=server.id,
                     xui_id=xui_id,
                     remark=xui_ib.remark,
@@ -675,14 +683,15 @@ class SyncService:
         stats = {"total": len(connections), "synced": 0, "error": 0, "offline": 0}
 
         for connection in connections:
-            status = connection.sync_status if hasattr(connection, "sync_status") else "synced"
+            conn_dict = getattr(connection, "__dict__", {})
+            status = conn_dict.get("sync_status", "synced")
             stats[status] = stats.get(status, 0) + 1
 
             # Дополнительная проверка: клиент существует в XUI?
             if status == "synced":
                 try:
                     inbound = connection.inbound
-                    if inbound and hasattr(inbound, "server"):
+                    if inbound and "server" in getattr(inbound, "__dict__", {}):
                         if inbound.type != "xui_inbound":
                             # Skip XUI integrity check for non-XUI inbounds
                             continue
@@ -755,6 +764,7 @@ class SyncService:
                                 selectinload(Server.xui_panel),
                                 selectinload(Server.awg_service),
                                 selectinload(Server.mtproxy_service),
+                                selectinload(Server.inbounds),
                             ],
                         )
                         if server:
