@@ -344,6 +344,13 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                         text += t(
                             "user.subs.conn_url", "  • URL: <code>{url}</code>\n", url=group_key
                         )
+
+                    # Add QR code button
+                    conn_id = conn_list[0]["connection"].id
+                    inbound_remark = conn_list[0]["inbound"].remark
+                    builder.button(
+                        text=f"📱 QR {inbound_remark}", callback_data=f"user_dl_conf_{conn_id}"
+                    )
                 else:
                     # Indicate that it's a file configuration
                     text += t("user.subs.conn_file", "  • Конфиг: (см. кнопку ниже)\n")
@@ -782,7 +789,6 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
             config = await provider.get_client_config(conn.inbound, conn)
 
             if config.get("config_data"):
-
                 from aiogram.types import BufferedInputFile
 
                 config_data = config["config_data"]
