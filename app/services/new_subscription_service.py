@@ -15,8 +15,9 @@ from app.database.models import (
     InboundConnection,
     Subscription,
 )
+from app.services.vpn_providers import BaseVPNProvider, get_vpn_provider
 from app.utils import generate_subscription_token
-from app.xui_client import XUIAddClientRequest, XUIClient, XUIError
+from app.xui_client.exceptions import XUIError
 
 
 class NewSubscriptionService:
@@ -29,7 +30,15 @@ class NewSubscriptionService:
             session: Async database session
         """
         self.session = session
-        self._xui_clients: dict[int, XUIClient] = {}
+        self._providers: dict[int, BaseVPNProvider] = {}
+
+    async def __aenter__(self):
+        """Enter async context."""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Exit async context and close all clients."""
+        await self.close_all_clients()
 
     # Client methods
 
@@ -207,30 +216,14 @@ class NewSubscriptionService:
                         .options(selectinload(Inbound.server))
                     )
                     inbound = inbound_result.scalar_one()
-                    xui_client = await self._get_xui_client(inbound.server)
+                    provider = await self._get_provider(inbound.server)
 
                     # First, reset the traffic so it starts from 0 for the new period
-                    await xui_client.reset_client_traffic(inbound.xui_id, conn.email)
+                    await provider.reset_client_traffic(inbound, conn)
 
                     # Update limits
-                    expiry_time_ms = int(expiry_date.timestamp() * 1000) if expiry_date else 0
-                    total_bytes = new_total_gb * 1024 * 1024 * 1024
-
-                    # XUI expects a dict or Client object for update
-                    # We can use the XUIAddClientRequest model which is used in add_client too
-                    update_req = XUIAddClientRequest(
-                        id=conn.uuid,
-                        enable=True,
-                        email=conn.email,
-                        flow="xtls-rprx-vision",
-                        totalGB=total_bytes,
-                        expiryTime=expiry_time_ms,
-                        subId=subscription.subscription_token,
-                        tgId=int(subscription.client.telegram_id)
-                        if subscription.client.telegram_id
-                        else 0,
-                    )
-                    await xui_client.update_client(inbound.xui_id, update_req)
+                    conn.is_enabled = True
+                    await provider.update_client(inbound, conn, new_total_gb, expiry_date)
                 except Exception as e:
                     logger.error(
                         f"Failed to update kept inbound {conn.inbound_id} for sub {subscription_id}: {e}"
@@ -291,87 +284,46 @@ class NewSubscriptionService:
         if not inbound:
             raise XUIError("Inbound not found")
 
-        # Generate UUID and email with uniqueness check
+        # Generate UUID if not provided
         import uuid
 
         client_uuid = client_uuid or str(uuid.uuid4())
-
-        base_email = f"{subscription.name}-{subscription.client.name}"
-
-        # Calculate expiry time for XUI
-        expiry_time = 0
-        if subscription.expiry_date:
-            expiry_time = int(subscription.expiry_date.timestamp() * 1000)
-
-        # Get Telegram ID from client
-        tg_id = int(subscription.client.telegram_id) if subscription.client.telegram_id else 0
-
-        exclude_emails: set[str] = set()
         client_email = None
 
         try:
-            xui_client = await self._get_xui_client(inbound.server)
+            provider = await self._get_provider(inbound.server)
         except Exception as e:
             await self.session.rollback()
-            raise XUIError(f"Failed to get XUI client: {e}") from e
+            raise XUIError(f"Failed to get VPN provider: {e}") from e
 
-        for _ in range(100):  # Maximum attempts
-            try:
-                # Generate unique email for this inbound
-                email = await self._generate_unique_email(
-                    inbound_id, base_email, exclude_emails=exclude_emails
-                )
-            except XUIError as e:
-                await self.session.rollback()
-                raise e
-
-            # Create client in XUI
-            client_request = XUIAddClientRequest(
-                id=client_uuid,
-                email=email,
-                enable=True,
-                flow="xtls-rprx-vision",
-                totalGB=subscription.total_gb * 1024 * 1024 * 1024,  # Convert GB to bytes
-                expiryTime=expiry_time,
-                subId=subscription.subscription_token,
-                tgId=tg_id,  # Pass Telegram ID to XUI
+        try:
+            # Create client in provider
+            client_data = await provider.add_client(
+                inbound=inbound,
+                subscription=subscription,
+                client_uuid=client_uuid,
+                email=None,  # Let provider generate/handle unique email
             )
-
-            try:
-                await xui_client.add_client(inbound.xui_id, client_request)
-                client_email = email
-                break
-            except XUIError as e:
-                error_msg = str(e).lower()
-                if "duplicate" in error_msg and "email" in error_msg:
-                    logger.warning(f"Email {email} already exists in XUI panel, retrying...")
-                    exclude_emails.add(email)
-                    continue
-                else:
-                    await self.session.rollback()
-                    logger.error(f"Failed to create XUI client: {e}", exc_info=True)
-                    raise XUIError(f"Failed to create XUI client: {str(e)}") from e
-            except Exception as e:
-                await self.session.rollback()
-                logger.error(f"Failed to create XUI client: {e}", exc_info=True)
-                raise XUIError(f"Failed to create XUI client: {str(e)}") from e
-        else:
+            client_uuid = client_data.get("uuid", client_uuid)
+            client_email = client_data.get("email")
+            provider_payload = client_data
+        except Exception as e:
             await self.session.rollback()
-            raise XUIError(
-                f"Unable to find an email accepted by XUI panel for inbound {inbound_id}"
-            )
+            logger.error(f"Failed to create client in VPN panel: {e}", exc_info=True)
+            raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
 
         try:
             # Create inbound connection with per-connection traffic and expiry
             connection = InboundConnection(
                 subscription_id=subscription_id,
                 inbound_id=inbound_id,
-                xui_client_id=client_uuid,
-                email=client_email,
-                uuid=client_uuid,
                 is_enabled=True,
                 total_gb=subscription.total_gb,  # Store per-connection traffic
                 expiry_date=subscription.expiry_date,  # Store per-connection expiry
+                provider_payload=provider_payload,
+                uuid=provider_payload.get("uuid", client_uuid),
+                email=provider_payload.get("email", client_email),
+                xui_client_id=provider_payload.get("xui_client_id", client_uuid),
                 sync_status="synced",
                 last_sync_at=datetime.now(UTC),
             )
@@ -419,10 +371,10 @@ class NewSubscriptionService:
         )
         inbound = inbound_result.scalar_one_or_none()
 
-        # Delete from XUI
+        # Delete from provider
         if inbound and inbound.server:
-            xui_client = await self._get_xui_client(inbound.server)
-            await xui_client.delete_client(inbound.xui_id, connection.uuid)
+            provider = await self._get_provider(inbound.server)
+            await provider.remove_client(inbound, connection)
             inbound.client_count -= 1
 
         # Delete from database
@@ -453,10 +405,13 @@ class NewSubscriptionService:
         if not connection:
             return None
 
-        # Update in XUI
+        # Update in provider
         inbound = connection.inbound
-        xui_client = await self._get_xui_client(inbound.server)
-        await xui_client.enable_client(inbound.xui_id, connection.uuid, enable)
+        connection.is_enabled = enable  # Update flag before calling provider
+        provider = await self._get_provider(inbound.server)
+        await provider.update_client(
+            inbound, connection, connection.total_gb, connection.expiry_date
+        )
 
         # Update in database
         connection.is_enabled = enable
@@ -493,10 +448,13 @@ class NewSubscriptionService:
         toggled_count = 0
         for subscription in subscriptions:
             for connection in subscription.inbound_connections:
-                # Update in XUI
+                # Update in provider
                 inbound = connection.inbound
-                xui_client = await self._get_xui_client(inbound.server)
-                await xui_client.enable_client(inbound.xui_id, connection.uuid, enable)
+                connection.is_enabled = enable
+                provider = await self._get_provider(inbound.server)
+                await provider.update_client(
+                    inbound, connection, connection.total_gb, connection.expiry_date
+                )
 
                 # Update in database
                 connection.is_enabled = enable
@@ -529,14 +487,14 @@ class NewSubscriptionService:
         deleted_count = 0
         for subscription in subscriptions:
             for connection in subscription.inbound_connections:
-                # Delete from XUI
+                # Delete from provider
                 inbound = connection.inbound
                 try:
-                    xui_client = await self._get_xui_client(inbound.server)
-                    await xui_client.delete_client(inbound.xui_id, connection.uuid)
+                    provider = await self._get_provider(inbound.server)
+                    await provider.remove_client(inbound, connection)
                     deleted_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to delete client from XUI: {e}")
+                    logger.warning(f"Failed to delete client from provider: {e}")
 
         return deleted_count
 
@@ -568,35 +526,17 @@ class NewSubscriptionService:
         subscriptions = result.scalars().all()
 
         updated_count = 0
-        tg_id = int(client.telegram_id) if client.telegram_id else 0
 
         for subscription in subscriptions:
             for connection in subscription.inbound_connections:
-                # Update tg_id in XUI
+                # Update tg_id in provider
                 inbound = connection.inbound
                 try:
-                    xui_client = await self._get_xui_client(inbound.server)
-
-                    # Create update request with new tg_id
-                    from app.xui_client.models import XUIAddClientRequest
-
-                    expiry_time = 0
-                    if subscription.expiry_date:
-                        expiry_time = int(subscription.expiry_date.timestamp() * 1000)
-
-                    update_request = XUIAddClientRequest(
-                        id=connection.uuid,
-                        email=connection.email,
-                        enable=True,
-                        flow="xtls-rprx-vision",
-                        totalGB=subscription.total_gb * 1024 * 1024 * 1024,
-                        expiryTime=expiry_time,
-                        subId=subscription.subscription_token,
-                        tgId=tg_id,  # Update Telegram ID
+                    provider = await self._get_provider(inbound.server)
+                    # For XUI this works because it pulls latest from subscription.client.telegram_id
+                    await provider.update_client(
+                        inbound, connection, connection.total_gb, connection.expiry_date
                     )
-
-                    # Use update_client instead of add_client to avoid duplicate email error
-                    await xui_client.update_client(inbound.xui_id, update_request)
                     updated_count += 1
                     logger.info(
                         f"✅ Updated Telegram ID for client {client_id} in inbound {inbound.id}"
@@ -609,119 +549,34 @@ class NewSubscriptionService:
 
     # Helper methods
 
-    async def _generate_unique_email(
-        self,
-        inbound_id: int,
-        base_email: str,
-        max_attempts: int = 100,
-        exclude_emails: set[str] | None = None,
-    ) -> str:
-        """Generate unique email for server.
-
-        Checks if email already exists on the same server and adds suffix if needed.
-
-        Args:
-            inbound_id: Inbound ID
-            base_email: Base email template
-            max_attempts: Maximum attempts to find unique email
-            exclude_emails: Set of emails to explicitly exclude (e.g. known duplicates in XUI)
-
-        Returns:
-            Unique email
-
-        Raises:
-            XUIError: If unable to generate unique email
-        """
-        if "@" in base_email:
-            base_name, domain_part = base_email.rsplit("@", 1)
-            domain_part = f"@{domain_part}"
-        else:
-            base_name = base_email
-            domain_part = ""
-
-        # First get the server_id for this inbound
-        inbound_result = await self.session.execute(select(Inbound).where(Inbound.id == inbound_id))
-        inbound = inbound_result.scalar_one_or_none()
-        if not inbound:
-            raise XUIError(f"Inbound {inbound_id} not found")
-        server_id = inbound.server_id
-
-        for attempt in range(max_attempts):
-            email = base_email if attempt == 0 else f"{base_name}_{attempt}{domain_part}"
-
-            if exclude_emails and email in exclude_emails:
-                continue
-
-            # Check if email exists on the same server
-            existing = await self.session.execute(
-                select(InboundConnection)
-                .join(Inbound, InboundConnection.inbound_id == Inbound.id)
-                .where(
-                    Inbound.server_id == server_id,
-                    InboundConnection.email == email,
-                )
-            )
-
-            if not existing.scalar_one_or_none():
-                # Email is unique
-                return email
-
-        raise XUIError(
-            f"Unable to generate unique email for inbound {inbound_id} "
-            f"after {max_attempts} attempts"
-        )
-
-    async def _get_xui_client(self, server: Any) -> XUIClient:
-        """Get or create XUI client for server.
+    async def _get_provider(self, server: Any) -> BaseVPNProvider:
+        """Get or create VPN provider for server.
 
         Args:
             server: Server model
 
         Returns:
-            XUI client instance
+            VPN provider instance
         """
-        if server.id in self._xui_clients:
-            client = self._xui_clients[server.id]
-            # Check if client is still active by testing the session
-            try:
-                # Simple test to check if session is still usable
-                if client._session and not client._session.closed:
-                    return client
-                # Session is closed, remove from cache and create new
-                logger.debug(f"Removing stale XUI client for server {server.id}")
-                del self._xui_clients[server.id]
-            except Exception:
-                # If there's any error, also remove from cache and create new
-                logger.debug(f"Removing stale XUI client for server {server.id} due to error")
-                del self._xui_clients[server.id]
-
-        # Import here to avoid circular dependency
-
-        from app.services.xui_service import XUIService
-
-        xui_service = XUIService(self.session)
-        client = await xui_service._get_client(server)
-        self._xui_clients[server.id] = client
-        return client
+        if server.id not in self._providers:
+            self._providers[server.id] = get_vpn_provider(server)
+        return self._providers[server.id]
 
     async def close_all_clients(self) -> None:
-        """Close all XUI clients properly."""
-        for client_id in list(self._xui_clients.keys()):
-            client = self._xui_clients[client_id]
+        """Close all VPN providers properly."""
+        for server_id in list(self._providers.keys()):
+            provider = self._providers[server_id]
             try:
-                if client._session and not client._session.closed:
-                    await client.close()
+                await provider.close()
             except Exception as e:
-                logger.warning(f"Error closing XUI client {client_id}: {e}")
+                logger.warning(f"Error closing VPN provider {server_id}: {e}")
             finally:
-                self._xui_clients.pop(client_id, None)
+                self._providers.pop(server_id, None)
 
     # Subscription URLs
 
     async def get_subscription_urls(self, client_id: int) -> list[dict[str, Any]]:
         """Get all subscription URLs for client.
-
-        Prioritizes JSON URLs if available.
 
         Args:
             client_id: Client ID
@@ -729,37 +584,86 @@ class NewSubscriptionService:
         Returns:
             List of subscription info dicts
         """
-        subscriptions = await self.get_client_subscriptions(client_id)
+        try:
+            subscriptions = await self.get_client_subscriptions(client_id)
 
-        urls = []
-        for sub in subscriptions:
-            # Create a set of unique servers for this subscription
-            servers = {conn.inbound.server for conn in sub.inbound_connections if conn.is_enabled}
+            urls = []
+            for sub in subscriptions:
+                seen_configs = set()
+                for conn in sub.inbound_connections:
+                    if not conn.is_enabled:
+                        continue
+                    try:
+                        provider = await self._get_provider(conn.inbound.server)
+                        config = await provider.get_client_config(conn.inbound, conn)
+                        config_data = config.get("config_data")
+                        config_type = config.get("config_type")
 
-            for server in servers:
-                # Prioritize JSON URL, fallback to standard URL
-                subscription_path = getattr(server, "subscription_json_path", None)
-                url_type = "json"
-                if not subscription_path:
-                    subscription_path = getattr(server, "subscription_path", "/sub/")
-                    url_type = "standard"
+                        if config_data and config_data not in seen_configs:
+                            seen_configs.add(config_data)
 
-                from urllib.parse import urljoin
+                            # Only return links here, files are handled differently in UI
+                            if config_type == "link":
+                                urls.append(
+                                    {
+                                        "subscription_id": sub.id,
+                                        "subscription_name": sub.name,
+                                        "server_name": conn.inbound.server.name,
+                                        "url": config_data,
+                                        "token": sub.subscription_token,
+                                        "type": "standard",
+                                    }
+                                )
+                    except Exception as e:
+                        from loguru import logger
 
-                url = urljoin(server.url, f"{subscription_path}{sub.subscription_token}")
+                        logger.warning(f"Error getting config for conn {conn.id}: {e}")
 
-                urls.append(
-                    {
-                        "subscription_id": sub.id,
-                        "subscription_name": sub.name,
-                        "server_name": server.name,
-                        "url": url,
-                        "token": sub.subscription_token,
-                        "type": url_type,
-                    }
-                )
+            return urls
+        finally:
+            await self.close_all_clients()
 
-        return urls
+    async def get_subscription_json_urls(self, client_id: int) -> list[dict[str, Any]]:
+        """Get all subscription JSON URLs for client."""
+        try:
+            subscriptions = await self.get_client_subscriptions(client_id)
+
+            urls = []
+            for sub in subscriptions:
+                seen_configs = set()
+                for conn in sub.inbound_connections:
+                    if not conn.is_enabled:
+                        continue
+                    try:
+                        provider = await self._get_provider(conn.inbound.server)
+                        config = await provider.get_client_config(
+                            conn.inbound, conn, prefer_json=True
+                        )
+                        config_data = config.get("config_data")
+                        config_type = config.get("config_type")
+
+                        if config_data and config_data not in seen_configs:
+                            seen_configs.add(config_data)
+
+                            if config_type == "link":
+                                urls.append(
+                                    {
+                                        "subscription_id": sub.id,
+                                        "subscription_name": sub.name,
+                                        "server_name": conn.inbound.server.name,
+                                        "url": config_data,
+                                        "token": sub.subscription_token,
+                                        "type": "json",
+                                    }
+                                )
+                    except Exception as e:
+                        from loguru import logger
+
+                        logger.warning(f"Error getting json config for conn {conn.id}: {e}")
+
+            return urls
+        finally:
+            await self.close_all_clients()
 
     # Subscription management methods
 
@@ -850,36 +754,24 @@ class NewSubscriptionService:
 
             for connection in connections:
                 try:
-                    xui_client = await self._get_xui_client(connection.inbound.server)
+                    provider = await self._get_provider(connection.inbound.server)
 
-                    # Recalculate expiry time for XUI
-                    expiry_time = 0
-                    if subscription.expiry_date:
-                        expiry_time = int(subscription.expiry_date.timestamp() * 1000)
-
-                    update_request = XUIAddClientRequest(
-                        id=connection.uuid,
-                        email=connection.email,
-                        enable=subscription.is_active,
-                        flow="xtls-rprx-vision",
-                        totalGB=subscription.total_gb * 1024 * 1024 * 1024,
-                        expiryTime=expiry_time,
-                        subId=subscription.subscription_token,
-                        tgId=int(subscription.client.telegram_id)
-                        if subscription.client.telegram_id
-                        else 0,
+                    connection.is_enabled = subscription.is_active
+                    await provider.update_client(
+                        connection.inbound,
+                        connection,
+                        subscription.total_gb,
+                        subscription.expiry_date,
                     )
 
-                    await xui_client.update_client(connection.inbound.xui_id, update_request)
                     # Update per-connection settings
                     connection.total_gb = subscription.total_gb
                     connection.expiry_date = subscription.expiry_date
-                    connection.is_enabled = subscription.is_active
                     connection.sync_status = "synced"
                     connection.last_sync_at = datetime.now(UTC)
                 except Exception as e:
                     logger.warning(
-                        f"Failed to update XUI client for connection {connection.id}: {e}"
+                        f"Failed to update VPN client for connection {connection.id}: {e}"
                     )
                     connection.sync_status = "error"
 
@@ -935,31 +827,15 @@ class NewSubscriptionService:
 
         for connection in connections:
             try:
-                xui_client = await self._get_xui_client(connection.inbound.server)
-
-                expiry_time = 0
-                if subscription.expiry_date is not None:
-                    expiry_time = int(subscription.expiry_date.timestamp() * 1000)
-
-                update_request = XUIAddClientRequest(
-                    id=connection.uuid,
-                    email=connection.email,
-                    enable=connection.is_enabled,
-                    flow="xtls-rprx-vision",
-                    totalGB=subscription.total_gb * 1024 * 1024 * 1024,
-                    expiryTime=expiry_time,
-                    subId=subscription.subscription_token,
-                    tgId=int(subscription.client.telegram_id)
-                    if subscription.client.telegram_id
-                    else 0,
+                provider = await self._get_provider(connection.inbound.server)
+                await provider.update_client(
+                    connection.inbound, connection, subscription.total_gb, subscription.expiry_date
                 )
-
-                await xui_client.update_client(connection.inbound.xui_id, update_request)
                 connection.expiry_date = subscription.expiry_date
                 connection.sync_status = "synced"
                 connection.last_sync_at = now
             except Exception as e:
-                logger.warning(f"Failed to update XUI client for connection {connection.id}: {e}")
+                logger.warning(f"Failed to update VPN client for connection {connection.id}: {e}")
                 connection.sync_status = "error"
 
         await self.session.flush()
@@ -1024,31 +900,15 @@ class NewSubscriptionService:
 
         for connection in connections:
             try:
-                xui_client = await self._get_xui_client(connection.inbound.server)
+                provider = await self._get_provider(connection.inbound.server)
 
-                # Update expiry date in XUI
                 if base_days > 0:
-                    expiry_time = 0
-                    if subscription.expiry_date is not None:
-                        expiry = subscription.expiry_date
-                        if expiry.tzinfo is None:
-                            expiry = expiry.replace(tzinfo=UTC)
-                        expiry_time = int(expiry.timestamp() * 1000)
-
-                    update_request = XUIAddClientRequest(
-                        id=connection.uuid,
-                        email=connection.email,
-                        enable=connection.is_enabled,
-                        flow="xtls-rprx-vision",
-                        totalGB=subscription.total_gb * 1024 * 1024 * 1024,
-                        expiryTime=expiry_time,
-                        subId=subscription.subscription_token,
-                        tgId=int(subscription.client.telegram_id)
-                        if subscription.client.telegram_id
-                        else 0,
+                    await provider.update_client(
+                        connection.inbound,
+                        connection,
+                        subscription.total_gb,
+                        subscription.expiry_date,
                     )
-
-                    await xui_client.update_client(connection.inbound.xui_id, update_request)
 
                     # Update local connection expiry
                     connection.expiry_date = subscription.expiry_date
@@ -1056,10 +916,10 @@ class NewSubscriptionService:
                     connection.last_sync_at = now
 
                 # Reset traffic
-                await xui_client.reset_client_traffic(connection.inbound.xui_id, connection.email)
+                await provider.reset_client_traffic(connection.inbound, connection)
             except Exception as e:
                 logger.warning(
-                    f"Failed to reset XUI client traffic for connection {connection.id}: {e}"
+                    f"Failed to reset VPN client traffic for connection {connection.id}: {e}"
                 )
                 if base_days > 0:
                     connection.sync_status = "error"
@@ -1097,11 +957,11 @@ class NewSubscriptionService:
                 )
                 inbound = inbound_result.scalar_one_or_none()
                 if inbound and inbound.server:
-                    xui_client = await self._get_xui_client(inbound.server)
-                    await xui_client.delete_client(inbound.xui_id, connection.uuid)
+                    provider = await self._get_provider(inbound.server)
+                    await provider.remove_client(inbound, connection)
                     inbound.client_count -= 1
             except Exception as e:
-                logger.warning(f"Failed to delete XUI client for connection {connection.id}: {e}")
+                logger.warning(f"Failed to delete VPN client for connection {connection.id}: {e}")
 
         # Delete from database
         await self.session.delete(subscription)

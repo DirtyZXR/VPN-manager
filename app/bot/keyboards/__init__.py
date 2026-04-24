@@ -1,6 +1,10 @@
 """Keyboards package."""
 
 from app.bot.keyboards.inline import (
+    get_admin_clients_menu_keyboard,
+    get_admin_dashboard_keyboard,
+    get_admin_infra_menu_keyboard,
+    get_admin_system_menu_keyboard,
     get_back_keyboard,
     get_client_search_keyboard,
     get_clients_keyboard,
@@ -13,11 +17,10 @@ from app.bot.keyboards.inline import (
     get_inbounds_keyboard,
     get_instruction_menu_keyboard,
     get_main_menu_keyboard,
-    get_admin_dashboard_keyboard,
-    get_admin_clients_menu_keyboard,
-    get_admin_infra_menu_keyboard,
-    get_admin_system_menu_keyboard,
+    get_public_templates_keyboard,
     get_registration_keyboard,
+    get_request_admin_keyboard,
+    get_server_panel_type_keyboard,
     get_servers_keyboard,
     get_servers_keyboard_for_template_edit,
     get_step_navigation_keyboard,
@@ -33,8 +36,6 @@ from app.bot.keyboards.inline import (
     get_user_actions_keyboard,
     get_user_keyboard,
     get_users_keyboard,
-    get_public_templates_keyboard,
-    get_request_admin_keyboard,
 )
 
 __all__ = [
@@ -47,6 +48,7 @@ __all__ = [
     "get_subscription_details_keyboard",
     "get_subscription_rebuild_mode_keyboard",
     "get_servers_keyboard",
+    "get_server_panel_type_keyboard",
     "get_servers_keyboard_for_template_edit",
     "get_clients_keyboard",
     "get_clients_page_keyboard",

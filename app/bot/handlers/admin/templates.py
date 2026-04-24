@@ -25,8 +25,8 @@ from app.bot.states.admin import TemplateManagement
 from app.database import async_session_factory
 from app.services.client_service import ClientService
 from app.services.subscription_template_service import SubscriptionTemplateService
-from app.xui_client.exceptions import XUIError
 from app.utils.texts import t
+from app.xui_client.exceptions import XUIError
 
 router = Router()
 

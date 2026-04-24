@@ -1,19 +1,20 @@
 """Admin dashboard and submenu handlers."""
 
 import contextlib
-from aiogram import F, Router
-from aiogram.types import CallbackQuery
-from aiogram.fsm.context import FSMContext
-from sqlalchemy import select, func
 
-from app.database import async_session_factory
-from app.database.models import Server, Client, Subscription
+from aiogram import F, Router
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery
+from sqlalchemy import func, select
+
 from app.bot.keyboards.inline import (
-    get_admin_dashboard_keyboard,
     get_admin_clients_menu_keyboard,
+    get_admin_dashboard_keyboard,
     get_admin_infra_menu_keyboard,
     get_admin_system_menu_keyboard,
 )
+from app.database import async_session_factory
+from app.database.models import Client, Server, Subscription
 from app.utils.texts import t
 
 router = Router()
@@ -36,13 +37,13 @@ async def show_admin_dashboard(callback: CallbackQuery, is_admin: bool, state: F
         # Count servers
         total_servers = await session.scalar(select(func.count(Server.id)))
         active_servers = await session.scalar(
-            select(func.count(Server.id)).where(Server.is_active == True)
+            select(func.count(Server.id)).where(Server.is_active.is_(True))
         )
 
         # Count clients
         total_clients = await session.scalar(select(func.count(Client.id)))
         active_clients = await session.scalar(
-            select(func.count(Client.id)).where(Client.is_active == True)
+            select(func.count(Client.id)).where(Client.is_active.is_(True))
         )
 
         # Count subscriptions

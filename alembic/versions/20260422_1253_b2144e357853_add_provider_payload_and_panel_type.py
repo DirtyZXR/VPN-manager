@@ -1,5 +1,3 @@
-"""Mako template for migration scripts."""
-
 """Add provider_payload and panel_type
 
 Revision ID: b2144e357853
@@ -7,9 +5,9 @@ Revises: 9aa631a1d506
 Create Date: 2026-04-22 12:53:42.420377
 
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "b2144e357853"

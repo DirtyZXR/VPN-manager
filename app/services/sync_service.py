@@ -181,37 +181,113 @@ class SyncService:
 
             logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
 
-            # Получить XUI клиент
-            xui_client = await self._xui_service._get_client(server)
+            if getattr(server, "panel_type", "xui") == "amnezia":
+                from app.services.vpn_providers.factory import get_vpn_provider
 
-            # Синхронизировать inbounds
-            await self._sync_server_inbounds(server, xui_client)
-
-            # Синхронизировать клиентов для всех inbounds этого сервера
-            from sqlalchemy import select
-
-            inbounds_result = await self.session.execute(
-                select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active)
-            )
-            inbounds = inbounds_result.scalars().all()
-
-            clients_synced = 0
-            logger.info(
-                f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}"
-            )
-            for inbound in inbounds:
+                provider = get_vpn_provider(server)
+                # Simply connect to verify the server is alive and sync inbounds
                 try:
-                    logger.info(
-                        f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})"
-                    )
-                    synced = await self._sync_inbound_clients(inbound, xui_client)
-                    clients_synced += synced
-                    logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
-                except Exception as e:
-                    logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
-                        exc_info=True,
-                    )
+                    if hasattr(provider, "_get_client"):
+                        am_client = await provider._get_client()
+
+                        # Fetch Amnezia servers (inbounds)
+                        amnezia_servers = await am_client.get_servers()
+
+                        # Update inbounds in DB
+                        from sqlalchemy import select
+
+                        existing_inbounds = await self.session.execute(
+                            select(Inbound).where(Inbound.server_id == server.id)
+                        )
+                        existing_map = {
+                            (ib.xui_id, ib.protocol): ib for ib in existing_inbounds.scalars().all()
+                        }
+                        seen_inbounds = set()
+
+                        for am_srv in amnezia_servers:
+                            xui_id = am_srv.id
+                            protocols = am_srv.protocols if am_srv.protocols else []
+
+                            if not protocols:
+                                # Fallback if no protocols are returned
+                                protocols = [
+                                    type("DummyProtocol", (), {"slug": "amnezia", "id": None})()
+                                ]
+
+                            for p in protocols:
+                                p_slug = p.slug
+                                p_id = p.id
+                                remark_str = am_srv.name
+                                seen_inbounds.add((xui_id, p_slug))
+
+                                if (xui_id, p_slug) in existing_map:
+                                    db_ib = existing_map[(xui_id, p_slug)]
+                                    db_ib.remark = remark_str
+                                    db_ib.sync_status = "synced"
+                                    db_ib.last_sync_at = datetime.now(UTC)
+                                    payload = {"amnezia_server_id": xui_id}
+                                    if p_id is not None:
+                                        payload["amnezia_protocol_id"] = p_id
+                                    db_ib.provider_payload = payload
+                                    db_ib.is_active = True
+                                else:
+                                    payload = {"amnezia_server_id": xui_id}
+                                    if p_id is not None:
+                                        payload["amnezia_protocol_id"] = p_id
+                                    new_ib = Inbound(
+                                        server_id=server.id,
+                                        xui_id=xui_id,
+                                        remark=remark_str,
+                                        protocol=p_slug,
+                                        port=0,
+                                        settings_json="{}",
+                                        provider_payload=payload,
+                                        is_active=True,
+                                        sync_status="synced",
+                                        last_sync_at=datetime.now(UTC),
+                                    )
+                                    self.session.add(new_ib)
+
+                        for key, db_ib in existing_map.items():
+                            if key not in seen_inbounds:
+                                db_ib.is_active = False
+                finally:
+                    await provider.close()
+                clients_synced = 0
+            else:
+                # Получить XUI клиент
+                xui_client = await self._xui_service._get_client(server)
+
+                # Синхронизировать inbounds
+                await self._sync_server_inbounds(server, xui_client)
+
+                # Синхронизировать клиентов для всех inbounds этого сервера
+                from sqlalchemy import select
+
+                inbounds_result = await self.session.execute(
+                    select(Inbound).where(Inbound.server_id == server.id, Inbound.is_active)
+                )
+                inbounds = inbounds_result.scalars().all()
+
+                clients_synced = 0
+                logger.info(
+                    f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}"
+                )
+                for inbound in inbounds:
+                    try:
+                        logger.info(
+                            f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})"
+                        )
+                        synced = await self._sync_inbound_clients(inbound, xui_client)
+                        clients_synced += synced
+                        logger.info(
+                            f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {e}",
+                            exc_info=True,
+                        )
 
             # Обновить статус синхронизации
             server.last_sync_at = datetime.now(UTC)
@@ -235,6 +311,18 @@ class SyncService:
             return False
 
         except Exception as e:
+            # Check for Amnezia errors without importing at top level
+            if type(e).__name__ == "AmneziaConnectionError":
+                server.sync_status = "offline"
+                server.sync_error = f"Connection failed: {str(e)}"
+                logger.warning(f"[WARN] Сервер {server.id} недоступен (Amnezia)")
+                return False
+            elif type(e).__name__ == "AmneziaError":
+                server.sync_status = "error"
+                server.sync_error = str(e)
+                logger.error(f"[ERROR] Ошибка Amnezia сервера {server.id}: {e}")
+                return False
+
             server.sync_status = "error"
             server.sync_error = f"Unexpected: {str(e)}"
             logger.error(f"[ERROR] Неожиданная ошибка сервера {server.id}: {e}", exc_info=True)
@@ -264,6 +352,12 @@ class SyncService:
         try:
             for inbound in inbounds:
                 try:
+                    if getattr(inbound.server, "panel_type", "xui") == "amnezia":
+                        logger.debug(
+                            f"Пропуск синхронизации клиентов для Amnezia inbound {inbound.id}"
+                        )
+                        continue
+
                     # Получить XUI клиент для сервера
                     xui_client = await self._xui_service._get_client(inbound.server)
 
@@ -303,6 +397,10 @@ class SyncService:
         server = await self.session.get(Server, server_id)
         if not server:
             logger.warning(f"Сервер {server_id} не найден")
+            return 0
+
+        if getattr(server, "panel_type", "xui") == "amnezia":
+            logger.info(f"[LOG] Пропуск синхронизации клиентов для Amnezia сервера {server_id}")
             return 0
 
         # Получить все активные inbounds этого сервера
@@ -600,6 +698,10 @@ class SyncService:
                 try:
                     inbound = connection.inbound
                     if inbound and hasattr(inbound, "server"):
+                        if getattr(inbound.server, "panel_type", "xui") == "amnezia":
+                            # Skip XUI integrity check for Amnezia
+                            continue
+
                         xui_client = await self._xui_service._get_client(inbound.server)
                         xui_data = await xui_client.get_client(inbound.xui_id, connection.uuid)
 

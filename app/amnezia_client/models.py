@@ -73,4 +73,4 @@ class AmneziaClientDetails(AmneziaClient):
 
 class AmneziaClientCreateResponse(BaseModel):
     success: bool
-    client: AmneziaClient
+    client: AmneziaClientDetails

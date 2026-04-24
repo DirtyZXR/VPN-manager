@@ -1,7 +1,8 @@
 """Add verify_ssl field to servers table."""
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = '1800_add_verify_ssl'

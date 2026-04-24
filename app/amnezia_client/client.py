@@ -39,10 +39,12 @@ class AmneziaClient:
                 connector=aiohttp.TCPConnector(verify_ssl=self.verify_ssl)
             )
 
-    async def close(self):
-        if self._session:
+    async def close(self) -> None:
+        if self._session and not self._session.closed:
             await self._session.close()
-            self._session = None
+            import asyncio
+
+            await asyncio.sleep(0.05)
 
     async def _ensure_auth(self):
         await self._init_session()
@@ -132,12 +134,20 @@ class AmneziaClient:
         return [AmneziaServer(**s) for s in servers]
 
     async def create_client(
-        self, server_id: int, name: str, expires_in_days: int
+        self, server_id: int, name: str, expires_in_days: int, protocol_id: int | None = None
     ) -> AmneziaClientCreateResponse:
+        payload: dict[str, Any] = {
+            "server_id": server_id,
+            "name": name,
+            "expires_in_days": expires_in_days,
+        }
+        if protocol_id is not None:
+            payload["protocol_id"] = protocol_id
+
         data = await self._request(
             "POST",
             "/clients/create",
-            json={"server_id": server_id, "name": name, "expires_in_days": expires_in_days},
+            json=payload,
         )
         return AmneziaClientCreateResponse(**data)
 
@@ -157,6 +167,14 @@ class AmneziaClient:
         data = await self._request("GET", f"/clients/{client_id}/details")
         client_data = data.get("client", {})
         return AmneziaClientDetails(**client_data)
+
+    async def revoke_client(self, client_id: int) -> bool:
+        data = await self._request("POST", f"/clients/{client_id}/revoke")
+        return data.get("success", True) if isinstance(data, dict) else True
+
+    async def restore_client(self, client_id: int) -> bool:
+        data = await self._request("POST", f"/clients/{client_id}/restore")
+        return data.get("success", True) if isinstance(data, dict) else True
 
     async def delete_client(self, client_id: int) -> bool:
         data = await self._request("DELETE", f"/clients/{client_id}/delete")

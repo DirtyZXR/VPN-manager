@@ -79,9 +79,9 @@ class XUIService:
         if server.session_cookies_encrypted:
             try:
                 saved_cookies = json.loads(self._decrypt_password(server.session_cookies_encrypted))
-                logger.debug(f"Loaded saved cookies for server {server.id}")
+                logger.debug("Loaded saved cookies for server {}", server.id)
             except Exception as e:
-                logger.warning(f"Failed to load saved cookies for server {server.id}: {e}")
+                logger.warning("Failed to load saved cookies for server {}: {}", server.id, e)
 
         client = XUIClient(
             base_url=base_url,
@@ -114,9 +114,9 @@ class XUIService:
                 cookies_json = json.dumps(cookies)
                 server.session_cookies_encrypted = self._encrypt_password(cookies_json)
                 server.session_created_at = datetime.now(UTC)
-                logger.debug(f"Saved session cookies for server {server.id}")
+                logger.debug("Saved session cookies for server {}", server.id)
         except Exception as e:
-            logger.warning(f"Failed to save session cookies for server {server.id}: {e}")
+            logger.warning("Failed to save session cookies for server {}: {}", server.id, e)
 
     async def close_client(self, server_id: int) -> None:
         """Close XUI client for server.
@@ -130,7 +130,7 @@ class XUIService:
                 if client._session and not client._session.closed:
                     await client.close()
             except Exception as e:
-                logger.warning(f"Error closing XUI client for server {server_id}: {e}")
+                logger.warning("Error closing XUI client for server {}: {}", server_id, e)
             finally:
                 self._clients.pop(server_id, None)
 
@@ -140,7 +140,7 @@ class XUIService:
             try:
                 await self.close_client(server_id)
             except Exception as e:
-                logger.warning(f"Error closing client for server {server_id}: {e}")
+                logger.warning("Error closing client for server {}: {}", server_id, e)
 
     # Server management
 
@@ -369,15 +369,21 @@ class XUIService:
                 self.session.add(inbound)
             synced += 1
 
+        # We must mark missing ones as inactive!
+        seen_ids = {x.id for x in xui_inbounds}
+        for xui_id, db_ib in existing.items():
+            if xui_id not in seen_ids:
+                db_ib.is_active = False
+
         server.last_sync_at = datetime.now(UTC)
         server.sync_status = "synced"
         await self.session.flush()
 
-        logger.info(f"Synced {synced} inbounds from server {server.name}")
+        logger.info("Synced {} inbounds from server {}", synced, server.name)
         return synced
 
     async def get_server_inbounds(self, server_id: int) -> Sequence[Inbound]:
-        """Get inbounds for server from database.
+        """Get active inbounds for server from database.
 
         Args:
             server_id: Server ID
@@ -389,6 +395,20 @@ class XUIService:
             select(Inbound)
             .where(Inbound.server_id == server_id, Inbound.is_active)
             .order_by(Inbound.remark)
+        )
+        return result.scalars().all()
+
+    async def get_server_inbounds_all_status(self, server_id: int) -> Sequence[Inbound]:
+        """Get all inbounds (including inactive) for server from database.
+
+        Args:
+            server_id: Server ID
+
+        Returns:
+            List of inbounds
+        """
+        result = await self.session.execute(
+            select(Inbound).where(Inbound.server_id == server_id).order_by(Inbound.remark)
         )
         return result.scalars().all()
 

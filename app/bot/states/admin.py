@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 class ServerManagement(StatesGroup):
     """Server management states."""
 
+    waiting_for_panel_type = State()
     waiting_for_name = State()
     waiting_for_base_url = State()
     waiting_for_panel_path = State()
@@ -15,6 +16,12 @@ class ServerManagement(StatesGroup):
     waiting_for_password = State()
     waiting_for_verify_ssl = State()
     confirm_delete = State()
+
+    # Amnezia Sync states
+    waiting_for_amnezia_api_url = State()
+    waiting_for_amnezia_username = State()
+    waiting_for_amnezia_password = State()
+    waiting_for_amnezia_verify_ssl = State()
 
     # Server editing states
     waiting_for_edit_name = State()
@@ -65,7 +72,7 @@ class SubscriptionManagement(StatesGroup):
     # Select client
     waiting_for_client_selection = State()
 
-    # Select server
+    # Select server (multiple selection)
     waiting_for_server_selection = State()
 
     # Select inbound (multiple selection)

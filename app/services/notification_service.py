@@ -97,7 +97,12 @@ class NotificationService:
 
                     servers = {conn.inbound.server for conn in connections}
                     urls = []
+                    has_amnezia = False
                     for server in servers:
+                        if getattr(server, "panel_type", "xui") == "amnezia":
+                            has_amnezia = True
+                            continue
+
                         # Prioritize JSON URL, fallback to standard URL
                         subscription_path = getattr(server, "subscription_json_path", None)
                         if not subscription_path:
@@ -111,6 +116,14 @@ class NotificationService:
                     if urls:
                         message += "\n🔗 <b>Все URL подписки:</b>\n"
                         message += "\n\n".join([f"<code>{u}</code>" for u in urls])
+
+                    if has_amnezia:
+                        from app.utils.texts import t
+
+                        message += "\n\n" + t(
+                            "notifications.amnezia_configs",
+                            "📱 <b>Конфигурации VPN:</b>\nФайлы конфигураций доступны в меню бота: <b>Мои подписки</b> -> <b>Выбрать подписку</b>.",
+                        )
 
                 await bot.send_message(
                     chat_id=client.telegram_id,
@@ -180,6 +193,42 @@ class NotificationService:
                     f"📊 <b>Лимит трафика:</b> {traffic_limit}\n"
                     f"📅 <b>Срок действия:</b> {expiry_text}\n"
                 )
+
+                connections = getattr(subscription, "inbound_connections", [])
+
+                # Add subscription URLs
+                if connections:
+                    from urllib.parse import urljoin
+
+                    servers = {conn.inbound.server for conn in connections}
+                    urls = []
+                    has_amnezia = False
+                    for server in servers:
+                        if getattr(server, "panel_type", "xui") == "amnezia":
+                            has_amnezia = True
+                            continue
+
+                        # Prioritize JSON URL, fallback to standard URL
+                        subscription_path = getattr(server, "subscription_json_path", None)
+                        if not subscription_path:
+                            subscription_path = getattr(server, "subscription_path", "/sub/")
+
+                        url = urljoin(
+                            server.url, f"{subscription_path}{subscription.subscription_token}"
+                        )
+                        urls.append(url)
+
+                    if urls:
+                        message += "\n🔗 <b>Все URL подписки:</b>\n"
+                        message += "\n\n".join([f"<code>{u}</code>" for u in urls])
+
+                    if has_amnezia:
+                        from app.utils.texts import t
+
+                        message += "\n\n" + t(
+                            "notifications.amnezia_configs",
+                            "📱 <b>Конфигурации VPN:</b>\nФайлы конфигураций доступны в меню бота: <b>Мои подписки</b> -> <b>Выбрать подписку</b>.",
+                        )
 
                 await bot.send_message(
                     chat_id=client.telegram_id,

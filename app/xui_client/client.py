@@ -89,8 +89,8 @@ class XUIClient:
                     ssl_context.set_ciphers("ALL:!aNULL:!eNULL")
 
             connector_args["ssl"] = ssl_context
-            logger.warning(f"SSL verification disabled for {self.base_url}")
-            logger.info(f"Connecting to {self.base_url}/login with SSL verification disabled")
+            logger.warning("SSL verification disabled for {}", self.base_url)
+            logger.info("Connecting to {}/login with SSL verification disabled", self.base_url)
         else:
             # Use default SSL settings
             connector_args["ssl"] = True
@@ -106,16 +106,16 @@ class XUIClient:
             trust_env=True,  # Allow environment variables
         )
 
-        logger.info(f"Attempting to connect to {self.base_url}")
+        logger.info("Attempting to connect to {}", self.base_url)
 
         # Try to use saved cookies first
         if self._cookies and await self._test_session():
-            logger.info(f"Successfully reusing saved session for {self.base_url}")
+            logger.info("Successfully reusing saved session for {}", self.base_url)
             return
 
         # Fall back to login
         await self.login()
-        logger.info(f"Successfully connected to {self.base_url}")
+        logger.info("Successfully connected to {}", self.base_url)
 
     async def close(self) -> None:
         """Close session properly.
@@ -123,13 +123,11 @@ class XUIClient:
         Note: Logout is not necessary for 3x-ui panels. Session cleanup
         happens automatically when closing the HTTP session.
         """
-        if self._session:
-            try:
-                await self._session.close()
-            except Exception as e:
-                logger.warning(f"Error closing session: {e}")
-            finally:
-                self._session = None
+        if self._session and not self._session.closed:
+            await self._session.close()
+            import asyncio
+
+            await asyncio.sleep(0.05)
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Get active session or raise error."""
@@ -182,7 +180,7 @@ class XUIClient:
             raise XUIError(f"Invalid JSON response: {e}") from e
         except Exception as e:
             # Catch any other exceptions to prevent session leaks
-            logger.warning(f"Unexpected error in XUI request: {e}")
+            logger.warning("Unexpected error in XUI request: {}", e)
             raise XUIError(f"Request failed: {e}") from e
 
     async def login(self) -> bool:

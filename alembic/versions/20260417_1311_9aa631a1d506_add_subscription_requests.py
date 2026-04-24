@@ -1,5 +1,3 @@
-"""Mako template for migration scripts."""
-
 """Add subscription requests
 
 Revision ID: 9aa631a1d506
@@ -7,9 +5,9 @@ Revises: 80d3830a3271
 Create Date: 2026-04-17 13:11:54.191868
 
 """
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "9aa631a1d506"
