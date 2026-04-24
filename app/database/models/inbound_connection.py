@@ -141,6 +141,10 @@ class AWGInboundConnection(InboundConnection):
     id: Mapped[int] = mapped_column(
         Integer, ForeignKey("inbound_connections.id", ondelete="CASCADE"), primary_key=True
     )
+    client_ip: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    public_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    private_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    psk: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     __mapper_args__ = {
         "polymorphic_identity": "awg_inbound_connection",
@@ -155,6 +159,7 @@ class MTProxyInboundConnection(InboundConnection):
     id: Mapped[int] = mapped_column(
         Integer, ForeignKey("inbound_connections.id", ondelete="CASCADE"), primary_key=True
     )
+    secret: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     __mapper_args__ = {
         "polymorphic_identity": "mtproxy_inbound_connection",

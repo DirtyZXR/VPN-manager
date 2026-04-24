@@ -10,6 +10,7 @@ from app.database.models import (
     InboundConnection,
     Subscription,
     XUIInbound,
+    XUIInboundConnection,
 )
 from app.services.new_subscription_service import NewSubscriptionService
 from app.xui_client import XUIError
@@ -69,7 +70,7 @@ async def test_generate_unique_email_with_duplicate(test_session, mock_settings)
     test_session.add(inbound)
 
     # Create existing inbound connection with the base email
-    existing_connection = InboundConnection(
+    existing_connection = XUIInboundConnection(
         id=1,
         subscription_id=1,
         inbound_id=1,
@@ -134,7 +135,7 @@ async def test_generate_unique_email_multiple_duplicates(test_session, mock_sett
         else:
             email = f"TestClient_TestSub_TestInbound_{i}@vpn.local"
 
-        existing_connection = InboundConnection(
+        existing_connection = XUIInboundConnection(
             id=i + 1,
             subscription_id=i + 1,
             inbound_id=1,
@@ -199,7 +200,7 @@ async def test_generate_unique_email_max_attempts_exceeded(test_session, mock_se
         else:
             email = f"TestClient_TestSub_TestInbound_{i}@vpn.local"
 
-        existing_connection = InboundConnection(
+        existing_connection = XUIInboundConnection(
             id=i + 1,
             subscription_id=i + 1,
             inbound_id=1,

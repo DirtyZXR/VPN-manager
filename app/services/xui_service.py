@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.database.models import Inbound, Server
+from app.database.models import Inbound, Server, XUIInbound
 from app.database.models.services import XUIPanel
 from app.xui_client import XUIClient, XUIError
 
@@ -425,7 +425,7 @@ class XUIService:
         xui_inbounds = await client.get_inbounds()
 
         # Get existing inbounds
-        result = await self.session.execute(select(Inbound).where(Inbound.server_id == server_id))
+        result = await self.session.execute(select(XUIInbound).where(XUIInbound.server_id == server_id))
         existing = {i.xui_id: i for i in result.scalars().all()}
 
         synced = 0
@@ -440,7 +440,7 @@ class XUIService:
                 inbound.is_active = xui_inbound.enable
             else:
                 # Create new
-                inbound = Inbound(
+                inbound = XUIInbound(
                     server_id=server_id,
                     xui_id=xui_inbound.id,
                     remark=xui_inbound.remark,

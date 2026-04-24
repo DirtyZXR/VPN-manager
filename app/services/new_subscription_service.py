@@ -10,10 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import (
+    AWGInboundConnection,
     Client,
     Inbound,
     InboundConnection,
+    MTProxyInboundConnection,
     Subscription,
+    XUIInboundConnection,
 )
 from app.services.vpn_providers import BaseVPNProvider, get_vpn_provider
 from app.utils import generate_subscription_token
@@ -314,19 +317,40 @@ class NewSubscriptionService:
 
         try:
             # Create inbound connection with per-connection traffic and expiry
-            connection = InboundConnection(
-                subscription_id=subscription_id,
-                inbound_id=inbound_id,
-                is_enabled=True,
-                total_gb=subscription.total_gb,  # Store per-connection traffic
-                expiry_date=subscription.expiry_date,  # Store per-connection expiry
-                provider_payload=provider_payload,
-                uuid=provider_payload.get("uuid", client_uuid),
-                email=provider_payload.get("email", client_email),
-                xui_client_id=provider_payload.get("xui_client_id", client_uuid),
-                sync_status="synced",
-                last_sync_at=datetime.now(UTC),
-            )
+            base_kwargs = {
+                "subscription_id": subscription_id,
+                "inbound_id": inbound_id,
+                "is_enabled": True,
+                "total_gb": subscription.total_gb,  # Store per-connection traffic
+                "expiry_date": subscription.expiry_date,  # Store per-connection expiry
+                "sync_status": "synced",
+                "last_sync_at": datetime.now(UTC),
+            }
+
+            if inbound.type == "xui_inbound":
+                xui_kwargs = {
+                    "provider_payload": provider_payload,
+                    "uuid": provider_payload.get("uuid", client_uuid),
+                    "email": provider_payload.get("email", client_email),
+                    "xui_client_id": provider_payload.get("xui_client_id", client_uuid),
+                }
+                connection = XUIInboundConnection(**base_kwargs, **xui_kwargs)
+            elif inbound.type == "awg_inbound":
+                connection = AWGInboundConnection(
+                    **base_kwargs,
+                    client_ip=provider_payload.get("client_ip"),
+                    public_key=provider_payload.get("public_key"),
+                    private_key=provider_payload.get("private_key"),
+                    psk=provider_payload.get("psk"),
+                )
+            elif inbound.type == "mtproxy_inbound":
+                connection = MTProxyInboundConnection(
+                    **base_kwargs,
+                    secret=provider_payload.get("secret"),
+                )
+            else:
+                connection = InboundConnection(**base_kwargs)
+
             self.session.add(connection)
             await self.session.flush()
 

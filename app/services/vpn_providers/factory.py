@@ -8,7 +8,7 @@ from app.services.vpn_providers.xui_provider import XUIProvider
 
 
 def get_vpn_provider(server: Server) -> BaseVPNProvider:
-    """Get the appropriate VPN provider instance based on server panel_type.
+    """Get the appropriate VPN provider instance based on server panel/service.
 
     Args:
         server: Server model instance
@@ -17,15 +17,13 @@ def get_vpn_provider(server: Server) -> BaseVPNProvider:
         Provider instance implementing BaseVPNProvider
 
     Raises:
-        ValueError: If panel_type is unknown
+        ValueError: If no known panel/service is configured for the server
     """
-    panel_type = server.panel_type or "xui"
-
-    if panel_type == "xui":
+    if server.xui_panel:
         return XUIProvider(server)
-    elif panel_type == "amnezia-awg":
+    elif server.awg_service:
         return AmneziaAWGProvider(server)
-    elif panel_type == "mtproxy":
+    elif server.mtproxy_service:
         return MTProxyProvider(server)
     else:
-        raise ValueError(f"Unknown panel_type: {panel_type} for server {server.id}")
+        raise ValueError(f"Unknown or missing panel/service for server {server.id}")

@@ -10,7 +10,7 @@ from typing import Any
 
 import qrcode
 
-from app.database.models import Inbound, InboundConnection, Server, Subscription
+from app.database.models import Inbound, Server, Subscription
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.base import BaseVPNProvider
 
@@ -26,9 +26,8 @@ class AmneziaAWGProvider(BaseVPNProvider):
         self.ssh = SSHManager(server)
 
         # Typically the container name is 'amnezia-awg' or 'amnezia-awg2'
-        payload = self.server.provider_payload or {}
-        self.container_name = payload.get("container_name", "amnezia-awg")
-        self.interface_name = payload.get("interface_name", "awg0")
+        self.container_name = "amnezia-awg"
+        self.interface_name = "awg0"
         self.config_path = f"/opt/amnezia/awg/{self.interface_name}.conf"
 
     async def _get_server_psk(self) -> str:
@@ -62,15 +61,15 @@ class AmneziaAWGProvider(BaseVPNProvider):
         from sqlalchemy import select
 
         from app.database import async_session_factory
+        from app.database.models import AWGInboundConnection
 
         async with async_session_factory() as session:
             result = await session.execute(
-                select(InboundConnection).where(InboundConnection.inbound_id == inbound.id)
+                select(AWGInboundConnection).where(AWGInboundConnection.inbound_id == inbound.id)
             )
             connections = result.scalars().all()
             for conn in connections:
-                payload = conn.provider_payload or {}
-                if ip := payload.get("client_ip"):
+                if ip := conn.client_ip:
                     db_ips.append(ip)
 
         # Combine all used IPs
@@ -144,10 +143,9 @@ class AmneziaAWGProvider(BaseVPNProvider):
             "server_params": srv_params,
         }
 
-    async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+    async def remove_client(self, inbound: Inbound, connection: Any) -> bool:
         """Remove a peer from AmneziaWG."""
-        payload = connection.provider_payload or {}
-        public_key = payload.get("public_key")
+        public_key = connection.public_key
 
         if not public_key:
             return False
@@ -183,19 +181,18 @@ class AmneziaAWGProvider(BaseVPNProvider):
             logger.error(f"Failed to remove AWG client: {e}")
             return False
 
-    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+    async def disable_client(self, inbound: Inbound, connection: Any) -> bool:
         """Temporarily disable a peer by removing it from the kernel and config."""
         return await self.remove_client(inbound, connection)
 
-    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+    async def enable_client(self, inbound: Inbound, connection: Any) -> bool:
         """Re-enable a disabled peer by adding it back to the config."""
-        payload = connection.provider_payload or {}
-        public_key = payload.get("public_key")
-        psk = payload.get("psk")
-        client_ip = payload.get("client_ip")
+        public_key = connection.public_key
+        psk = connection.psk
+        client_ip = connection.client_ip
 
         if not public_key or not psk or not client_ip:
-            logger.error("Missing keys or IP in provider_payload for AWG client.")
+            logger.error("Missing keys or IP in AWG client connection.")
             return False
 
         try:
@@ -235,18 +232,17 @@ class AmneziaAWGProvider(BaseVPNProvider):
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     async def get_client_config(
-        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
+        self, inbound: Inbound, connection: Any, prefer_json: bool = False
     ) -> dict[str, Any]:
         """Generate the WireGuard/AmneziaWG .conf file and QR code."""
-        payload = connection.provider_payload or {}
-        sp = payload.get("server_params", {})
+        sp = await self._get_awg_server_params()
 
-        private_key = payload.get("private_key")
-        client_ip = payload.get("client_ip")
-        psk = payload.get("psk")
+        private_key = connection.private_key
+        client_ip = connection.client_ip
+        psk = connection.psk
 
-        # Derive server host from Server.url
-        host = self.ssh.host
+        # Derive server host
+        host = self.server.ip_address
         port = sp.get("ListenPort", "51820")
         server_pub_key = await self._get_server_public_key()
 

@@ -17,16 +17,6 @@ class BaseVPNProvider(ABC):
         """
         self.server = server
 
-    def get_server_password(self) -> str:
-        """Decrypt and return server password."""
-        from cryptography.fernet import Fernet
-
-        from app.config import get_settings
-
-        settings = get_settings()
-        cipher = Fernet(settings.encryption_key.encode())
-        return cipher.decrypt(self.server.password_encrypted.encode()).decode()
-
     @abstractmethod
     async def add_client(
         self,

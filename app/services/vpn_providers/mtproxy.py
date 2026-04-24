@@ -20,11 +20,10 @@ class MTProxyProvider(BaseVPNProvider):
         super().__init__(server)
         self.ssh = SSHManager(server)
 
-        payload = self.server.provider_payload or {}
-        self.container_name = payload.get("container_name", "mtproxy")
-        self.config_path = payload.get("config_path", "/opt/mtproxy/secrets.txt")
-        self.domain = payload.get("domain", "google.com")  # Fake-TLS domain
-        self.port = payload.get("port", "443")
+        self.container_name = "mtproxy"
+        self.config_path = "/opt/mtproxy/secrets.txt"
+        self.domain = "google.com"  # Fake-TLS domain
+        self.port = "443"
 
     def _generate_secret(self) -> str:
         """Generate a 16-byte Fake-TLS secret.
@@ -58,10 +57,9 @@ class MTProxyProvider(BaseVPNProvider):
 
         return {"uuid": client_uuid or str(uuid.uuid4()), "secret": secret}
 
-    async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+    async def remove_client(self, inbound: Inbound, connection: Any) -> bool:
         """Remove a secret from MTProxy."""
-        payload = connection.provider_payload or {}
-        secret = payload.get("secret")
+        secret = connection.secret
 
         if not secret:
             return False
@@ -83,10 +81,9 @@ class MTProxyProvider(BaseVPNProvider):
         # For MTProxy, disabling is effectively the same as removing from the live config
         return await self.remove_client(inbound, connection)
 
-    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+    async def enable_client(self, inbound: Inbound, connection: Any) -> bool:
         """Re-enable a disabled client using their existing secret."""
-        payload = connection.provider_payload or {}
-        secret = payload.get("secret")
+        secret = connection.secret
 
         if not secret:
             return False
@@ -103,11 +100,10 @@ class MTProxyProvider(BaseVPNProvider):
             return False
 
     async def get_client_config(
-        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
+        self, inbound: Inbound, connection: Any, prefer_json: bool = False
     ) -> dict[str, Any]:
         """Generate tg:// proxy link."""
-        payload = connection.provider_payload or {}
-        secret = payload.get("secret")
+        secret = connection.secret
 
         host = self.ssh.host
 

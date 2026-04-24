@@ -236,8 +236,13 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
     status = (
         t("admin.servers.status.active", "✅ Активен")
-        if server.is_online
+        if server.is_active
         else t("admin.servers.status.inactive", "❌ Неактивен")
+    )
+    online_status = (
+        t("admin.servers.status.online", "✅ В сети")
+        if server.is_online
+        else t("admin.servers.status.offline", "❌ Офлайн")
     )
     last_sync = (
         server.last_sync_at.strftime("%d.%m.%Y %H:%M")
@@ -249,10 +254,11 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
     text = t(
         "admin.servers.info_new",
-        "🖥️ Сервер: {name}{ip_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+        "🖥️ Сервер: {name}{ip_info}\n📊 Статус: {status}\n🌐 Доступность: {online_status}\n🔄 Последняя синхронизация: {last_sync}",
         name=server.name,
         ip_info=ip_info,
         status=status,
+        online_status=online_status,
         last_sync=last_sync,
     )
 
@@ -888,8 +894,13 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
 
     status = (
         t("admin.servers.status.active", "✅ Активен")
-        if server.is_online
+        if server.is_active
         else t("admin.servers.status.inactive", "❌ Неактивен")
+    )
+    online_status = (
+        t("admin.servers.status.online", "✅ В сети")
+        if server.is_online
+        else t("admin.servers.status.offline", "❌ Офлайн")
     )
     last_sync = (
         server.last_sync_at.strftime("%d.%m.%Y %H:%M")
@@ -901,10 +912,11 @@ async def show_server_details(message: TgMessage, state: FSMContext, server_id: 
 
     text = t(
         "admin.servers.info_new",
-        "🖥️ Сервер: {name}{ip_info}\n📊 Статус: {status}\n🔄 Последняя синхронизация: {last_sync}",
+        "🖥️ Сервер: {name}{ip_info}\n📊 Статус: {status}\n🌐 Доступность: {online_status}\n🔄 Последняя синхронизация: {last_sync}",
         name=server.name,
         ip_info=ip_info,
         status=status,
+        online_status=online_status,
         last_sync=last_sync,
     )
 
@@ -1226,6 +1238,274 @@ async def show_server_services(callback: CallbackQuery, state: FSMContext, is_ad
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("server_edit_xui_"))
+async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Show XUI edit menu."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.xui_panel))
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server or not server.xui_panel:
+        await callback.answer(
+            t("admin.servers.errors.not_found", "❌ Сервер или 3x-ui панель не найдены."),
+            show_alert=True,
+        )
+        return
+
+    panel = server.xui_panel
+    text = t(
+        "admin.servers.xui.edit_menu",
+        "⚙️ Редактирование 3x-ui для сервера: <b>{name}</b>\n\n"
+        "Логин: {username}\n"
+        "Пароль: {password}\n"
+        "webBasePath: {web_base_path}\n"
+        "subPath: {sub_path}\n\n"
+        "Выберите, что изменить:",
+        name=server.name,
+        username=panel.username or "Не задан",
+        password="***" if panel.password_encrypted else "Не задан",
+        web_base_path=panel.panel_path or "Не задан",
+        sub_path=panel.subscription_path or "Не задан",
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Изменить логин", callback_data=f"edit_xui_username_{server_id}")
+    kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
+    kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
+    kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
+    kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("server_edit_awg_"))
+async def edit_awg_service(callback: CallbackQuery, is_admin: bool) -> None:
+    """Edit AWG service (placeholder)."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+    await callback.answer("В разработке", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("server_edit_mtproxy_"))
+async def edit_mtproxy_service(callback: CallbackQuery, is_admin: bool) -> None:
+    """Edit MTProxy service (placeholder)."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+    await callback.answer("В разработке", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("edit_xui_username_"))
+async def start_edit_xui_username(callback: CallbackQuery, state: FSMContext) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_edit_username)
+    await callback.message.edit_text(
+        "✏️ Введите новый логин для 3x-ui панели (или /skip для отмены):",
+        reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+    )
+    await callback.answer()
+
+
+@router.message(ServerManagement.waiting_for_edit_username)
+async def process_edit_xui_username(message: TgMessage, state: FSMContext) -> None:
+    data = await state.get_data()
+    server_id = data["server_id"]
+    new_username = message.text.strip()
+
+    if new_username == "/skip":
+        # Return to menu by simulating a callback using the same FSM logic
+        await _show_xui_edit_menu(message, server_id)
+        return
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        await service.update_server(server_id, username=new_username)
+        await session.commit()
+        await message.answer(f"✅ Логин 3x-ui изменен на: {new_username}")
+
+    await _show_xui_edit_menu(message, server_id)
+
+
+@router.callback_query(F.data.startswith("edit_xui_password_"))
+async def start_edit_xui_password(callback: CallbackQuery, state: FSMContext) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_edit_password)
+    await callback.message.edit_text(
+        "✏️ Введите новый пароль для 3x-ui панели (или /skip для отмены):",
+        reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+    )
+    await callback.answer()
+
+
+@router.message(ServerManagement.waiting_for_edit_password)
+async def process_edit_xui_password(message: TgMessage, state: FSMContext) -> None:
+    data = await state.get_data()
+    server_id = data["server_id"]
+    new_password = message.text.strip()
+
+    try:
+        await message.delete()
+    except Exception as e:
+        logger.warning(f"Could not delete message: {e}")
+
+    if new_password == "/skip":
+        await _show_xui_edit_menu(message, server_id)
+        return
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        await service.update_server(server_id, password=new_password)
+        await session.commit()
+        await message.answer("✅ Пароль 3x-ui успешно изменен.")
+
+    await _show_xui_edit_menu(message, server_id)
+
+
+@router.callback_query(F.data.startswith("edit_xui_panel_path_"))
+async def start_edit_xui_panel_path(callback: CallbackQuery, state: FSMContext) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_edit_panel_path)
+    await callback.message.edit_text(
+        "✏️ Введите новый webBasePath для 3x-ui панели (например, /panel/). Нажмите /skip для отмены.",
+        reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+    )
+    await callback.answer()
+
+
+@router.message(ServerManagement.waiting_for_edit_panel_path)
+async def process_edit_xui_panel_path(message: TgMessage, state: FSMContext) -> None:
+    data = await state.get_data()
+    server_id = data["server_id"]
+    new_path = message.text.strip()
+
+    if new_path == "/skip":
+        await _show_xui_edit_menu(message, server_id)
+        return
+
+    if not new_path.startswith("/"):
+        new_path = "/" + new_path
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        await service.update_server(server_id, panel_path=new_path)
+        await session.commit()
+        await message.answer(f"✅ webBasePath изменен на: {new_path}")
+
+    await _show_xui_edit_menu(message, server_id)
+
+
+@router.callback_query(F.data.startswith("edit_xui_sub_path_"))
+async def start_edit_xui_sub_path(callback: CallbackQuery, state: FSMContext) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_edit_subscription_path)
+    await callback.message.edit_text(
+        "✏️ Введите новый subPath для подписок (например, /sub/). Нажмите /skip для отмены.",
+        reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+    )
+    await callback.answer()
+
+
+@router.message(ServerManagement.waiting_for_edit_subscription_path)
+async def process_edit_xui_sub_path(message: TgMessage, state: FSMContext) -> None:
+    data = await state.get_data()
+    server_id = data["server_id"]
+    new_path = message.text.strip()
+
+    if new_path == "/skip":
+        await _show_xui_edit_menu(message, server_id)
+        return
+
+    if not new_path.startswith("/"):
+        new_path = "/" + new_path
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        await service.update_server(server_id, subscription_path=new_path)
+        await session.commit()
+        await message.answer(f"✅ subPath изменен на: {new_path}")
+
+    await _show_xui_edit_menu(message, server_id)
+
+
+async def _show_xui_edit_menu(message: TgMessage, server_id: int) -> None:
+    """Helper to show the XUI edit menu after an edit operation."""
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.xui_panel))
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server or not server.xui_panel:
+        await message.answer("❌ Сервер или 3x-ui панель не найдены.")
+        return
+
+    panel = server.xui_panel
+    text = t(
+        "admin.servers.xui.edit_menu",
+        "⚙️ Редактирование 3x-ui для сервера: <b>{name}</b>\n\n"
+        "Логин: {username}\n"
+        "Пароль: {password}\n"
+        "webBasePath: {web_base_path}\n"
+        "subPath: {sub_path}\n\n"
+        "Выберите, что изменить:",
+        name=server.name,
+        username=panel.username or "Не задан",
+        password="***" if panel.password_encrypted else "Не задан",
+        web_base_path=panel.panel_path or "Не задан",
+        sub_path=panel.subscription_path or "Не задан",
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Изменить логин", callback_data=f"edit_xui_username_{server_id}")
+    kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
+    kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
+    kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
+    kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+
+
 @router.callback_query(F.data.startswith("server_autodiscover_"))
 async def run_server_autodiscover(
     callback: CallbackQuery, state: FSMContext, is_admin: bool
@@ -1252,6 +1532,7 @@ async def run_server_autodiscover(
         from sqlalchemy.orm import selectinload
 
         from app.database.models import Server
+        from app.database.models.inbound import AWGInbound, MTProxyInbound
         from app.database.models.services import AWGService, MTProxyService, XUIPanel
 
         result = await session.execute(
@@ -1260,6 +1541,7 @@ async def run_server_autodiscover(
                 selectinload(Server.xui_panel),
                 selectinload(Server.awg_service),
                 selectinload(Server.mtproxy_service),
+                selectinload(Server.inbounds),
             )
             .where(Server.id == server_id)
         )
@@ -1322,6 +1604,16 @@ async def run_server_autodiscover(
             else:
                 discovered_list.append("AmneziaWG (уже был)")
 
+            if not any(ib.type == "awg_inbound" for ib in server.inbounds):
+                awg_port = discovered["amnezia-awg"].get("port")
+                awg_inbound = AWGInbound(
+                    server_id=server.id,
+                    protocol="awg",
+                    remark="AmneziaWG",
+                    port=awg_port
+                )
+                session.add(awg_inbound)
+
         if "mtproxy" in discovered:
             if not server.mtproxy_service:
                 mtproxy = MTProxyService(server_id=server.id)
@@ -1329,6 +1621,16 @@ async def run_server_autodiscover(
                 discovered_list.append("MTProxy")
             else:
                 discovered_list.append("MTProxy (уже был)")
+
+            if not any(ib.type == "mtproxy_inbound" for ib in server.inbounds):
+                mtproxy_port = discovered["mtproxy"].get("port")
+                mtproxy_inbound = MTProxyInbound(
+                    server_id=server.id,
+                    protocol="mtproto",
+                    remark="MTProxy",
+                    port=mtproxy_port
+                )
+                session.add(mtproxy_inbound)
 
         if discovered_list:
             await session.commit()

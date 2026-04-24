@@ -18,26 +18,43 @@ class XUIProvider(BaseVPNProvider):
     async def _get_client(self) -> XUIClient:
         """Get or initialize XUI HTTP client."""
         if not self._client:
-            payload = self.server.provider_payload or {}
+            xui_panel = self.server.xui_panel
+            if not xui_panel:
+                raise ValueError("Server has no XUI panel configured")
+
+            payload = xui_panel.provider_payload or {}
 
             from urllib.parse import urlparse
 
-            parsed = urlparse(self.server.url)
-            host = f"{parsed.scheme}://{parsed.hostname}" if parsed.scheme else self.server.url
+            parsed = urlparse(xui_panel.url or "")
+            host = f"{parsed.scheme}://{parsed.hostname}" if parsed.scheme else (xui_panel.url or "")
             port = parsed.port if parsed.port else (443 if parsed.scheme == "https" else 80)
 
             # Extract base path from url if it exists, otherwise use payload or default
             base_url = (
                 parsed.path if parsed.path and parsed.path != "/" else payload.get("base_url", "/")
             )
+            if xui_panel.panel_path:
+                base_url = xui_panel.panel_path
+
+            from cryptography.fernet import Fernet
+
+            from app.config import get_settings
+
+            settings = get_settings()
+            cipher = Fernet(settings.encryption_key.encode())
+
+            password = ""
+            if xui_panel.password_encrypted:
+                password = cipher.decrypt(xui_panel.password_encrypted.encode()).decode()
 
             self._client = XUIClient(
                 host=host,
                 port=port,
-                username=self.server.username,
-                password=self.get_server_password(),
+                username=xui_panel.username or "",
+                password=password,
                 base_path=base_url,
-                verify_ssl=payload.get("verify_ssl", self.server.verify_ssl),
+                verify_ssl=xui_panel.verify_ssl,
             )
             await self._client.__aenter__()
         return self._client
@@ -218,25 +235,28 @@ class XUIProvider(BaseVPNProvider):
             )
 
         server = inbound.server
+        xui_panel = server.xui_panel
+        if not xui_panel:
+            raise ValueError("Server has no XUI panel configured")
 
-        payload = server.provider_payload
+        payload = xui_panel.provider_payload
         if not isinstance(payload, dict):
             payload = {}
 
         subscription_path = None
         if prefer_json:
-            subscription_path = server.subscription_json_path or payload.get(
+            subscription_path = xui_panel.subscription_json_path or payload.get(
                 "subscription_json_path"
             )
 
         if not subscription_path:
-            subscription_path = server.subscription_path or payload.get(
+            subscription_path = xui_panel.subscription_path or payload.get(
                 "subscription_path", "/sub/"
             )
 
         # To maintain compatibility with previous manual concatenation
         # which users might have relied on
-        url = f"{server.url}{subscription_path}{token}"
+        url = f"{xui_panel.url or ''}{subscription_path}{token}"
 
         return {"config_type": "link", "config_data": url}
 
