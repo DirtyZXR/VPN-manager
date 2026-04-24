@@ -237,6 +237,10 @@ class XUIService:
         panel_path: str | None = None,
         subscription_path: str | None = None,
         subscription_json_path: str | None = None,
+        ssh_user: str | None = None,
+        ssh_port: int | None = None,
+        ssh_password: str | None = None,
+        ssh_key: str | None = None,
     ) -> Server | None:
         """Update server.
 
@@ -252,6 +256,10 @@ class XUIService:
             panel_path: New panel path (optional)
             subscription_path: New subscription path (optional)
             subscription_json_path: New JSON subscription path (optional)
+            ssh_user: New SSH user (optional)
+            ssh_port: New SSH port (optional)
+            ssh_password: New SSH password (optional)
+            ssh_key: New SSH key (optional)
 
         Returns:
             Updated server or None if not found
@@ -283,6 +291,15 @@ class XUIService:
             server.subscription_path = subscription_path
         if subscription_json_path is not None:
             server.subscription_json_path = subscription_json_path
+
+        if ssh_user is not None:
+            server.ssh_user = ssh_user
+        if ssh_port is not None:
+            server.ssh_port = ssh_port
+        if ssh_password is not None:
+            server.ssh_password_encrypted = self._encrypt_password(ssh_password)
+        if ssh_key is not None:
+            server.ssh_key_encrypted = self._encrypt_password(ssh_key)
 
         # Close existing client to force reconnection
         await self.close_client(server_id)

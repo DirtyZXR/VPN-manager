@@ -22,39 +22,84 @@ class SSHManager:
         """
         self.server = server
 
-        parsed = urlparse(server.url)
-        if parsed.hostname:
-            self.host = parsed.hostname
+        if server.ip_address:
+            self.host = server.ip_address
+        elif server.url:
+            parsed = urlparse(server.url)
+            if parsed.hostname:
+                self.host = parsed.hostname
+            else:
+                self.host = server.url.split(":")[0]
         else:
-            self.host = server.url.split(":")[0]
+            self.host = "127.0.0.1"
 
         self.port = server.ssh_port or 22
         self.username = server.ssh_user or "root"
 
-    def get_ssh_password(self) -> str | None:
-        """Decrypt and return SSH password."""
-        if not self.server.ssh_password_encrypted:
+    def _decrypt(self, encrypted_data: str | None) -> str | None:
+        if not encrypted_data:
             return None
-
         from cryptography.fernet import Fernet
 
         settings = get_settings()
         cipher = Fernet(settings.encryption_key.encode())
-        return cipher.decrypt(self.server.ssh_password_encrypted.encode()).decode()
+        return cipher.decrypt(encrypted_data.encode()).decode()
 
-    async def _connect(self) -> asyncssh.SSHClientConnection:
+    def get_ssh_password(self) -> str | None:
+        """Decrypt and return SSH password."""
+        return self._decrypt(self.server.ssh_password_encrypted)
+
+    def get_ssh_key(self) -> str | None:
+        """Decrypt and return SSH private key."""
+        return self._decrypt(self.server.ssh_key_encrypted)
+
+    async def _connect(
+        self, override_password: str | None = None, override_key: str | None = None
+    ) -> asyncssh.SSHClientConnection:
         """Establish SSH connection.
+
+        Args:
+            override_password: Use this password instead of the one in DB
+            override_key: Use this private key instead of the one in DB
 
         Returns:
             SSHClientConnection
         """
-        password = self.get_ssh_password()
+        password = override_password or self.get_ssh_password()
+        key_data = override_key or self.get_ssh_key()
+
+        client_keys = None
+        if key_data:
+            # Load the private key from string
+            client_keys = [asyncssh.import_private_key(key_data)]
 
         # Use known_hosts=None for now, to bypass strict host key checking
         # like original script which connects to fresh servers.
         return await asyncssh.connect(
-            self.host, port=self.port, username=self.username, password=password, known_hosts=None
+            self.host,
+            port=self.port,
+            username=self.username,
+            password=password,
+            client_keys=client_keys,
+            known_hosts=None,
         )
+
+    async def test_connection(self, password: str | None = None, key: str | None = None) -> bool:
+        """Test SSH connection without executing a command.
+
+        Args:
+            password: Password to test (overrides DB)
+            key: Private key string to test (overrides DB)
+
+        Returns:
+            True if connection is successful, False otherwise
+        """
+        try:
+            async with await self._connect(override_password=password, override_key=key):
+                return True
+        except Exception as e:
+            logger.error(f"SSH test connection failed: {e}")
+            return False
 
     async def run_command(self, command: str, input_data: str | None = None) -> str:
         """Run a command on the server via SSH.
