@@ -57,45 +57,32 @@ class NotificationChecker:
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
         try:
-            # Clean up old logs first
             await self._cleanup_old_logs()
 
-            # Get all user IDs with telegram_id to avoid expiration issues on rollback
-            users_result = await self.session.execute(
-                select(Client.id).where(Client.telegram_id.isnot(None)).where(Client.is_active)
+            clients_result = await self.session.execute(
+                select(Client)
+                .where(Client.telegram_id.isnot(None))
+                .where(Client.is_active)
+                .options(
+                    selectinload(Client.subscriptions)
+                    .selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                )
             )
-            user_ids = list(users_result.scalars())
+            clients = list(clients_result.scalars())
 
-            for user_id in user_ids:
+            for user in clients:
                 try:
-                    # Fetch the user fresh for each iteration
-                    user = await self.session.get(Client, user_id)
-                    if not user:
-                        continue
-
-                    # Load subscriptions for this user with eager loading
-                    subs_result = await self.session.execute(
-                        select(Subscription)
-                        .where(Subscription.client_id == user.id)
-                        .where(Subscription.is_active)
-                        .options(
-                            selectinload(Subscription.inbound_connections)
-                            .selectinload(InboundConnection.inbound)
-                            .selectinload(Inbound.server)
-                        )
-                    )
-                    subscriptions = list(subs_result.scalars())
-
+                    subscriptions = [s for s in user.subscriptions if s.is_active]
                     if not subscriptions:
                         continue
 
-                    # Build subs_with_conns mapping from eager loaded data
                     subs_with_conns = []
                     for sub in subscriptions:
                         connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
                         subs_with_conns.append({"subscription": sub, "connections": connections})
 
-                    # Check expiry notifications
                     for notification_type, (
                         window_min,
                         window_max,
@@ -104,15 +91,12 @@ class NotificationChecker:
                             user, subs_with_conns, notification_type.value, window_min, window_max
                         )
 
-                    # Check traffic notifications
                     await self._check_traffic_notifications(user, subs_with_conns)
 
-                    # Commit all notification logs for this user
                     await self.session.commit()
 
                 except Exception as e:
-                    logger.error(f"Error checking user {user_id}: {e}", exc_info=True)
-                    # Rollback on error to avoid leaving pending transaction
+                    logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
                     with contextlib.suppress(Exception):
                         await self.session.rollback()
 

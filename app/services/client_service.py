@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -102,8 +102,10 @@ class ClientService:
         Returns:
             Tuple of (clients for this page, total client count)
         """
-        count_result = await self.session.execute(select(Client).where(Client.is_active))
-        total_count = len(count_result.scalars().all())
+        count_result = await self.session.execute(
+            select(func.count(Client.id)).where(Client.is_active)
+        )
+        total_count = count_result.scalar_one()
 
         offset = page * per_page
         result = await self.session.execute(
@@ -141,7 +143,7 @@ class ClientService:
         Returns:
             Client or None if not found
         """
-        result = await self.session.execute(select(Client).where(Client.email == email))
+        result = await self.session.execute(select(Client).where(Client.email == email).options(selectinload(Client.subscriptions)))
         return result.scalar_one_or_none()
 
     async def get_client_by_telegram_id(self, telegram_id: int) -> Client | None:
@@ -153,7 +155,7 @@ class ClientService:
         Returns:
             Client or None if not found
         """
-        result = await self.session.execute(select(Client).where(Client.telegram_id == telegram_id))
+        result = await self.session.execute(select(Client).where(Client.telegram_id == telegram_id).options(selectinload(Client.subscriptions)))
         return result.scalar_one_or_none()
 
     async def get_client_by_telegram_username(self, telegram_username: str) -> Client | None:
@@ -167,7 +169,7 @@ class ClientService:
         """
         username = telegram_username.lstrip("@").lower()
         result = await self.session.execute(
-            select(Client).where(Client.telegram_username_lower == username)
+            select(Client).where(Client.telegram_username_lower == username).options(selectinload(Client.subscriptions))
         )
         return result.scalar_one_or_none()
 

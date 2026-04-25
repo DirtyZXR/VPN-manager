@@ -476,6 +476,7 @@ class XUIService:
         """
         result = await self.session.execute(
             select(Inbound)
+            .options(selectinload(Inbound.server))
             .where(Inbound.server_id == server_id, Inbound.is_active)
             .order_by(Inbound.remark)
         )
@@ -491,7 +492,10 @@ class XUIService:
             List of inbounds
         """
         result = await self.session.execute(
-            select(Inbound).where(Inbound.server_id == server_id).order_by(Inbound.remark)
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id == server_id)
+            .order_by(Inbound.remark)
         )
         return result.scalars().all()
 

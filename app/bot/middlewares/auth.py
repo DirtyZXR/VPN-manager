@@ -75,8 +75,9 @@ class AuthMiddleware(BaseMiddleware):
             data.update(
                 {
                     "client": client,
+                    "db_session": session,
                     "is_admin": is_admin,
                 }
             )
 
-        return await handler(event, data)
+            return await handler(event, data)

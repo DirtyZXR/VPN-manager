@@ -27,15 +27,15 @@ class XUIProvider(BaseVPNProvider):
             from urllib.parse import urlparse
 
             parsed = urlparse(xui_panel.url or "")
-            host = f"{parsed.scheme}://{parsed.hostname}" if parsed.scheme else (xui_panel.url or "")
-            port = parsed.port if parsed.port else (443 if parsed.scheme == "https" else 80)
+            scheme = parsed.scheme or "http"
+            hostname = parsed.hostname or xui_panel.url or ""
+            port = parsed.port
+            base_path = xui_panel.panel_path or payload.get("base_url", "/")
+            if parsed.path and parsed.path != "/" and not xui_panel.panel_path:
+                base_path = parsed.path
 
-            # Extract base path from url if it exists, otherwise use payload or default
-            base_url = (
-                parsed.path if parsed.path and parsed.path != "/" else payload.get("base_url", "/")
-            )
-            if xui_panel.panel_path:
-                base_url = xui_panel.panel_path
+            port_part = f":{port}" if port else ""
+            base_url = f"{scheme}://{hostname}{port_part}{base_path}"
 
             from cryptography.fernet import Fernet
 
@@ -49,11 +49,9 @@ class XUIProvider(BaseVPNProvider):
                 password = cipher.decrypt(xui_panel.password_encrypted.encode()).decode()
 
             self._client = XUIClient(
-                host=host,
-                port=port,
+                base_url=base_url,
                 username=xui_panel.username or "",
                 password=password,
-                base_path=base_url,
                 verify_ssl=xui_panel.verify_ssl,
             )
             await self._client.__aenter__()

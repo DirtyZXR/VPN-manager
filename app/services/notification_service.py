@@ -99,9 +99,13 @@ class NotificationService:
                     urls = []
                     for server in servers:
                         # Prioritize JSON URL, fallback to standard URL
-                        subscription_path = getattr(server, "subscription_json_path", None)
+                        subscription_path = None
+                        if getattr(server, "xui_panel", None):
+                            subscription_path = getattr(server.xui_panel, "subscription_json_path", None)
+                            if not subscription_path:
+                                subscription_path = getattr(server.xui_panel, "subscription_path", "/sub/")
                         if not subscription_path:
-                            subscription_path = getattr(server, "subscription_path", "/sub/")
+                            subscription_path = "/sub/"
 
                         # If ip_address already has http/https, use it. Otherwise assume http for subscription.
                         server_url = (
@@ -197,9 +201,13 @@ class NotificationService:
                     urls = []
                     for server in servers:
                         # Prioritize JSON URL, fallback to standard URL
-                        subscription_path = getattr(server, "subscription_json_path", None)
+                        subscription_path = None
+                        if getattr(server, "xui_panel", None):
+                            subscription_path = getattr(server.xui_panel, "subscription_json_path", None)
+                            if not subscription_path:
+                                subscription_path = getattr(server.xui_panel, "subscription_path", "/sub/")
                         if not subscription_path:
-                            subscription_path = getattr(server, "subscription_path", "/sub/")
+                            subscription_path = "/sub/"
 
                         # If ip_address already has http/https, use it. Otherwise assume http for subscription.
                         server_url = (
@@ -401,9 +409,13 @@ class NotificationService:
                 from urllib.parse import urljoin
 
                 # Prioritize JSON URL, fallback to standard URL
-                subscription_path = getattr(server, "subscription_json_path", None)
+                subscription_path = None
+                if getattr(server, "xui_panel", None):
+                    subscription_path = getattr(server.xui_panel, "subscription_json_path", None)
+                    if not subscription_path:
+                        subscription_path = getattr(server.xui_panel, "subscription_path", "/sub/")
                 if not subscription_path:
-                    subscription_path = getattr(server, "subscription_path", "/sub/")
+                    subscription_path = "/sub/"
 
                 server_url = (
                     server.ip_address

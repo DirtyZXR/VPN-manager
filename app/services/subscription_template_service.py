@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.database.models import (
     Inbound,
     InboundConnection,
+    Server,
     Subscription,
     SubscriptionTemplate,
     SubscriptionTemplateInbound,
@@ -452,18 +453,31 @@ class SubscriptionTemplateService:
         sub_service = NewSubscriptionService(self.session)
 
         try:
-            # Get all subscriptions linked to this template
             result = await self.session.execute(
-                select(Subscription).where(Subscription.template_id == template_id)
+                select(Subscription)
+                .where(Subscription.template_id == template_id)
+                .options(
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.awg_service),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.mtproxy_service),
+                )
             )
             subscriptions = result.scalars().all()
 
             has_error = False
 
-            # Delete all linked subscriptions (removes clients from XUI panels)
             for sub in subscriptions:
                 try:
-                    await sub_service.delete_subscription(sub.id)
+                    await sub_service.delete_subscription(sub)
                     logger.info(f"✅ Cascade deleted subscription {sub.name} (ID: {sub.id})")
                 except Exception as e:
                     logger.error(f"❌ Failed to cascade delete subscription {sub.name}: {e}")

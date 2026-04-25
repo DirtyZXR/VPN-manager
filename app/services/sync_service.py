@@ -217,11 +217,16 @@ class SyncService:
             from sqlalchemy import select
             from sqlalchemy.orm import with_polymorphic
 
+            conn_poly = with_polymorphic(InboundConnection, "*")
             inbound_poly = with_polymorphic(Inbound, "*")
 
             inbounds_result = await self.session.execute(
                 select(inbound_poly).where(
                     inbound_poly.server_id == server.id, inbound_poly.is_active
+                ).options(
+                    selectinload(inbound_poly.client_connections.of_type(conn_poly))
+                    .selectinload(conn_poly.subscription)
+                    .selectinload(Subscription.client)
                 )
             )
             inbounds = inbounds_result.scalars().all()
@@ -301,12 +306,18 @@ class SyncService:
         from sqlalchemy.orm import with_polymorphic
 
         inbound_poly = with_polymorphic(Inbound, "*")
+        conn_poly_load = with_polymorphic(InboundConnection, "*")
 
         # Получить все активные inbounds с серверами
         result = await self.session.execute(
             select(inbound_poly)
             .where(inbound_poly.is_active)
-            .options(selectinload(inbound_poly.server).selectinload(Server.xui_panel))
+            .options(
+                selectinload(inbound_poly.server).selectinload(Server.xui_panel),
+                selectinload(inbound_poly.client_connections.of_type(conn_poly_load))
+                .selectinload(conn_poly_load.subscription)
+                .selectinload(Subscription.client),
+            )
         )
         inbounds = result.scalars().all()
 
@@ -381,10 +392,16 @@ class SyncService:
             return 0
 
         inbound_poly = with_polymorphic(Inbound, "*")
+        conn_poly_load = with_polymorphic(InboundConnection, "*")
 
         # Получить все активные inbounds этого сервера
         result = await self.session.execute(
             select(inbound_poly).where(inbound_poly.server_id == server_id, inbound_poly.is_active)
+            .options(
+                selectinload(inbound_poly.client_connections.of_type(conn_poly_load))
+                .selectinload(conn_poly_load.subscription)
+                .selectinload(Subscription.client),
+            )
         )
         inbounds = result.scalars().all()
 
@@ -572,19 +589,24 @@ class SyncService:
             logger.debug(f"Пример данных клиента: {xui_clients[0]}")
 
         # Сопоставить с существующими в базе по UUID
+        from sqlalchemy import inspect as sa_inspect
         from sqlalchemy.orm import with_polymorphic
 
         conn_poly = with_polymorphic(InboundConnection, "*")
+        state = sa_inspect(inbound)
+        if "client_connections" in state.unloaded:
+            existing_connections_result = await self.session.execute(
+                select(conn_poly)
+                .where(conn_poly.inbound_id == inbound.id)
+                .options(selectinload(conn_poly.subscription).selectinload(Subscription.client))
+            )
+            existing_connections = list(existing_connections_result.scalars())
+        else:
+            existing_connections = list(inbound.client_connections)
 
-        existing_connections = await self.session.execute(
-            select(conn_poly)
-            .where(conn_poly.inbound_id == inbound.id)
-            .options(selectinload(conn_poly.subscription).selectinload(Subscription.client))
-        )
-        # Using getattr since some polymorphic instances might not have uuid, though for XUI they do
         existing_map = {
             getattr(conn, "uuid", None): conn
-            for conn in existing_connections.scalars().all()
+            for conn in existing_connections
             if getattr(conn, "uuid", None)
         }
         logger.info(
@@ -692,7 +714,8 @@ class SyncService:
             select(conn_poly).options(
                 selectinload(conn_poly.inbound.of_type(inbound_poly))
                 .selectinload(inbound_poly.server)
-                .selectinload(Server.xui_panel)
+                .selectinload(Server.xui_panel),
+                selectinload(conn_poly.subscription).selectinload(Subscription.client)
             )
         )
         connections = result.scalars().all()
