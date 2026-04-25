@@ -184,23 +184,6 @@ class SubscriptionTemplateService:
         # Reload with relationships
         return await self.get_template(template_id)
 
-    async def delete_template(self, template_id: int) -> bool:
-        """Delete template.
-
-        Args:
-            template_id: Template ID
-
-        Returns:
-            True if deleted, False if not found
-        """
-        template = await self.session.get(SubscriptionTemplate, template_id)
-        if not template:
-            return False
-
-        await self.session.delete(template)
-        await self.session.flush()
-        return True
-
     # Template inbound management
 
     async def add_inbound_to_template(

@@ -11,7 +11,7 @@ from app.bot.keyboards import (
     get_confirm_keyboard,
     get_servers_keyboard,
 )
-from app.bot.states import ServerManagement
+from app.bot.states import AWGInstall, ServerManagement
 from app.database import async_session_factory
 from app.services.xui_service import XUIService
 from app.utils.texts import t
@@ -1693,4 +1693,368 @@ async def run_server_autodiscover(
     )
 
     await callback.message.edit_text(msg, reply_markup=kb.as_markup())
+    await callback.answer()
+
+
+# ── AWG Installation Flow ──────────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("server_install_awg_"))
+async def start_awg_install(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start AWG installation: check SSH, then ask for port."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    server_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.awg_service))
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server:
+        await callback.answer(
+            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
+        )
+        return
+
+    if server.awg_service:
+        await callback.answer("AmneziaWG уже установлен на этом сервере.", show_alert=True)
+        return
+
+    if not server.ssh_user:
+        await callback.message.edit_text(
+            t(
+                "admin.servers.services.ssh_not_configured",
+                "❌ SSH не настроен для этого сервера. Сначала настройте SSH.",
+            ),
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+        return
+
+    status_msg = await callback.message.edit_text(
+        "🔄 Проверяю доступность сервера и SSH-подключение..."
+    )
+
+    from app.services.installers.awg_installer import AWGInstaller
+    from app.services.ssh_service import SSHManager
+
+    ssh = SSHManager(server)
+    installer = AWGInstaller(ssh)
+    ok, msg = await installer.preflight_check()
+
+    if not ok:
+        await status_msg.edit_text(
+            f"❌ <b>Предварительная проверка не пройдена</b>\n\n{msg}",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    await state.update_data(server_id=server_id)
+    await state.set_state(AWGInstall.waiting_for_port)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text="🎲 Сгенерировать случайный",
+        callback_data="awg_port_random",
+    )
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    await status_msg.edit_text(
+        "🛡 <b>Установка AmneziaWG</b>\n\n"
+        "✅ Сервер доступен, SSH подключение OK.\n\n"
+        "Введите UDP-порт для AWG (рекомендуется диапазон 30000-50000).\n"
+        "Бот проверит, свободен ли порт на сервере.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(AWGInstall.waiting_for_port, F.data == "awg_port_random")
+async def awg_port_random(callback: CallbackQuery, state: FSMContext) -> None:
+    """Generate random port for AWG."""
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    msg = await callback.message.edit_text("🔄 Подбираю свободный порт на сервере...")
+
+    try:
+        from app.services.ssh_service import SSHManager
+        from app.services.vpn_providers.port_manager import PortManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            result = await session.execute(select(Server).where(Server.id == server_id))
+            server = result.scalar_one()
+
+        ssh = SSHManager(server)
+        pm = PortManager(ssh)
+        port = await pm.allocate_free_port()
+    except Exception as e:
+        logger.error(f"Port allocation failed: {e}")
+        await msg.edit_text(
+            f"❌ Не удалось подобрать порт: {e}",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+        await state.clear()
+        return
+
+    await state.update_data(port=port)
+    await _show_awg_obfuscation_choice(msg, state, port)
+
+
+@router.message(AWGInstall.waiting_for_port)
+async def awg_port_manual(message: TgMessage, state: FSMContext) -> None:
+    """Process manually entered AWG port."""
+    text = message.text.strip()
+
+    if not text.isdigit():
+        await message.answer(
+            "❌ Введите число (например, 30120).",
+            reply_markup=get_back_keyboard("cancel"),
+        )
+        return
+
+    port = int(text)
+    if port < 1 or port > 65535:
+        await message.answer("❌ Порт должен быть от 1 до 65535.")
+        return
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    msg = await message.answer(f"🔄 Проверяю порт {port} на сервере...")
+
+    try:
+        from app.services.ssh_service import SSHManager
+        from app.services.vpn_providers.port_manager import PortManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            result = await session.execute(select(Server).where(Server.id == server_id))
+            server = result.scalar_one()
+
+        ssh = SSHManager(server)
+        pm = PortManager(ssh)
+
+        if not await pm.is_port_free(port):
+            await msg.edit_text(
+                f"❌ Порт {port} занят на сервере. Введите другой порт:",
+                reply_markup=get_back_keyboard("cancel"),
+            )
+            return
+    except Exception as e:
+        logger.error(f"Port check failed: {e}")
+        await msg.edit_text(
+            f"❌ Не удалось проверить порт: {e}",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+        await state.clear()
+        return
+
+    await state.update_data(port=port)
+    await _show_awg_obfuscation_choice(msg, state, port)
+
+
+async def _show_awg_obfuscation_choice(message, state: FSMContext, port: int) -> None:
+    """Show Quick/Advanced obfuscation mode selection."""
+    await state.set_state(AWGInstall.waiting_for_obfuscation_mode)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚡ Quick (авто)", callback_data="awg_obf_quick")
+    kb.button(text="🔧 Advanced (вручную)", callback_data="awg_obf_advanced")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    await message.edit_text(
+        f"🛡 <b>Установка AmneziaWG</b>\n\n"
+        f"Порт: <code>{port}/udp</code>\n\n"
+        f"Выберите режим настройки обфускации:\n"
+        f"⚡ <b>Quick</b> — параметры генерируются автоматически\n"
+        f"🔧 <b>Advanced</b> — задать Jc, Jmin, Jmax, S1-S4, H1-H4 вручную",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(AWGInstall.waiting_for_obfuscation_mode, F.data == "awg_obf_quick")
+async def awg_obf_quick(callback: CallbackQuery, state: FSMContext) -> None:
+    """Quick mode: auto-generate obfuscation and show confirmation."""
+    from app.services.installers.awg_installer import generate_obfuscation_params
+
+    obf = generate_obfuscation_params()
+    await state.update_data(obfuscation=obf)
+    await _show_awg_confirm(callback.message, state)
+
+
+@router.callback_query(AWGInstall.waiting_for_obfuscation_mode, F.data == "awg_obf_advanced")
+async def awg_obf_advanced(callback: CallbackQuery, state: FSMContext) -> None:
+    """Advanced mode: ask admin for obfuscation parameters."""
+    await state.set_state(AWGInstall.waiting_for_obfuscation_params)
+
+    await callback.message.edit_text(
+        "🔧 <b>Advanced: параметры обфускации</b>\n\n"
+        "Введите параметры в формате:\n"
+        "<code>Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4</code>\n\n"
+        "11 чисел через пробел.\n"
+        "Пример: <code>5 100 800 50 50 50 50 1234567890 9876543210 5555555555 1111111111</code>",
+        reply_markup=get_back_keyboard("cancel"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(AWGInstall.waiting_for_obfuscation_params)
+async def awg_obf_params_input(message: TgMessage, state: FSMContext) -> None:
+    """Parse manually entered obfuscation parameters."""
+    parts = message.text.strip().split()
+
+    if len(parts) != 11:
+        await message.answer(
+            f"❌ Нужно ровно 11 чисел, получено {len(parts)}. Попробуйте снова.",
+            reply_markup=get_back_keyboard("cancel"),
+        )
+        return
+
+    try:
+        values = [int(p) for p in parts]
+    except ValueError:
+        await message.answer(
+            "❌ Все значения должны быть числами.",
+            reply_markup=get_back_keyboard("cancel"),
+        )
+        return
+
+    keys = ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"]
+    obf = dict(zip(keys, values, strict=True))
+    await state.update_data(obfuscation=obf)
+    await _show_awg_confirm(message, state)
+
+
+async def _show_awg_confirm(message, state: FSMContext) -> None:
+    """Show installation confirmation with all parameters."""
+    data = await state.get_data()
+    port = data["port"]
+    obf = data["obfuscation"]
+
+    obf_text = "\n".join(f"  {k} = {v}" for k, v in obf.items())
+
+    await state.set_state(AWGInstall.confirm_install)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Установить", callback_data="awg_confirm_install")
+    kb.button(text="❌ Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message if isinstance(message, TgMessage) else message
+
+    await target.edit_text(
+        "🛡 <b>Подтвердите установку AmneziaWG</b>\n\n"
+        f"Порт: <code>{port}/udp</code>\n\n"
+        f"<b>Параметры обфускации:</b>\n{obf_text}\n\n"
+        "Нажмите «Установить» для начала.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(AWGInstall.confirm_install, F.data == "awg_confirm_install")
+async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> None:
+    """Execute AWG installation."""
+    data = await state.get_data()
+    server_id = data["server_id"]
+    port = data["port"]
+    obf = data["obfuscation"]
+
+    await state.clear()
+
+    msg = await callback.message.edit_text(
+        "🔄 <b>Установка AmneziaWG...</b>\n\n"
+        "Подготовка сервера, сборка контейнера, генерация ключей.\n"
+        "Это может занять 1-2 минуты.",
+        parse_mode="HTML",
+    )
+
+    try:
+        from app.services.installers.awg_installer import AWGInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server)
+                .options(selectinload(Server.awg_service))
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            ssh = SSHManager(server)
+            installer = AWGInstaller(ssh)
+
+            await installer.install(
+                port=port,
+                obfuscation=obf,
+            )
+
+            from app.database.models.inbound import AWGInbound
+            from app.database.models.services import AWGService
+
+            awg_service = AWGService(server_id=server.id)
+            session.add(awg_service)
+
+            awg_inbound = AWGInbound(
+                server_id=server.id,
+                protocol="awg",
+                remark=f"AmneziaWG:{port}",
+                port=port,
+            )
+            session.add(awg_inbound)
+            await session.commit()
+
+        await msg.edit_text(
+            "✅ <b>AmneziaWG установлен!</b>\n\n"
+            f"Порт: <code>{port}/udp</code>\n"
+            f"Контейнер: <code>vpnbot-awg</code>\n\n"
+            "Сервис и inbound добавлены в базу данных.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"AWG installation failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Ошибка установки AmneziaWG</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+
     await callback.answer()

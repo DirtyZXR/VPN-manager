@@ -23,6 +23,7 @@ class Client(Base, TimestampMixin):
     telegram_id: Mapped[int | None] = mapped_column(
         Integer,
         nullable=True,
+        unique=True,
     )
     telegram_username: Mapped[str | None] = mapped_column(
         String(100),

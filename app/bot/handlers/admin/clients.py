@@ -800,12 +800,48 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
         sub_service = NewSubscriptionService(session)
 
         try:
-            # Delete all XUI clients first
-            deleted_count = await sub_service.delete_client_all_connections(client_id)
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
 
-            # Then delete client from database
+            from app.database.models import Inbound, InboundConnection, Server, Subscription
+
+            result = await sub_service.session.execute(
+                select(Subscription)
+                .where(Subscription.client_id == client_id)
+                .options(
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.awg_service),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.mtproxy_service),
+                )
+            )
+            subscriptions_before = result.scalars().all()
+            connections_to_cleanup = []
+            for sub in subscriptions_before:
+                for conn in sub.inbound_connections:
+                    connections_to_cleanup.append(conn)
+
             await client_service.delete_client(client_id)
             await session.commit()
+
+            deleted_count = 0
+            for conn in connections_to_cleanup:
+                try:
+                    inbound = conn.inbound
+                    server = inbound.server
+                    provider = await sub_service._get_provider(server)
+                    await provider.remove_client(inbound, conn)
+                    deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup VPN client {conn.id}: {e}")
 
             await state.clear()
             await callback.answer(

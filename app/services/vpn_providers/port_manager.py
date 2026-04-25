@@ -77,6 +77,20 @@ class PortManager:
             f"No free ports available in range {start}-{end} on server {self.ssh.server.id}"
         )
 
+    async def is_port_free(self, port: int) -> bool:
+        """Check if a specific port is free (both TCP and UDP).
+
+        A port is considered occupied if it is used by EITHER TCP or UDP.
+
+        Args:
+            port: Port number to check.
+
+        Returns:
+            True if the port is free on both TCP and UDP.
+        """
+        used = await self.get_used_ports()
+        return port not in used
+
     async def open_port(self, port: int, protocol: str = "tcp") -> None:
         """Open a port in the server's firewall using UFW.
 
@@ -92,4 +106,23 @@ class PortManager:
             logger.info(f"Opened port {port}/{protocol} via UFW on server {self.ssh.server.id}")
         except Exception as e:
             logger.error(f"Failed to open port {port} via UFW on server {self.ssh.server.id}: {e}")
+            raise
+
+    async def close_port(self, port: int, protocol: str = "tcp") -> None:
+        """Close a port in the server's firewall using UFW.
+
+        Args:
+            port: Port number to close
+            protocol: Protocol ('tcp', 'udp', or 'any' for both)
+        """
+        try:
+            if protocol.lower() == "any":
+                await self.ssh.run_command(f"ufw delete allow {port} || true")
+            else:
+                await self.ssh.run_command(
+                    f"ufw delete allow {port}/{protocol.lower()} || true"
+                )
+            logger.info(f"Closed port {port}/{protocol} via UFW on server {self.ssh.server.id}")
+        except Exception as e:
+            logger.error(f"Failed to close port {port} via UFW on server {self.ssh.server.id}: {e}")
             raise

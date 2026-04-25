@@ -230,24 +230,12 @@ class NewSubscriptionService:
                 conn.total_gb = new_total_gb
                 conn.expiry_date = expiry_date
 
-                # Update in XUI and reset traffic
                 try:
-                    inbound_result = await self.session.execute(
-                        select(Inbound)
-                        .where(Inbound.id == conn.inbound_id)
-                    .options(
-                        selectinload(Inbound.server).selectinload(Server.xui_panel),
-                        selectinload(Inbound.server).selectinload(Server.awg_service),
-                        selectinload(Inbound.server).selectinload(Server.mtproxy_service),
-                    )
-                    )
-                    inbound = inbound_result.scalar_one()
+                    inbound = conn.inbound
                     provider = await self._get_provider(inbound.server)
 
-                    # First, reset the traffic so it starts from 0 for the new period
                     await provider.reset_client_traffic(inbound, conn)
 
-                    # Update limits
                     conn.is_enabled = True
                     await provider.update_client(inbound, conn, new_total_gb, expiry_date)
                 except Exception as e:
@@ -654,7 +642,10 @@ class NewSubscriptionService:
             VPN provider instance
         """
         if server.id not in self._providers:
-            self._providers[server.id] = get_vpn_provider(server)
+            provider = get_vpn_provider(server)
+            if hasattr(provider, "_session"):
+                provider._session = self.session
+            self._providers[server.id] = provider
         return self._providers[server.id]
 
     async def close_all_clients(self) -> None:
@@ -844,11 +835,10 @@ class NewSubscriptionService:
 
         await self.session.flush()
 
-        # Update XUI clients if parameters changed
+        # Update XUI clients if traffic/expiry parameters changed
         if (
             total_gb is not None
             or expiry_days is not None
-            or is_active is not None
             or exact_expiry_date is not None
         ):
             result = await self.session.execute(
@@ -986,10 +976,11 @@ class NewSubscriptionService:
         Raises:
             XUIError: If subscription not found
         """
+        self.session.expire_all()
         sub_result = await self.session.execute(
             select(Subscription)
             .where(Subscription.id == subscription_id)
-            .options(selectinload(Subscription.client), selectinload(Subscription.template))
+            .options(selectinload(Subscription.client))
         )
         subscription = sub_result.scalar_one_or_none()
         if not subscription:

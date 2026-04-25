@@ -27,7 +27,7 @@ class Subscription(Base, TimestampMixin):
     )
     template_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("subscription_templates.id", ondelete="CASCADE"),
+        ForeignKey("subscription_templates.id", ondelete="SET NULL"),
         nullable=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)

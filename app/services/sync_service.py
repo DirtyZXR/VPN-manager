@@ -598,7 +598,10 @@ class SyncService:
             existing_connections_result = await self.session.execute(
                 select(conn_poly)
                 .where(conn_poly.inbound_id == inbound.id)
-                .options(selectinload(conn_poly.subscription).selectinload(Subscription.client))
+                .options(
+                    selectinload(conn_poly.subscription).selectinload(Subscription.client),
+                    selectinload(conn_poly.inbound).selectinload(Inbound.server),
+                )
             )
             existing_connections = list(existing_connections_result.scalars())
         else:

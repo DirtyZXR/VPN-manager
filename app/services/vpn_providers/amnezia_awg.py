@@ -52,25 +52,31 @@ class AmneziaAWGProvider(BaseVPNProvider):
         cmd = f"docker exec -i {self.container_name} cat {self.config_path}"
         config_text = await self.ssh.run_command(cmd)
 
-        # 1. Find all AllowedIPs = 10.8.X.Y/32 in the file
         file_ips = re.findall(r"AllowedIPs\s*=\s*([0-9\.]+)/32", config_text)
 
-        # 2. Find all IPs currently assigned in the database for this inbound
         db_ips = []
 
         from sqlalchemy import select
 
-        from app.database import async_session_factory
         from app.database.models import AWGInboundConnection
 
-        async with async_session_factory() as session:
-            result = await session.execute(
+        if hasattr(self, "_session") and self._session:
+            result = await self._session.execute(
                 select(AWGInboundConnection).where(AWGInboundConnection.inbound_id == inbound.id)
             )
             connections = result.scalars().all()
-            for conn in connections:
-                if ip := conn.client_ip:
-                    db_ips.append(ip)
+        else:
+            from app.database import async_session_factory
+
+            async with async_session_factory() as session:
+                result = await session.execute(
+                    select(AWGInboundConnection).where(AWGInboundConnection.inbound_id == inbound.id)
+                )
+                connections = result.scalars().all()
+
+        for conn in connections:
+            if ip := conn.client_ip:
+                db_ips.append(ip)
 
         # Combine all used IPs
         all_used_ips = set(file_ips + db_ips)

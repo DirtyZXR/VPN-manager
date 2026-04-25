@@ -163,3 +163,12 @@ class BroadcastManagement(StatesGroup):
 
     waiting_for_message = State()
     confirm_broadcast = State()
+
+
+class AWGInstall(StatesGroup):
+    """AWG installation flow states."""
+
+    waiting_for_port = State()
+    waiting_for_obfuscation_mode = State()
+    waiting_for_obfuscation_params = State()
+    confirm_install = State()
