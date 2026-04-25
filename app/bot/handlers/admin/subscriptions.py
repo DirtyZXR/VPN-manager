@@ -97,13 +97,13 @@ async def confirm_server_selection(callback: CallbackQuery, state: FSMContext) -
         return
 
     async with async_session_factory() as session:
-        service = XUIService(session)
-
-        all_inbounds = []
-        for server_id in selected_servers:
-            inbounds = await service.get_server_inbounds(server_id)
-            if inbounds:
-                all_inbounds.extend(inbounds)
+        result = await session.execute(
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id.in_(selected_servers), Inbound.is_active)
+            .order_by(Inbound.server_id, Inbound.remark)
+        )
+        all_inbounds = list(result.scalars().all())
 
     if not all_inbounds:
         await callback.answer(
@@ -151,12 +151,13 @@ async def toggle_inbound_selection(callback: CallbackQuery, state: FSMContext) -
         selected_servers = {data["server_id"]}
 
     async with async_session_factory() as session:
-        service = XUIService(session)
-        all_inbounds = []
-        for s_id in selected_servers:
-            inbounds = await service.get_server_inbounds(s_id)
-            if inbounds:
-                all_inbounds.extend(inbounds)
+        result = await session.execute(
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id.in_(selected_servers), Inbound.is_active)
+            .order_by(Inbound.server_id, Inbound.remark)
+        )
+        all_inbounds = list(result.scalars().all())
 
     # Determine mode: "add" if subscription_id exists, otherwise "create"
     mode = "add" if data.get("subscription_id") else "create"
@@ -913,8 +914,14 @@ async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMConte
     await state.update_data(server_id=server_id)
 
     async with async_session_factory() as session:
-        service = XUIService(session)
-        inbounds = await service.get_server_inbounds(server_id)
+        # We need Inbound.server loaded for get_inbounds_selection_keyboard
+        result = await session.execute(
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id == server_id, Inbound.is_active)
+            .order_by(Inbound.remark)
+        )
+        inbounds = result.scalars().all()
 
     if not inbounds:
         await callback.answer("❌ У сервера нет активных inbounds.", show_alert=True)
@@ -979,9 +986,13 @@ async def get_inbounds_selection_keyboard(
     for inbound in inbounds:
         status = "✅" if inbound.is_active else "❌"
         selected = "🔘" if inbound.id in selected_inbounds else "⚪"
-        server_name = getattr(
-            getattr(inbound, "server", None), "name", f"Server {inbound.server_id}"
-        )
+
+        try:
+            server_name = inbound.server.name if inbound.server else f"Server {inbound.server_id}"
+        except Exception:
+            # Fallback if server relationship is not loaded and raises MissingGreenlet
+            server_name = f"Server {inbound.server_id}"
+
         builder.button(
             text=f"{selected} {status} {inbound.remark} ({inbound.protocol}) | {server_name}",
             callback_data=f"toggle_inbound_{inbound.id}",

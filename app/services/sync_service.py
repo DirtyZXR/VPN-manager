@@ -205,13 +205,13 @@ class SyncService:
                 logger.debug(f"[SYNC] Сервер {server.id} ping: {'Успешно' if is_online else 'Неудачно'}")
 
             xui_client = None
-            if server.xui_panel:
+            if server.xui_panel and server.xui_panel.url and server.xui_panel.username:
                 # Получить XUI клиент
                 xui_client = await self._xui_service._get_client(server)
                 # Синхронизировать inbounds
                 await self._sync_server_inbounds(server, xui_client)
             else:
-                logger.debug(f"Сервер {server.id} не имеет XUI панели, пропуск XUI inbounds синхронизации")
+                logger.debug(f"Сервер {server.id} не имеет XUI панели (или не настроена), пропуск XUI inbounds синхронизации")
 
             # Синхронизация клиентов для всех inbounds этого сервера
             from sqlalchemy import select

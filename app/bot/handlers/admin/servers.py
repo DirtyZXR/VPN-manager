@@ -195,18 +195,11 @@ async def _create_and_finish_server_addition(
 
     await state.clear()
 
-    status_text = (
-        t("admin.servers.status.online", "✅ В сети")
-        if is_online
-        else t("admin.servers.status.offline", "❌ Не в сети (добавлен принудительно)")
-    )
-
     text = t(
-        "admin.servers.added_success",
-        "✅ Сервер '{name}' успешно добавлен!\n\nIP: {ip}\nСтатус: {status}",
+        "admin.servers.add_success",
+        "✅ Сервер <b>{name}</b> успешно добавлен!\n\n🌐 IP: <code>{ip}</code>\n\nТеперь вы можете настроить SSH и установить необходимые сервисы.",
         name=name,
         ip=ip_address,
-        status=status_text,
     )
 
     await message.edit_text(text, reply_markup=get_back_keyboard("admin_servers"))
@@ -1283,13 +1276,15 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
         "Логин: {username}\n"
         "Пароль: {password}\n"
         "webBasePath: {web_base_path}\n"
-        "subPath: {sub_path}\n\n"
+        "subPath: {sub_path}\n"
+        "subJsonPath: {sub_json_path}\n\n"
         "Выберите, что изменить:",
         name=server.name,
         username=panel.username or "Не задан",
         password="***" if panel.password_encrypted else "Не задан",
         web_base_path=panel.panel_path or "Не задан",
         sub_path=panel.subscription_path or "Не задан",
+        sub_json_path=panel.subscription_json_path or "Не задан",
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -1299,6 +1294,7 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
     kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
     kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
     kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
+    kb.button(text="Изменить subJsonPath", callback_data=f"xui_edit_jsonpath_{server_id}")
     kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
     kb.adjust(1)
 
@@ -1464,6 +1460,40 @@ async def process_edit_xui_sub_path(message: TgMessage, state: FSMContext) -> No
     await _show_xui_edit_menu(message, server_id)
 
 
+@router.callback_query(F.data.startswith("xui_edit_jsonpath_"))
+async def start_edit_xui_jsonpath(callback: CallbackQuery, state: FSMContext) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_edit_subscription_json_path)
+    await callback.message.edit_text(
+        "✏️ Введите новый subJsonPath для подписок (например, /sub/json/). Нажмите /skip для отмены.",
+        reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+    )
+    await callback.answer()
+
+
+@router.message(ServerManagement.waiting_for_edit_subscription_json_path)
+async def process_edit_xui_jsonpath(message: TgMessage, state: FSMContext) -> None:
+    data = await state.get_data()
+    server_id = data["server_id"]
+    new_path = message.text.strip()
+
+    if new_path == "/skip":
+        await _show_xui_edit_menu(message, server_id)
+        return
+
+    if not new_path.startswith("/"):
+        new_path = "/" + new_path
+
+    async with async_session_factory() as session:
+        service = XUIService(session)
+        await service.update_server(server_id, subscription_json_path=new_path)
+        await session.commit()
+        await message.answer(f"✅ subJsonPath изменен на: {new_path}")
+
+    await _show_xui_edit_menu(message, server_id)
+
+
 async def _show_xui_edit_menu(message: TgMessage, server_id: int) -> None:
     """Helper to show the XUI edit menu after an edit operation."""
     async with async_session_factory() as session:
@@ -1490,13 +1520,15 @@ async def _show_xui_edit_menu(message: TgMessage, server_id: int) -> None:
         "Логин: {username}\n"
         "Пароль: {password}\n"
         "webBasePath: {web_base_path}\n"
-        "subPath: {sub_path}\n\n"
+        "subPath: {sub_path}\n"
+        "subJsonPath: {sub_json_path}\n\n"
         "Выберите, что изменить:",
         name=server.name,
         username=panel.username or "Не задан",
         password="***" if panel.password_encrypted else "Не задан",
         web_base_path=panel.panel_path or "Не задан",
         sub_path=panel.subscription_path or "Не задан",
+        sub_json_path=panel.subscription_json_path or "Не задан",
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -1506,6 +1538,7 @@ async def _show_xui_edit_menu(message: TgMessage, server_id: int) -> None:
     kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
     kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
     kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
+    kb.button(text="Изменить subJsonPath", callback_data=f"xui_edit_jsonpath_{server_id}")
     kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
     kb.adjust(1)
 
