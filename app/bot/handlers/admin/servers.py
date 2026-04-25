@@ -11,7 +11,7 @@ from app.bot.keyboards import (
     get_confirm_keyboard,
     get_servers_keyboard,
 )
-from app.bot.states import AWGInstall, ServerManagement
+from app.bot.states import AWGInstall, FirstSetup, MTProxyInstall, ServerManagement, XUIInstall
 from app.database import async_session_factory
 from app.services.xui_service import XUIService
 from app.utils.texts import t
@@ -439,51 +439,478 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
                 ),
                 reply_markup=get_back_keyboard(f"server_select_{server_id}"),
             )
-            await callback.answer()
-            return
+    await callback.answer()
 
-        # Build text with inbound details
-        text = t(
-            "admin.servers.inbounds.title",
-            "📊 Inbounds сервера {name}\n\nВсего: {count} inbounds\n\n",
-            name=server.name,
-            count=len(inbounds),
+
+# ── 3x-ui Installation Flow ────────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("server_install_xui_"))
+async def start_xui_install(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start 3x-ui installation: check SSH, then ask for domain."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
         )
+        return
 
-        for inbound in inbounds:
-            status = "✅" if inbound.is_active else "❌"
-            text += t(
-                "admin.servers.inbounds.item",
-                "{status} {remark}\n   Протокол: {protocol}\n   Порт: {port}\n   Клиентов (БД): {clients}\n\n",
-                status=status,
-                remark=inbound.remark,
-                protocol=inbound.protocol,
-                port=inbound.port,
-                clients=getattr(inbound, "client_count", 0),
-            )
+    server_id = int(callback.data.split("_")[-1])
 
-        has_inactive = any(not inbound.is_active for inbound in inbounds)
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
 
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        from app.database.models import Server
 
-        kb = InlineKeyboardBuilder()
-        kb.button(
-            text=t("admin.servers.buttons.update_stats", "🔄 Обновить статистику"),
-            callback_data=f"inbound_stats_{server_id}",
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.xui_panel))
+            .where(Server.id == server_id)
         )
-        if has_inactive:
-            kb.button(
-                text=t("admin.servers.buttons.cleanup_inbounds", "🧹 Очистить удаленные inbounds"),
-                callback_data=f"cleanup_inbounds_{server_id}",
-            )
-        kb.button(
-            text=t("admin.servers.buttons.back", "🔙 Назад"),
-            callback_data=f"server_select_{server_id}",
-        )
-        kb.adjust(1)
+        server = result.scalar_one_or_none()
 
-        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    if not server:
+        await callback.answer(
+            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
+        )
+        return
+
+    if server.xui_panel:
+        await callback.answer("3x-ui уже установлен на этом сервере.", show_alert=True)
+        return
+
+    if not server.ssh_user:
+        await callback.message.edit_text(
+            t(
+                "admin.servers.services.ssh_not_configured",
+                "❌ SSH не настроен для этого сервера. Сначала настройте SSH.",
+            ),
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+        return
+
+    status_msg = await callback.message.edit_text(
+        "🔄 Проверяю доступность сервера и SSH-подключение..."
+    )
+
+    from app.services.installers.xui_installer import XUIInstaller
+    from app.services.ssh_service import SSHManager
+
+    ssh = SSHManager(server)
+    installer = XUIInstaller(ssh)
+    ok, msg = await installer.preflight_check()
+
+    if not ok:
+        await status_msg.edit_text(
+            f"❌ <b>Предварительная проверка не пройдена</b>\n\n{msg}",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    await state.update_data(server_id=server_id)
+
+    policy_shown = await _check_first_setup(
+        callback, state, server_id, "xui",
+    )
+    if policy_shown:
         await callback.answer()
+        return
+
+    await _xui_ask_domain(status_msg, state)
+    await callback.answer()
+
+
+@router.message(XUIInstall.waiting_for_domain)
+async def xui_process_domain(message: TgMessage, state: FSMContext) -> None:
+    """Process domain/IP input."""
+    domain = message.text.strip()
+
+    if not domain or len(domain) > 253:
+        await message.answer("❌ Введите корректный домен или IP.")
+        return
+
+    await state.update_data(domain=domain)
+    await state.set_state(XUIInstall.waiting_for_caddy_port)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎲 Авто (8443)", callback_data="xui_port_auto")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    await message.answer(
+        f"🌐 Домен: <code>{domain}</code>\n\n"
+        "Введите HTTPS-порт для Caddy (дефолт: <code>8443</code>):",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(XUIInstall.waiting_for_caddy_port, F.data == "xui_port_auto")
+async def xui_caddy_port_auto(callback: CallbackQuery, state: FSMContext) -> None:
+    """Auto-assign Caddy port."""
+    await state.update_data(caddy_port=8443)
+    await _xui_ask_paths_mode(callback.message, state)
+
+
+@router.message(XUIInstall.waiting_for_caddy_port)
+async def xui_caddy_port_manual(message: TgMessage, state: FSMContext) -> None:
+    """Process manually entered Caddy port."""
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 1 or int(text) > 65535:
+        await message.answer("❌ Введите число от 1 до 65535.")
+        return
+    await state.update_data(caddy_port=int(text))
+    await _xui_ask_paths_mode(message, state)
+
+
+async def _xui_ask_paths_mode(message_or_callback, state: FSMContext) -> None:
+    """Ask Quick/Advanced for paths."""
+    await state.set_state(XUIInstall.waiting_for_paths_mode)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚡ Авто (случайные пути)", callback_data="xui_paths_auto")
+    kb.button(text="🔧 Вручную", callback_data="xui_paths_manual")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
+    await target.edit_text(
+        "📝 <b>Пути панели</b>\n\n"
+        "⚡ <b>Авто</b> — генерируются случайные пути\n"
+        "🔧 <b>Вручную</b> — задать webBasePath, subPath, subJsonPath",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(XUIInstall.waiting_for_paths_mode, F.data == "xui_paths_auto")
+async def xui_paths_auto(callback: CallbackQuery, state: FSMContext) -> None:
+    """Auto-generate random paths."""
+    from app.services.installers.base import BaseInstaller
+
+    r = BaseInstaller.generate_random_string
+    await state.update_data(
+        web_path=f"/{r(8)}/",
+        sub_path=f"/{r(6)}/",
+        sub_json_path=f"/{r(6)}/",
+    )
+    await _xui_ask_credentials_mode(callback.message, state)
+
+
+@router.callback_query(XUIInstall.waiting_for_paths_mode, F.data == "xui_paths_manual")
+async def xui_paths_manual_start(callback: CallbackQuery, state: FSMContext) -> None:
+    """Ask for webBasePath manually."""
+    await state.set_state(XUIInstall.waiting_for_web_path)
+    await callback.message.edit_text(
+        "📝 Введите <b>webBasePath</b> — путь к панели (например, <code>/admin-xyz/</code>):",
+        reply_markup=get_back_keyboard("cancel"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(XUIInstall.waiting_for_web_path)
+async def xui_web_path(message: TgMessage, state: FSMContext) -> None:
+    path = message.text.strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    if not path.endswith("/"):
+        path += "/"
+    await state.update_data(web_path=path)
+    await state.set_state(XUIInstall.waiting_for_sub_path)
+    await message.answer(
+        f"✅ webBasePath: <code>{path}</code>\n\n"
+        "Введите <b>subPath</b> — путь подписки (например, <code>/sub-abc/</code>):",
+        reply_markup=get_back_keyboard("cancel"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(XUIInstall.waiting_for_sub_path)
+async def xui_sub_path(message: TgMessage, state: FSMContext) -> None:
+    path = message.text.strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    if not path.endswith("/"):
+        path += "/"
+    await state.update_data(sub_path=path)
+    await state.set_state(XUIInstall.waiting_for_sub_json_path)
+    await message.answer(
+        f"✅ subPath: <code>{path}</code>\n\n"
+        "Введите <b>subJsonPath</b> (например, <code>/json-def/</code>):",
+        reply_markup=get_back_keyboard("cancel"),
+        parse_mode="HTML",
+    )
+
+
+@router.message(XUIInstall.waiting_for_sub_json_path)
+async def xui_sub_json_path(message: TgMessage, state: FSMContext) -> None:
+    path = message.text.strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    if not path.endswith("/"):
+        path += "/"
+    await state.update_data(sub_json_path=path)
+    await _xui_ask_credentials_mode(message, state)
+
+
+async def _xui_ask_credentials_mode(message_or_callback, state: FSMContext) -> None:
+    """Ask Quick/Advanced for credentials."""
+    await state.set_state(XUIInstall.waiting_for_credentials_mode)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚡ Авто (случайные)", callback_data="xui_cred_auto")
+    kb.button(text="🔧 Вручную", callback_data="xui_cred_manual")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
+    await target.edit_text(
+        "🔑 <b>Учётные данные панели</b>\n\n"
+        "⚡ <b>Авто</b> — случайный логин и пароль\n"
+        "🔧 <b>Вручную</b> — задать логин и пароль",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(XUIInstall.waiting_for_credentials_mode, F.data == "xui_cred_auto")
+async def xui_cred_auto(callback: CallbackQuery, state: FSMContext) -> None:
+    from app.services.installers.base import BaseInstaller
+
+    r = BaseInstaller.generate_random_string
+    await state.update_data(
+        username=f"admin-{r(6)}",
+        password=r(20),
+    )
+    await _xui_ask_inbound_range(callback.message, state)
+
+
+@router.callback_query(XUIInstall.waiting_for_credentials_mode, F.data == "xui_cred_manual")
+async def xui_cred_manual_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(XUIInstall.waiting_for_username)
+    await callback.message.edit_text(
+        "🔑 Введите логин для панели 3x-ui:",
+        reply_markup=get_back_keyboard("cancel"),
+    )
+    await callback.answer()
+
+
+@router.message(XUIInstall.waiting_for_username)
+async def xui_username(message: TgMessage, state: FSMContext) -> None:
+    username = message.text.strip()
+    if not username or len(username) > 50:
+        await message.answer("❌ Логин не может быть пустым или длиннее 50 символов.")
+        return
+    await state.update_data(username=username)
+    await state.set_state(XUIInstall.waiting_for_password)
+    await message.answer("🔑 Введите пароль для панели 3x-ui:")
+
+
+@router.message(XUIInstall.waiting_for_password)
+async def xui_password(message: TgMessage, state: FSMContext) -> None:
+    password = message.text.strip()
+    if not password or len(password) < 6:
+        await message.answer("❌ Пароль минимум 6 символов.")
+        return
+    await state.update_data(password=password)
+    await _xui_ask_inbound_range(message, state)
+
+
+async def _xui_ask_inbound_range(message_or_callback, state: FSMContext) -> None:
+    """Ask for inbound port range."""
+    await state.set_state(XUIInstall.waiting_for_inbound_range)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎲 Дефолт (10000-10100)", callback_data="xui_range_default")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
+    await target.edit_text(
+        "📊 <b>Диапазон портов для inbounds</b>\n\n"
+        "Введите порты для VPN-подключений.\n"
+        "Формат: отдельные порты или диапазоны через запятую.\n"
+        "Пример: <code>443, 10000-10100, 666</code>\n\n"
+        "Или используйте дефолт: <code>10000-10100</code>",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(XUIInstall.waiting_for_inbound_range, F.data == "xui_range_default")
+async def xui_range_default(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(inbound_ranges=[(10000, 10100)])
+    await _xui_show_confirm(callback.message, state)
+
+
+@router.message(XUIInstall.waiting_for_inbound_range)
+async def xui_range_manual(message: TgMessage, state: FSMContext) -> None:
+    from app.services.installers.xui_installer import _parse_port_ranges
+
+    try:
+        ranges = _parse_port_ranges(message.text.strip())
+    except ValueError as e:
+        await message.answer(f"❌ Ошибка: {e}\nПопробуйте снова.")
+        return
+
+    total = sum(end - start + 1 for start, end in ranges)
+    if total > 1000:
+        await message.answer(f"❌ Слишком много портов ({total}). Максимум 1000.")
+        return
+
+    await state.update_data(inbound_ranges=ranges)
+    await _xui_show_confirm(message, state)
+
+
+async def _xui_show_confirm(message_or_callback, state: FSMContext) -> None:
+    """Show confirmation with all parameters."""
+    data = await state.get_data()
+    domain = data["domain"]
+    caddy_port = data["caddy_port"]
+    web_path = data["web_path"]
+    sub_path = data["sub_path"]
+    sub_json_path = data["sub_json_path"]
+    username = data["username"]
+    inbound_ranges = data["inbound_ranges"]
+
+    ranges_str = ", ".join(
+        f"{s}-{e}" if s != e else str(s) for s, e in inbound_ranges
+    )
+
+    await state.set_state(XUIInstall.confirm_install)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Установить", callback_data="xui_confirm_install")
+    kb.button(text="❌ Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
+    await target.edit_text(
+        "🌐 <b>Подтвердите установку 3x-ui</b>\n\n"
+        f"Домен: <code>{domain}</code>\n"
+        f"Caddy порт: <code>{caddy_port}</code>\n"
+        f"webBasePath: <code>{web_path}</code>\n"
+        f"subPath: <code>{sub_path}</code>\n"
+        f"subJsonPath: <code>{sub_json_path}</code>\n"
+        f"Логин: <code>{username}</code>\n"
+        f"Пароль: <code>{data['password']}</code>\n"
+        f"Inbound порты: <code>{ranges_str}</code>\n\n"
+        "⚠️ Пароль будет показан только сейчас. Сохраните его!",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(XUIInstall.confirm_install, F.data == "xui_confirm_install")
+async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> None:
+    """Execute 3x-ui installation."""
+    data = await state.get_data()
+    server_id = data["server_id"]
+    domain = data["domain"]
+    caddy_port = data["caddy_port"]
+    web_path = data["web_path"]
+    sub_path = data["sub_path"]
+    sub_json_path = data["sub_json_path"]
+    username = data["username"]
+    password = data["password"]
+    inbound_ranges = data["inbound_ranges"]
+
+    await state.clear()
+
+    msg = await callback.message.edit_text(
+        "🔄 <b>Установка 3x-ui...</b>\n\n"
+        "Подготовка сервера, запуск контейнеров, настройка панели.\n"
+        "Это может занять 2-3 минуты.",
+        parse_mode="HTML",
+    )
+
+    try:
+        from app.services.installers.xui_installer import XUIInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server)
+                .options(selectinload(Server.xui_panel))
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            ssh = SSHManager(server)
+            installer = XUIInstaller(ssh)
+
+            await installer.install(
+                domain=domain,
+                caddy_port=caddy_port,
+                web_path=web_path,
+                sub_path=sub_path,
+                sub_json_path=sub_json_path,
+                username=username,
+                password=password,
+                inbound_ranges=inbound_ranges,
+            )
+
+            from app.database.models.services import XUIPanel
+
+            panel_url = f"https://{domain}:{caddy_port}"
+            if domain and not domain.replace(".", "").replace("-", "").isdigit():
+                pass
+            else:
+                panel_url = f"http://{domain}:{caddy_port}"
+
+            panel = XUIPanel(
+                server_id=server.id,
+                url=panel_url,
+                username=username,
+                password_encrypted=password,
+                panel_path=web_path,
+                subscription_path=sub_path,
+                subscription_json_path=sub_json_path,
+            )
+            session.add(panel)
+            await session.commit()
+
+        ranges_str = ", ".join(
+            f"{s}-{e}" if s != e else str(s) for s, e in inbound_ranges
+        )
+        await msg.edit_text(
+            "✅ <b>3x-ui установлен!</b>\n\n"
+            f"Панель: <code>{panel_url}{web_path.strip('/')}</code>\n"
+            f"Логин: <code>{username}</code>\n"
+            f"Пароль: <code>{password}</code>\n"
+            f"Inbound порты: <code>{ranges_str}</code>\n\n"
+            "⚠️ <b>Сохраните пароль!</b> Он больше не будет показан.\n\n"
+            "XUIPanel добавлен в базу данных. "
+            "Выполните синхронизацию для загрузки inbounds.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"3x-ui installation failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Ошибка установки 3x-ui</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("cleanup_inbounds_"))
@@ -1696,6 +2123,268 @@ async def run_server_autodiscover(
     await callback.answer()
 
 
+# ── Shared: First-install setup (firewall + SSH port) ─────────────────
+
+
+async def _check_first_setup(
+    callback: CallbackQuery, state: FSMContext, server_id: int, installer_target: str
+) -> bool | None:
+    """Check if first-setup steps needed. Returns True if setup question shown.
+
+    Args:
+        installer_target: 'awg' or 'xui' — determines where to redirect after.
+    """
+    from app.services.installers.base import BaseInstaller
+    from app.services.ssh_service import SSHManager
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+
+        from app.database.models import Server
+
+        result = await session.execute(select(Server).where(Server.id == server_id))
+        server = result.scalar_one_or_none()
+
+    if not server:
+        return None
+
+    ssh = SSHManager(server)
+    installer = BaseInstaller(ssh)
+
+    policy = await installer.get_firewall_policy()
+    if policy is not None:
+        return False
+
+    await state.update_data(server_id=server_id, _setup_target=installer_target)
+    await state.set_state(FirstSetup.waiting_for_firewall_policy)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔒 Strict (рекомендуется)", callback_data="firewall_strict")
+    kb.button(text="🔓 Permissive", callback_data="firewall_permissive")
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    await callback.message.edit_text(
+        "🛡 <b>Первичная настройка сервера</b>\n\n"
+        "Это первая установка на этом сервере.\n\n"
+        "🔒 <b>Strict</b> — закрыть все порты, кроме SSH. "
+        "Нужные порты откроются автоматически при установке сервисов.\n"
+        "🔓 <b>Permissive</b> — не менять текущие правила UFW.\n\n"
+        "⚠️ <b>Рекомендуется Strict</b> для безопасности.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+    return True
+
+
+@router.callback_query(FirstSetup.waiting_for_firewall_policy, F.data == "firewall_strict")
+async def firewall_strict(callback: CallbackQuery, state: FSMContext) -> None:
+    await _apply_firewall_policy(callback, state, strict=True)
+
+
+@router.callback_query(FirstSetup.waiting_for_firewall_policy, F.data == "firewall_permissive")
+async def firewall_permissive(callback: CallbackQuery, state: FSMContext) -> None:
+    await _apply_firewall_policy(callback, state, strict=False)
+
+
+async def _apply_firewall_policy(callback: CallbackQuery, state: FSMContext, strict: bool) -> None:
+    """Apply firewall policy and ask about SSH port."""
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    msg = await callback.message.edit_text("🔄 Применяю политику файрвола...")
+
+    from app.services.installers.base import BaseInstaller
+    from app.services.ssh_service import SSHManager
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+
+        from app.database.models import Server
+
+        result = await session.execute(select(Server).where(Server.id == server_id))
+        server = result.scalar_one()
+
+    ssh = SSHManager(server)
+    installer = BaseInstaller(ssh)
+
+    try:
+        await installer.apply_firewall_policy(strict=strict)
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Ошибка настройки файрвола: {e}",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+        await state.clear()
+        return
+
+    policy_text = "🔒 Strict" if strict else "🔓 Permissive"
+
+    await state.set_state(FirstSetup.waiting_for_ssh_port_choice)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔢 Изменить SSH порт", callback_data="ssh_port_change")
+    kb.button(text="⏭️ Пропустить", callback_data="ssh_port_skip")
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    await msg.edit_text(
+        f"✅ Политика файрвола: {policy_text}\n\n"
+        "🔑 <b>SSH порт</b>\n\n"
+        f"Текущий SSH порт: <code>{ssh.port}</code>\n\n"
+        "Хотите изменить SSH порт на другой?\n"
+        "Рекомендуется для безопасности (стандартный порт 22 часто сканируется).",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(FirstSetup.waiting_for_ssh_port_choice, F.data == "ssh_port_skip")
+async def ssh_port_skip(callback: CallbackQuery, state: FSMContext) -> None:
+    """Skip SSH port change, proceed to installer."""
+    await _continue_to_installer(callback.message, state)
+
+
+@router.callback_query(FirstSetup.waiting_for_ssh_port_choice, F.data == "ssh_port_change")
+async def ssh_port_change_start(callback: CallbackQuery, state: FSMContext) -> None:
+    """Ask for new SSH port."""
+    await state.set_state(FirstSetup.waiting_for_ssh_port)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    await callback.message.edit_text(
+        "🔑 <b>Смена SSH порта</b>\n\n"
+        "Введите новый SSH порт (например, <code>2222</code>):\n\n"
+        "⚠️ Бот сначала добавит новый порт, проверит подключение, "
+        "и только потом удалит старый. Если что-то пойдёт не так — "
+        "автоматический откат.",
+        reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(FirstSetup.waiting_for_ssh_port)
+async def ssh_port_process(message: TgMessage, state: FSMContext) -> None:
+    """Process new SSH port, change it, then continue."""
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 1 or int(text) > 65535:
+        await message.answer("❌ Введите число от 1 до 65535.")
+        return
+
+    new_port = int(text)
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    msg = await message.answer(
+        f"🔄 Меняю SSH порт на <code>{new_port}</code>...\n\n"
+        "Проверяю подключение на новом порту...",
+        parse_mode="HTML",
+    )
+
+    from app.services.installers.base import BaseInstaller
+    from app.services.ssh_service import SSHManager
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+
+        from app.database.models import Server
+
+        result = await session.execute(select(Server).where(Server.id == server_id))
+        server = result.scalar_one()
+
+    ssh = SSHManager(server)
+    installer = BaseInstaller(ssh)
+
+    success, change_msg = await installer.change_ssh_port(new_port)
+
+    if success:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            result = await session.execute(select(Server).where(Server.id == server_id))
+            server = result.scalar_one()
+            server.ssh_port = new_port
+            await session.commit()
+
+        await msg.edit_text(
+            f"✅ {change_msg}\n\n"
+            f"Новый SSH порт сохранён в базе данных.",
+        )
+    else:
+        await msg.edit_text(
+            f"⚠️ {change_msg}",
+        )
+
+    await _continue_to_installer(msg, state)
+
+
+async def _continue_to_installer(message, state: FSMContext) -> None:
+    """Redirect to the actual installer flow after first-setup."""
+    data = await state.get_data()
+    target = data.get("_setup_target")
+
+    if target == "awg":
+        await _awg_ask_port(message, state)
+    elif target == "xui":
+        await _xui_ask_domain(message, state)
+    else:
+        server_id = data.get("server_id", 0)
+        await state.clear()
+        await message.edit_text(
+            "⚠️ Не удалось продолжить установку.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+
+
+async def _awg_ask_port(message_or_callback, state: FSMContext) -> None:
+    """Show AWG port input."""
+    await state.set_state(AWGInstall.waiting_for_port)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎲 Сгенерировать случайный", callback_data="awg_port_random")
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        "🛡 <b>Установка AmneziaWG</b>\n\n"
+        "Введите UDP-порт для AWG (рекомендуется диапазон 30000-50000).\n"
+        "Бот проверит, свободен ли порт на сервере.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+async def _xui_ask_domain(message_or_callback, state: FSMContext) -> None:
+    """Show XUI domain input."""
+    await state.set_state(XUIInstall.waiting_for_domain)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        "🌐 <b>Установка 3x-ui</b>\n\n"
+        "Введите домен для панели (например, <code>vpn.example.com</code>)\n"
+        "или IP-адрес сервера (SSL не будет настроен):",
+        reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        parse_mode="HTML",
+    )
+
+
 # ── AWG Installation Flow ──────────────────────────────────────────────
 
 
@@ -1763,26 +2452,16 @@ async def start_awg_install(callback: CallbackQuery, state: FSMContext, is_admin
         return
 
     await state.update_data(server_id=server_id)
-    await state.set_state(AWGInstall.waiting_for_port)
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-    kb = InlineKeyboardBuilder()
-    kb.button(
-        text="🎲 Сгенерировать случайный",
-        callback_data="awg_port_random",
+    policy_shown = await _check_first_setup(
+        callback, state, server_id, "awg",
     )
-    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
-    kb.adjust(1)
+    if policy_shown:
+        await callback.answer()
+        return
 
-    await status_msg.edit_text(
-        "🛡 <b>Установка AmneziaWG</b>\n\n"
-        "✅ Сервер доступен, SSH подключение OK.\n\n"
-        "Введите UDP-порт для AWG (рекомендуется диапазон 30000-50000).\n"
-        "Бот проверит, свободен ли порт на сервере.",
-        reply_markup=kb.as_markup(),
-        parse_mode="HTML",
-    )
+    await _awg_ask_port(status_msg, state)
     await callback.answer()
 
 
@@ -2053,6 +2732,398 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
         logger.error(f"AWG installation failed: {e}", exc_info=True)
         await msg.edit_text(
             f"❌ <b>Ошибка установки AmneziaWG</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+
+    await callback.answer()
+
+
+# ── MTProxy Installation Flow ─────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("server_install_mtproxy_"))
+async def start_mtproxy_install(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    """Start MTProxy installation."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
+        )
+        return
+
+    server_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.mtproxy_service))
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server:
+        await callback.answer(
+            t("admin.servers.errors.not_found", "❌ Сервер не найден."), show_alert=True
+        )
+        return
+
+    if server.mtproxy_service:
+        await callback.answer("MTProxy уже установлен на этом сервере.", show_alert=True)
+        return
+
+    if not server.ssh_user:
+        await callback.message.edit_text(
+            t(
+                "admin.servers.services.ssh_not_configured",
+                "❌ SSH не настроен для этого сервера. Сначала настройте SSH.",
+            ),
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+        )
+        return
+
+    status_msg = await callback.message.edit_text(
+        "🔄 Проверяю доступность сервера и SSH-подключение..."
+    )
+
+    from app.services.installers.mtproxy_installer import MTProxyInstaller
+    from app.services.ssh_service import SSHManager
+
+    ssh = SSHManager(server)
+    installer = MTProxyInstaller(ssh)
+    ok, msg = await installer.preflight_check()
+
+    if not ok:
+        await status_msg.edit_text(
+            f"❌ <b>Предварительная проверка не пройдена</b>\n\n{msg}",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    await state.update_data(server_id=server_id)
+
+    first_setup_shown = await _check_first_setup(
+        callback, state, server_id, "mtproxy",
+    )
+    if first_setup_shown:
+        await callback.answer()
+        return
+
+    await _mtproxy_ask_implementation(status_msg, state)
+    await callback.answer()
+
+
+async def _mtproxy_ask_implementation(message_or_callback, state: FSMContext) -> None:
+    """Ask which MTProxy implementation to use."""
+    await state.set_state(MTProxyInstall.waiting_for_implementation)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⭐ mtg-multi (рекомендуется)", callback_data="mtproxy_impl_multi")
+    kb.button(text="🔹 mtg (upstream)", callback_data="mtproxy_impl_mtg")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        "📡 <b>Установка MTProxy</b>\n\n"
+        "✅ Сервер доступен, SSH OK.\n\n"
+        "Выберите реализацию:\n\n"
+        "⭐ <b>mtg-multi</b> — форк с поддержкой:\n"
+        "  • Множественные секреты (по одному на клиента)\n"
+        "  • Stats API (мониторинг трафика)\n"
+        "  • Throttling (fair-share)\n\n"
+        "🔹 <b>mtg</b> — оригинал (3.4k ⭐):\n"
+        "  • Один секрет на инстанс\n"
+        "  • Проще, стабильнее\n"
+        "  • Без Stats API",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(MTProxyInstall.waiting_for_implementation, F.data == "mtproxy_impl_multi")
+async def mtproxy_impl_multi(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(implementation="mtg-multi")
+    await _mtproxy_ask_port(callback.message, state)
+
+
+@router.callback_query(MTProxyInstall.waiting_for_implementation, F.data == "mtproxy_impl_mtg")
+async def mtproxy_impl_mtg(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(implementation="mtg")
+    await _mtproxy_ask_port(callback.message, state)
+
+
+async def _mtproxy_ask_port(message_or_callback, state: FSMContext) -> None:
+    """Ask for MTProxy port."""
+    await state.set_state(MTProxyInstall.waiting_for_port)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎲 Дефолт (443)", callback_data="mtproxy_port_auto")
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        "📡 Введите TCP-порт для MTProxy (дефолт: <code>443</code>):",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(MTProxyInstall.waiting_for_port, F.data == "mtproxy_port_auto")
+async def mtproxy_port_auto(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(port=443)
+    await _mtproxy_ask_domain(callback.message, state)
+
+
+@router.message(MTProxyInstall.waiting_for_port)
+async def mtproxy_port_manual(message: TgMessage, state: FSMContext) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 1 or int(text) > 65535:
+        await message.answer("❌ Введите число от 1 до 65535.")
+        return
+
+    port = int(text)
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    msg = await message.answer(f"🔄 Проверяю порт {port} на сервере...")
+
+    from app.services.ssh_service import SSHManager
+    from app.services.vpn_providers.port_manager import PortManager
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+
+        from app.database.models import Server
+
+        result = await session.execute(select(Server).where(Server.id == server_id))
+        server = result.scalar_one()
+
+    ssh = SSHManager(server)
+    pm = PortManager(ssh)
+
+    if not await pm.is_port_free(port):
+        await msg.edit_text(
+            f"❌ Порт {port} занят. Введите другой:",
+            reply_markup=get_back_keyboard("cancel"),
+        )
+        return
+
+    await state.update_data(port=port)
+    await _mtproxy_ask_domain(msg, state)
+
+
+async def _mtproxy_ask_domain(message_or_callback, state: FSMContext) -> None:
+    """Ask for Fake-TLS domain."""
+    await state.set_state(MTProxyInstall.waiting_for_domain)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎲 google.com (дефолт)", callback_data="mtproxy_domain_default")
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        "🔐 <b>Fake-TLS домен</b>\n\n"
+        "Введите домен для маскировки трафика (должен поддерживать TLS 1.2+).\n"
+        "Рекомендуется выбирать домен, связанный с хостингом вашего сервера.",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(MTProxyInstall.waiting_for_domain, F.data == "mtproxy_domain_default")
+async def mtproxy_domain_default(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(domain="google.com")
+    data = await state.get_data()
+    if data.get("implementation") == "mtg-multi":
+        await _mtproxy_ask_max_connections(callback.message, state)
+    else:
+        await _mtproxy_show_confirm(callback.message, state)
+
+
+@router.message(MTProxyInstall.waiting_for_domain)
+async def mtproxy_domain_manual(message: TgMessage, state: FSMContext) -> None:
+    domain = message.text.strip().lower()
+    if not domain or "." not in domain:
+        await message.answer("❌ Введите корректный домен (например, cloudflare.com).")
+        return
+
+    await state.update_data(domain=domain)
+    data = await state.get_data()
+    if data.get("implementation") == "mtg-multi":
+        await _mtproxy_ask_max_connections(message, state)
+    else:
+        await _mtproxy_show_confirm(message, state)
+
+
+async def _mtproxy_ask_max_connections(message_or_callback, state: FSMContext) -> None:
+    """Ask for max connections (mtg-multi only)."""
+    await state.set_state(MTProxyInstall.waiting_for_max_connections)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎲 Дефолт (5000)", callback_data="mtproxy_conns_default")
+    kb.button(text="🔙 Отмена", callback_data=f"server_services_{server_id}")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        "⚡ <b>Макс. подключений</b> (mtg-multi)\n\n"
+        "Лимит одновременных подключений.\n"
+        "Fair-share: если один пользователь превысит норму, "
+        "его лимит будет перераспределён.\n\n"
+        "Дефолт: <code>5000</code>",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(MTProxyInstall.waiting_for_max_connections, F.data == "mtproxy_conns_default")
+async def mtproxy_conns_default(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(max_connections=5000)
+    await _mtproxy_show_confirm(callback.message, state)
+
+
+@router.message(MTProxyInstall.waiting_for_max_connections)
+async def mtproxy_conns_manual(message: TgMessage, state: FSMContext) -> None:
+    text = message.text.strip()
+    if not text.isdigit() or int(text) < 100:
+        await message.answer("❌ Минимум 100 подключений.")
+        return
+    await state.update_data(max_connections=int(text))
+    await _mtproxy_show_confirm(message, state)
+
+
+async def _mtproxy_show_confirm(message_or_callback, state: FSMContext) -> None:
+    """Show confirmation."""
+    data = await state.get_data()
+    impl = data["implementation"]
+    port = data["port"]
+    domain = data["domain"]
+    max_conns = data.get("max_connections")
+
+    await state.set_state(MTProxyInstall.confirm_install)
+
+    impl_text = "⭐ mtg-multi" if impl == "mtg-multi" else "🔹 mtg (upstream)"
+    conns_text = f"\nМакс. подключений: <code>{max_conns}</code>" if max_conns else ""
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Установить", callback_data="mtproxy_confirm_install")
+    kb.button(text="❌ Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
+    await target.edit_text(
+        f"📡 <b>Подтвердите установку MTProxy</b>\n\n"
+        f"Реализация: {impl_text}\n"
+        f"Порт: <code>{port}/tcp</code>\n"
+        f"Fake-TLS домен: <code>{domain}</code>"
+        f"{conns_text}",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(MTProxyInstall.confirm_install, F.data == "mtproxy_confirm_install")
+async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) -> None:
+    """Execute MTProxy installation."""
+    data = await state.get_data()
+    server_id = data["server_id"]
+    port = data["port"]
+    domain = data["domain"]
+    implementation = data["implementation"]
+    max_connections = data.get("max_connections", 5000)
+
+    await state.clear()
+
+    msg = await callback.message.edit_text(
+        "🔄 <b>Установка MTProxy...</b>\n\n"
+        "Подготовка сервера, запуск контейнера.",
+        parse_mode="HTML",
+    )
+
+    try:
+        from app.services.installers.mtproxy_installer import MTProxyInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server)
+                .options(selectinload(Server.mtproxy_service))
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            ssh = SSHManager(server)
+            installer = MTProxyInstaller(ssh)
+
+            await installer.install(
+                port=port,
+                domain=domain,
+                implementation=implementation,
+                max_connections=max_connections,
+            )
+
+            from app.database.models.inbound import MTProxyInbound
+            from app.database.models.services import MTProxyService
+
+            mtproxy_service = MTProxyService(server_id=server.id)
+            session.add(mtproxy_service)
+
+            mtproxy_inbound = MTProxyInbound(
+                server_id=server.id,
+                protocol="mtproto",
+                remark=f"MTProxy:{port}",
+                port=port,
+            )
+            session.add(mtproxy_inbound)
+            await session.commit()
+
+        impl_text = "mtg-multi" if implementation == "mtg-multi" else "mtg"
+        await msg.edit_text(
+            f"✅ <b>MTProxy установлен!</b>\n\n"
+            f"Реализация: <code>{impl_text}</code>\n"
+            f"Порт: <code>{port}/tcp</code>\n"
+            f"Fake-TLS домен: <code>{domain}</code>\n"
+            f"Контейнер: <code>vpnbot-mtproxy</code>\n\n"
+            "Сервис и inbound добавлены в базу данных.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"MTProxy installation failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Ошибка установки MTProxy</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )

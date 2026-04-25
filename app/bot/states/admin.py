@@ -165,10 +165,44 @@ class BroadcastManagement(StatesGroup):
     confirm_broadcast = State()
 
 
+class FirstSetup(StatesGroup):
+    """Shared first-install setup states (firewall policy + SSH port)."""
+
+    waiting_for_firewall_policy = State()
+    waiting_for_ssh_port_choice = State()
+    waiting_for_ssh_port = State()
+
+
 class AWGInstall(StatesGroup):
     """AWG installation flow states."""
 
     waiting_for_port = State()
     waiting_for_obfuscation_mode = State()
     waiting_for_obfuscation_params = State()
+    confirm_install = State()
+
+
+class XUIInstall(StatesGroup):
+    """3x-ui installation flow states."""
+
+    waiting_for_domain = State()
+    waiting_for_caddy_port = State()
+    waiting_for_paths_mode = State()
+    waiting_for_web_path = State()
+    waiting_for_sub_path = State()
+    waiting_for_sub_json_path = State()
+    waiting_for_credentials_mode = State()
+    waiting_for_username = State()
+    waiting_for_password = State()
+    waiting_for_inbound_range = State()
+    confirm_install = State()
+
+
+class MTProxyInstall(StatesGroup):
+    """MTProxy installation flow states."""
+
+    waiting_for_implementation = State()
+    waiting_for_port = State()
+    waiting_for_domain = State()
+    waiting_for_max_connections = State()
     confirm_install = State()

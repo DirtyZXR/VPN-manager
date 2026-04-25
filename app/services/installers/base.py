@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 CONTAINER_PREFIX = "vpnbot"
 BASE_DIR = "/opt/vpnbot"
 PREPARED_MARKER = f"{BASE_DIR}/.prepared"
+FIREWALL_POLICY_FILE = f"{BASE_DIR}/.firewall-policy"
 
 
 def _container_name(service: str) -> str:
@@ -44,14 +45,30 @@ class BaseInstaller:
 
     SERVICE_NAME: str = ""
 
+    # ── Container identification ──────────────────────────────────────
+
     def __init__(self, ssh: SSHManager) -> None:
         self.ssh = ssh
         self.port_manager = PortManager(ssh)
+        self._use_sudo = False
 
-    # ── Container identification ──────────────────────────────────────
+    async def _cmd(self, command: str, input_data: str | None = None) -> str:
+        """Execute command with optional sudo prefix."""
+        if self._use_sudo:
+            command = f"sudo {command}"
+        return await self.ssh.run_command(command, input_data=input_data)
+
+    async def _write_file(self, filepath: str, content: str) -> None:
+        """Write file with optional sudo."""
+        if self._use_sudo:
+            await self.ssh.run_command(
+                f"sudo tee {filepath} > /dev/null", input_data=content
+            )
+        else:
+            await self.ssh.write_file(filepath, content)
 
     async def preflight_check(self) -> tuple[bool, str]:
-        """Run pre-installation checks: ping + SSH connectivity.
+        """Run pre-installation checks: ping + SSH + root/sudo access.
 
         Returns:
             Tuple of (success: bool, message: str).
@@ -68,19 +85,51 @@ class BaseInstaller:
         if not ssh_ok:
             return False, f"Не удалось подключиться по SSH к {host}:{self.ssh.port}. Проверьте логин/пароль/ключ."
 
+        root_ok, root_msg = await self._check_root_access()
+        if not root_ok:
+            return False, root_msg
+
         return True, "OK"
+
+    async def _check_root_access(self) -> tuple[bool, str]:
+        """Check if SSH user is root or has passwordless sudo.
+
+        Returns:
+            Tuple of (has_root: bool, message: str).
+        """
+        try:
+            result = await self.ssh.run_command("whoami")
+            if result.strip() == "root":
+                self._use_sudo = False
+                return True, "root"
+        except Exception:
+            pass
+
+        try:
+            result = await self.ssh.run_command("sudo -n whoami 2>/dev/null")
+            if result.strip() == "root":
+                self._use_sudo = True
+                return True, "sudo"
+        except Exception:
+            pass
+
+        return False, (
+            f"Пользователь {self.ssh.username}@{self.ssh.host} "
+            "не имеет root-прав и не настроен passwordless sudo. "
+            "Подключитесь под root или настройте sudo."
+        )
 
     async def check_already_installed(self) -> bool:
         """Check if a container with our naming convention already exists."""
         name = _container_name(self.SERVICE_NAME)
-        result = await self.ssh.run_command(
+        result = await self._cmd(
             f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
         )
         return bool(result.strip())
 
     async def list_installed_services(self) -> list[str]:
         """List all vpnbot-managed containers on the server."""
-        result = await self.ssh.run_command(
+        result = await self._cmd(
             f"docker ps -a --filter name={CONTAINER_PREFIX}- --format '{{{{.Names}}}}'"
         )
         names = [n.strip() for n in result.strip().split("\n") if n.strip()]
@@ -91,7 +140,7 @@ class BaseInstaller:
     async def is_prepared(self) -> bool:
         """Check if host has already been prepared."""
         try:
-            result = await self.ssh.run_command(f"test -f {PREPARED_MARKER} && echo yes")
+            result = await self._cmd(f"test -f {PREPARED_MARKER} && echo yes")
             return result.strip() == "yes"
         except Exception:
             return False
@@ -119,7 +168,7 @@ class BaseInstaller:
             "elif which pacman > /dev/null 2>&1; then echo archlinux;"
             "else echo unknown; fi"
         )
-        dist = await self.ssh.run_command(script)
+        dist = await self._cmd(script)
         dist = dist.strip()
         logger.info(f"Detected OS family: {dist}")
         return dist
@@ -185,25 +234,25 @@ class BaseInstaller:
                 "fi"
             )
 
-        await self.ssh.run_command(script)
-        version = await self.ssh.run_command("docker --version")
+        await self._cmd(script)
+        version = await self._cmd("docker --version")
         logger.info(f"Docker: {version}")
 
     async def _ensure_utils(self) -> None:
         """Install essential utilities (curl, jq)."""
         dist = await self._detect_os()
         if dist == "debian":
-            await self.ssh.run_command(
+            await self._cmd(
                 "apt-get update -yq && apt-get install -yq curl jq"
             )
         elif dist == "fedora":
-            await self.ssh.run_command("dnf install -yq curl jq")
+            await self._cmd("dnf install -yq curl jq")
         elif dist == "centos":
-            await self.ssh.run_command("yum install -yq curl jq")
+            await self._cmd("yum install -yq curl jq")
         elif dist == "opensuse":
-            await self.ssh.run_command("zypper -nq install curl jq")
+            await self._cmd("zypper -nq install curl jq")
         elif dist == "archlinux":
-            await self.ssh.run_command("pacman -S --noconfirm --noprogressbar curl jq")
+            await self._cmd("pacman -S --noconfirm --noprogressbar curl jq")
         else:
             logger.warning(f"Unknown dist '{dist}', skipping utils installation")
 
@@ -211,23 +260,56 @@ class BaseInstaller:
         """Install and enable UFW with SSH allowed."""
         dist = await self._detect_os()
         if dist == "debian":
-            await self.ssh.run_command("apt-get install -yq ufw")
+            await self._cmd("apt-get install -yq ufw")
         elif dist in ("fedora", "centos"):
-            await self.ssh.run_command("yum install -yq ufw || dnf install -yq ufw")
+            await self._cmd("yum install -yq ufw || dnf install -yq ufw")
         elif dist == "opensuse":
-            await self.ssh.run_command("zypper -nq install ufw")
+            await self._cmd("zypper -nq install ufw")
         elif dist == "archlinux":
-            await self.ssh.run_command("pacman -S --noconfirm ufw")
+            await self._cmd("pacman -S --noconfirm ufw")
 
         ssh_port = self.ssh.port
-        await self.ssh.run_command(
+        await self._cmd(
             f"ufw allow {ssh_port}/tcp && ufw --force enable"
         )
         logger.info(f"UFW enabled, SSH port {ssh_port} allowed")
 
     async def _mark_prepared(self) -> None:
         """Mark host as prepared."""
-        await self.ssh.run_command(f"mkdir -p {BASE_DIR} && touch {PREPARED_MARKER}")
+        await self._cmd(f"mkdir -p {BASE_DIR} && touch {PREPARED_MARKER}")
+
+    async def get_firewall_policy(self) -> str | None:
+        """Read firewall policy from server. Returns 'strict', 'permissive', or None."""
+        try:
+            result = await self._cmd(f"cat {FIREWALL_POLICY_FILE} 2>/dev/null")
+            policy = result.strip()
+            return policy if policy in ("strict", "permissive") else None
+        except Exception:
+            return None
+
+    async def apply_firewall_policy(self, strict: bool) -> None:
+        """Apply firewall policy. Only called on first server setup.
+
+        Args:
+            strict: If True, deny all incoming except SSH. If False, leave as-is.
+        """
+        ssh_port = self.ssh.port
+
+        if strict:
+            await self._cmd(
+                f"ufw default deny incoming && "
+                f"ufw default allow outgoing && "
+                f"ufw allow {ssh_port}/tcp && "
+                f"ufw --force reload"
+            )
+            logger.info(f"Strict firewall applied on {self.ssh.host}: only SSH/{ssh_port} allowed")
+        else:
+            logger.info(f"Permissive firewall on {self.ssh.host}: UFW policy unchanged")
+
+        policy = "strict" if strict else "permissive"
+        await self._cmd(
+            f"mkdir -p {BASE_DIR} && echo '{policy}' > {FIREWALL_POLICY_FILE}"
+        )
 
     # ── Cleanup / Rollback ────────────────────────────────────────────
 
@@ -246,13 +328,13 @@ class BaseInstaller:
         logger.warning(f"Rollback: cleaning up {name}")
 
         try:
-            await self.ssh.run_command(f"docker rm -f {name} 2>/dev/null || true")
+            await self._cmd(f"docker rm -f {name} 2>/dev/null || true")
         except Exception as e:
             logger.error(f"Failed to remove container {name}: {e}")
 
         for d in dirs or []:
             try:
-                await self.ssh.run_command(f"rm -rf {d}")
+                await self._cmd(f"rm -rf {d}")
             except Exception as e:
                 logger.error(f"Failed to remove dir {d}: {e}")
 
@@ -267,7 +349,7 @@ class BaseInstaller:
     async def ensure_dirs(self, *paths: str) -> None:
         """Create directories on the remote server."""
         for p in paths:
-            await self.ssh.run_command(f"mkdir -p {p}")
+            await self._cmd(f"mkdir -p {p}")
 
     @staticmethod
     def generate_random_string(length: int = 16) -> str:
@@ -277,3 +359,108 @@ class BaseInstaller:
     async def check_port_free(self, port: int) -> bool:
         """Check if a specific port is free on the server (TCP + UDP)."""
         return await self.port_manager.is_port_free(port)
+
+    # ── SSH port change ────────────────────────────────────────────────
+
+    async def change_ssh_port(self, new_port: int) -> tuple[bool, str]:
+        """Change SSH daemon port with automatic rollback on failure.
+
+        Strategy:
+        1. Add new port alongside old port in sshd_config
+        2. Open new port in UFW
+        3. Restart sshd
+        4. Verify connectivity on new port
+        5. If OK: remove old port, close old port in UFW
+        6. If FAIL: revert config, keep old port
+
+        Args:
+            new_port: New SSH port number.
+
+        Returns:
+            Tuple of (success, message).
+        """
+        old_port = self.ssh.port
+        if new_port == old_port:
+            return True, f"SSH port already {old_port}"
+
+        host = self.ssh.host
+
+        if not await self.check_port_free(new_port):
+            return False, f"Порт {new_port} занят на сервере"
+
+        config_backup = await self._cmd("cat /etc/ssh/sshd_config")
+
+        try:
+            await self._cmd(
+                f"sed -i 's/^#*Port {old_port}/Port {old_port}\\nPort {new_port}/' /etc/ssh/sshd_config"
+            )
+
+            if f"Port {new_port}" not in await self._cmd("grep '^Port' /etc/ssh/sshd_config"):
+                await self._cmd(
+                    f"echo 'Port {old_port}' >> /etc/ssh/sshd_config && "
+                    f"echo 'Port {new_port}' >> /etc/ssh/sshd_config"
+                )
+
+            await self._cmd(f"ufw allow {new_port}/tcp")
+            await self._cmd("systemctl restart sshd || systemctl restart ssh")
+            import asyncio
+            await asyncio.sleep(3)
+
+            test_ssh = SSHManager.__new__(SSHManager)
+            test_ssh.server = self.ssh.server
+            test_ssh.host = host
+            test_ssh.port = new_port
+            test_ssh.username = self.ssh.username
+            test_ssh._decrypt = self.ssh._decrypt
+
+            if await test_ssh.test_connection():
+                await self._cmd(
+                    f"sed -i '/^Port {old_port}$/d' /etc/ssh/sshd_config"
+                )
+                await self._cmd(f"ufw delete allow {old_port}/tcp || true")
+                await self._cmd("systemctl restart sshd || systemctl restart ssh")
+
+                logger.info(f"SSH port changed: {old_port} -> {new_port} on {host}")
+                return True, f"SSH порт изменён: {old_port} → {new_port}"
+            else:
+                raise RuntimeError("Не удалось подключиться на новый порт")
+
+        except Exception as e:
+            logger.error(f"SSH port change failed, reverting: {e}")
+            try:
+                await self.ssh.write_file("/etc/ssh/sshd_config", config_backup)
+                await self._cmd("systemctl restart sshd || systemctl restart ssh")
+                await self._cmd(f"ufw delete allow {new_port}/tcp || true")
+            except Exception as rollback_err:
+                logger.error(f"Rollback also failed: {rollback_err}")
+                return False, f"Ошибка смены порта и отката: {rollback_err}"
+
+            return False, f"Не удалось сменить SSH порт: {e}. Откачено к порту {old_port}."
+
+    # ── Healthcheck ────────────────────────────────────────────────────
+
+    async def healthcheck(self, service_name: str) -> tuple[bool, str]:
+        """Check if a vpnbot container is running and healthy.
+
+        Args:
+            service_name: Service name (e.g. 'awg', 'xui').
+
+        Returns:
+            Tuple of (healthy, status_text).
+        """
+        container = _container_name(service_name)
+        try:
+            status = await self._cmd(
+                f"docker inspect --format '{{{{.State.Status}}}}' {container} 2>/dev/null"
+            )
+            status = status.strip().strip("'")
+
+            if status == "running":
+                uptime = await self._cmd(
+                    f"docker inspect --format '{{{{.State.StartedAt}}}}' {container} 2>/dev/null"
+                )
+                return True, f"running (started {uptime.strip().strip(chr(39))})"
+
+            return False, f"container status: {status}"
+        except Exception as e:
+            return False, f"error: {e}"

@@ -20,8 +20,8 @@ class MTProxyProvider(BaseVPNProvider):
         super().__init__(server)
         self.ssh = SSHManager(server)
 
-        self.container_name = "mtproxy"
-        self.config_path = "/opt/mtproxy/secrets.txt"
+        self.container_name = "vpnbot-mtproxy"
+        self.config_path = "/opt/vpnbot/mtproxy/config.toml"
         self.domain = "google.com"  # Fake-TLS domain
         self.port = "443"
 

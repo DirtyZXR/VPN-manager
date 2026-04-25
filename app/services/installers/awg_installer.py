@@ -141,7 +141,7 @@ class AWGInstaller(BaseInstaller):
             "COPY start.sh /opt/amnezia/start.sh\n"
             "RUN chmod a+x /opt/amnezia/start.sh\n"
         )
-        await self.ssh.write_file(f"{service_dir}/Dockerfile", dockerfile)
+        await self._write_file(f"{service_dir}/Dockerfile", dockerfile)
 
     async def _write_start_script(
         self, service_dir: str, subnet_ip: str, subnet_cidr: int
@@ -165,7 +165,7 @@ iptables -t nat -A POSTROUTING -s {subnet_ip}/{subnet_cidr} -o eth1 -j MASQUERAD
 
 tail -f /dev/null
 """
-        await self.ssh.write_file(f"{service_dir}/start.sh", script)
+        await self._write_file(f"{service_dir}/start.sh", script)
 
     async def _write_compose_file(self, service_dir: str, port: int) -> None:
         compose = f"""services:
@@ -187,18 +187,14 @@ tail -f /dev/null
     labels:
       - "vpnbot.service=awg"
 """
-        await self.ssh.write_file(f"{service_dir}/docker-compose.yml", compose)
+        await self._write_file(f"{service_dir}/docker-compose.yml", compose)
 
     async def _build_image(self) -> None:
-        await self.ssh.run_command(
-            f"cd {AWG_SERVICE_DIR} && docker compose build --no-cache"
-        )
+        await self._cmd(f"cd {AWG_SERVICE_DIR} && docker compose build --no-cache")
 
     async def _start_container(self, port: int) -> None:
-        await self.ssh.run_command(
-            f"cd {AWG_SERVICE_DIR} && docker compose up -d"
-        )
-        await self.ssh.run_command("sleep 5")
+        await self._cmd(f"cd {AWG_SERVICE_DIR} && docker compose up -d")
+        await self._cmd("sleep 5")
 
     async def _generate_keys_and_config(
         self,
@@ -209,13 +205,13 @@ tail -f /dev/null
     ) -> None:
         name = f"vpnbot-{AWG_CONTAINER_NAME}"
 
-        private_key = await self.ssh.run_command(
+        private_key = await self._cmd(
             f"docker exec -i {name} awg genkey"
         )
-        public_key = await self.ssh.run_command(
+        public_key = await self._cmd(
             f"docker exec -i {name} bash -c 'echo \"{private_key}\" | awg pubkey'"
         )
-        psk = await self.ssh.run_command(
+        psk = await self._cmd(
             f"docker exec -i {name} awg genpsk"
         )
 
@@ -225,7 +221,7 @@ tail -f /dev/null
             "wireguard_psk.key": psk,
         }
         for filename, content in key_files.items():
-            await self.ssh.run_command(
+            await self._cmd(
                 f"docker exec -i {name} bash -c 'cat > /opt/amnezia/awg/{filename}'",
                 input_data=content,
             )
@@ -242,12 +238,12 @@ tail -f /dev/null
             f"{obf_lines}\n"
         )
 
-        await self.ssh.run_command(
+        await self._cmd(
             f"docker exec -i {name} bash -c 'cat > /opt/amnezia/awg/awg0.conf'",
             input_data=config,
         )
 
     async def _restart_container(self) -> None:
         name = f"vpnbot-{AWG_CONTAINER_NAME}"
-        await self.ssh.run_command(f"docker restart {name}")
-        await self.ssh.run_command("sleep 3")
+        await self._cmd(f"docker restart {name}")
+        await self._cmd("sleep 3")
