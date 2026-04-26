@@ -883,6 +883,8 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 panel_path=web_path,
                 subscription_path=sub_path,
                 subscription_json_path=sub_json_path,
+                caddy_port=caddy_port,
+                inbound_ranges=inbound_ranges,
             )
             session.add(panel)
             await session.commit()
@@ -2700,7 +2702,7 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             ssh = SSHManager(server)
             installer = AWGInstaller(ssh)
 
-            await installer.install(
+            install_result = await installer.install(
                 port=port,
                 obfuscation=obf,
             )
@@ -2708,7 +2710,13 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             from app.database.models.inbound import AWGInbound
             from app.database.models.services import AWGService
 
-            awg_service = AWGService(server_id=server.id)
+            awg_service = AWGService(
+                server_id=server.id,
+                port=port,
+                subnet_ip=install_result["subnet_ip"],
+                subnet_cidr=install_result["subnet_cidr"],
+                obfuscation=install_result["obfuscation"],
+            )
             session.add(awg_service)
 
             awg_inbound = AWGInbound(
@@ -3097,7 +3105,13 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
             from app.database.models.inbound import MTProxyInbound
             from app.database.models.services import MTProxyService
 
-            mtproxy_service = MTProxyService(server_id=server.id)
+            mtproxy_service = MTProxyService(
+                server_id=server.id,
+                implementation=implementation,
+                port=port,
+                domain=domain,
+                max_connections=max_connections if implementation == "mtg-multi" else None,
+            )
             session.add(mtproxy_service)
 
             mtproxy_inbound = MTProxyInbound(

@@ -39,6 +39,10 @@ class XUIPanel(Base, TimestampMixin):
     subscription_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     subscription_json_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Installer params
+    caddy_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inbound_ranges: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Session management
     session_cookies_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     session_created_at: Mapped[datetime | None] = mapped_column(
@@ -57,6 +61,13 @@ class AWGService(Base, TimestampMixin):
     )
     server: Mapped["Server"] = relationship("Server", back_populates="awg_service")
 
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    subnet_ip: Mapped[str] = mapped_column(String(50), nullable=False, default="10.8.0.1")
+    subnet_cidr: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    obfuscation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    server_public_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    server_private_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
 
 class MTProxyService(Base, TimestampMixin):
     """MTProxy service configuration."""
@@ -68,3 +79,9 @@ class MTProxyService(Base, TimestampMixin):
         Integer, ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     server: Mapped["Server"] = relationship("Server", back_populates="mtproxy_service")
+
+    implementation: Mapped[str] = mapped_column(String(20), nullable=False, default="mtg-multi")
+    port: Mapped[int] = mapped_column(Integer, nullable=False, default=443)
+    domain: Mapped[str] = mapped_column(String(200), nullable=False, default="google.com")
+    max_connections: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    default_secret: Mapped[str | None] = mapped_column(String(200), nullable=True)
