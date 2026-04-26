@@ -161,7 +161,7 @@ class XUIInstaller(BaseInstaller):
         except Exception:
             logger.exception("3x-ui installation failed, running cleanup")
             await self.cleanup(
-                dirs=dirs_to_clean,
+                dirs=dirs_to_clean if not force else [],
                 ports=ports_to_clean,
             )
             raise
