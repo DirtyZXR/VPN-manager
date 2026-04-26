@@ -872,10 +872,6 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             from app.database.models.services import XUIPanel
 
             panel_url = f"https://{domain}:{caddy_port}"
-            if domain and not domain.replace(".", "").replace("-", "").isdigit():
-                pass
-            else:
-                panel_url = f"http://{domain}:{caddy_port}"
 
             panel = XUIPanel(
                 server_id=server.id,
@@ -894,9 +890,11 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
         ranges_str = ", ".join(
             f"{s}-{e}" if s != e else str(s) for s, e in inbound_ranges
         )
+        clean_web = web_path.strip("/")
+        panel_full_url = f"{panel_url}/{clean_web}/" if clean_web else f"{panel_url}/"
         await msg.edit_text(
             "✅ <b>3x-ui установлен!</b>\n\n"
-            f"Панель: <code>{panel_url}{web_path.strip('/')}</code>\n"
+            f"Панель: <code>{panel_full_url}</code>\n"
             f"Логин: <code>{username}</code>\n"
             f"Пароль: <code>{password}</code>\n"
             f"Inbound порты: <code>{ranges_str}</code>\n\n"

@@ -15,6 +15,8 @@ Config dir on server: /opt/vpnbot/xui/
 
 import logging
 
+import bcrypt
+
 from app.services.installers.base import BASE_DIR, BaseInstaller
 
 logger = logging.getLogger(__name__)
@@ -294,7 +296,8 @@ class XUIInstaller(BaseInstaller):
         )
 
         sql_user = (
-            f"UPDATE users SET username='{username}', password='{password}' "
+            f"UPDATE users SET username='{username}', "
+            f"password='{self._hash_password_bcrypt(password)}' "
             f"WHERE id=1"
         )
         await self._cmd(
@@ -327,6 +330,12 @@ class XUIInstaller(BaseInstaller):
         )
         caddy_code = caddy_result.strip().strip("'")
         logger.info(f"Caddy proxy verified: HTTP {caddy_code} from {caddy_url}")
+
+    @staticmethod
+    def _hash_password_bcrypt(password: str) -> str:
+        return bcrypt.hashpw(
+            password.encode("utf-8"), bcrypt.gensalt(rounds=10)
+        ).decode("utf-8")
 
     async def open_inbound_ports(self, ranges: list[tuple[int, int]]) -> None:
         """Open additional port ranges for VPN inbounds (post-install)."""
