@@ -17,7 +17,7 @@ import logging
 
 import bcrypt
 
-from app.services.installers.base import BASE_DIR, BaseInstaller
+from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ class XUIInstaller(BaseInstaller):
         username: str = "admin",
         password: str = "admin",
         inbound_ranges: list[tuple[int, int]] | None = None,
+        force: bool = False,
     ) -> dict:
         """Install 3x-ui with Caddy reverse-proxy.
 
@@ -117,7 +118,15 @@ class XUIInstaller(BaseInstaller):
             await self.prepare_host()
 
             if await self.check_already_installed():
-                raise RuntimeError(f"3x-ui already installed on {self.ssh.host}")
+                if force:
+                    logger.warning(f"Force reinstall: removing existing vpnbot-xui/caddy on {self.ssh.host}")
+                    await self._cmd("docker rm -f vpnbot-xui vpnbot-caddy 2>/dev/null || true")
+                    await self._cmd("sleep 2")
+                else:
+                    raise AlreadyInstalledError(
+                        f"3x-ui уже установлен на {self.ssh.host}. "
+                        "Для переустановки нажмите кнопку ниже."
+                    )
 
             if not await self.check_port_free(caddy_port):
                 raise RuntimeError(f"Port {caddy_port} is occupied on {self.ssh.host}")

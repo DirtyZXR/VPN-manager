@@ -906,9 +906,150 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
         )
 
     except Exception as e:
-        logger.error(f"3x-ui installation failed: {e}", exc_info=True)
+        from app.services.installers.base import AlreadyInstalledError
+
+        if isinstance(e, AlreadyInstalledError):
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Переустановить",
+                    callback_data=f"xui_force_reinstall_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data=f"server_services_{server_id}",
+                )],
+            ])
+            await msg.edit_text(
+                f"⚠️ <b>3x-ui уже установлен</b>\n\n{e}",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        else:
+            logger.error(f"3x-ui installation failed: {e}", exc_info=True)
+            await msg.edit_text(
+                f"❌ <b>Ошибка установки 3x-ui</b>\n\n<code>{e}</code>",
+                reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+                parse_mode="HTML",
+            )
+
+
+@router.callback_query(F.data.startswith("xui_force_reinstall_"))
+async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> None:
+    """Force reinstall 3x-ui — remove existing and install fresh."""
+    await callback.answer()
+
+    server_id = int(callback.data.split("_")[-1])
+
+    data = await state.get_data()
+    domain = data.get("domain")
+    caddy_port = data.get("caddy_port")
+    web_path = data.get("web_path")
+    sub_path = data.get("sub_path")
+    sub_json_path = data.get("sub_json_path")
+    username = data.get("username")
+    password = data.get("password")
+    inbound_ranges = data.get("inbound_ranges")
+    await state.clear()
+
+    if not all([domain, caddy_port, username, password]):
+        await callback.message.edit_text(
+            "❌ Данные установки устарели. Начните установку заново.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    msg = await callback.message.edit_text(
+        "🔄 <b>Переустановка 3x-ui...</b>\n\n"
+        "Удаление старой установки и запуск новой.",
+        parse_mode="HTML",
+    )
+
+    try:
+        from app.services.installers.xui_installer import XUIInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server)
+                .options(selectinload(Server.xui_panel))
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            ssh = SSHManager(server)
+            installer = XUIInstaller(ssh)
+
+            await installer.install(
+                domain=domain,
+                caddy_port=caddy_port,
+                web_path=web_path,
+                sub_path=sub_path,
+                sub_json_path=sub_json_path,
+                username=username,
+                password=password,
+                inbound_ranges=inbound_ranges,
+                force=True,
+            )
+
+            from app.database.models.services import XUIPanel
+
+            panel_url = f"https://{domain}:{caddy_port}"
+            clean_web = web_path.strip("/")
+            panel_full_url = f"{panel_url}/{clean_web}/" if clean_web else f"{panel_url}/"
+
+            existing = await session.execute(
+                select(XUIPanel).where(XUIPanel.server_id == server.id)
+            )
+            existing_panel = existing.scalar_one_or_none()
+            if existing_panel:
+                existing_panel.url = panel_url
+                existing_panel.username = username
+                existing_panel.password_encrypted = password
+                existing_panel.panel_path = web_path
+                existing_panel.subscription_path = sub_path
+                existing_panel.subscription_json_path = sub_json_path
+                existing_panel.caddy_port = caddy_port
+                existing_panel.inbound_ranges = inbound_ranges
+            else:
+                panel = XUIPanel(
+                    server_id=server.id,
+                    url=panel_url,
+                    username=username,
+                    password_encrypted=password,
+                    panel_path=web_path,
+                    subscription_path=sub_path,
+                    subscription_json_path=sub_json_path,
+                    caddy_port=caddy_port,
+                    inbound_ranges=inbound_ranges,
+                )
+                session.add(panel)
+            await session.commit()
+
+        ranges_str = ", ".join(
+            f"{s}-{e}" if s != e else str(s) for s, e in inbound_ranges
+        )
         await msg.edit_text(
-            f"❌ <b>Ошибка установки 3x-ui</b>\n\n<code>{e}</code>",
+            "✅ <b>3x-ui переустановлен!</b>\n\n"
+            f"Панель: <code>{panel_full_url}</code>\n"
+            f"Логин: <code>{username}</code>\n"
+            f"Пароль: <code>{password}</code>\n"
+            f"Inbound порты: <code>{ranges_str}</code>\n\n"
+            "⚠️ <b>Сохраните пароль!</b>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"3x-ui force reinstall failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Ошибка переустановки 3x-ui</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )

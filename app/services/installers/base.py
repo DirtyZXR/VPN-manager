@@ -30,6 +30,10 @@ import asyncssh
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.port_manager import PortManager
 
+
+class AlreadyInstalledError(RuntimeError):
+    """Raised when a vpnbot container already exists on the server."""
+
 logger = logging.getLogger(__name__)
 
 CONTAINER_PREFIX = "vpnbot"
