@@ -69,6 +69,70 @@ class XUIInstaller(BaseInstaller):
 
     SERVICE_NAME = XUI_CONTAINER
 
+    async def check_already_installed(self) -> bool:
+        """Check if vpnbot-xui OR vpnbot-caddy container exists."""
+        for name in ("vpnbot-xui", "vpnbot-caddy"):
+            result = await self._cmd(
+                f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
+            )
+            if result.strip():
+                return True
+        return False
+
+    async def discover_existing(self) -> dict:
+        """Read configs from an existing installation and return params.
+
+        Returns dict with: domain, caddy_port, web_path, sub_path, sub_json_path,
+        username. Password is bcrypt-hashed and cannot be recovered.
+        """
+        import re
+
+        caddyfile = await self._cmd(f"cat {XUI_SERVICE_DIR}/caddy/Caddyfile")
+
+        port_match = re.search(r"^([\w.\-]+):(\d+)\s*\{", caddyfile, re.MULTILINE)
+        domain = port_match.group(1) if port_match else None
+        caddy_port = int(port_match.group(2)) if port_match else 8443
+
+        web_path = "/"
+        sub_path = "/sub/"
+        sub_json_path = "/json/"
+
+        for match in re.finditer(r"handle\s+/(\w[\w\-]*)/\*\s*\{", caddyfile):
+            path_segment = match.group(1)
+            proxy_match = re.search(
+                r"reverse_proxy\s+127\.0\.0\.1:(\d+)",
+                caddyfile[match.start():match.end() + 200],
+            )
+            if proxy_match:
+                target_port = int(proxy_match.group(1))
+                if target_port == XUI_SUB_PORT:
+                    if path_segment not in ("json",):
+                        sub_path = f"/{path_segment}/"
+                    else:
+                        sub_json_path = f"/{path_segment}/"
+                elif target_port == XUI_INTERNAL_PORT:
+                    web_path = f"/{path_segment}/"
+
+        username = "admin"
+        try:
+            row = await self._cmd(
+                "docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db "
+                '"SELECT username FROM users LIMIT 1"',
+            )
+            if row.strip():
+                username = row.strip()
+        except Exception:
+            pass
+
+        return {
+            "domain": domain or self.ssh.host,
+            "caddy_port": caddy_port,
+            "web_path": web_path,
+            "sub_path": sub_path,
+            "sub_json_path": sub_json_path,
+            "username": username,
+        }
+
     async def install(
         self,
         domain: str,

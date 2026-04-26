@@ -12,10 +12,11 @@ Container name: vpnbot-awg
 Config dir on server: /opt/vpnbot/awg/
 """
 
+import contextlib
 import logging
 import random
 
-from app.services.installers.base import BASE_DIR, BaseInstaller
+from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,48 @@ class AWGInstaller(BaseInstaller):
 
     SERVICE_NAME = AWG_CONTAINER_NAME
 
+    async def discover_existing(self) -> dict:
+        """Read configs from an existing AWG installation.
+
+        Returns dict with: port, subnet_ip, subnet_cidr, obfuscation,
+        server_public_key, server_private_key.
+        """
+        import re
+
+        config = await self._cmd(f"cat {AWG_SERVICE_DIR}/data/awg0.conf")
+
+        port_match = re.search(r"ListenPort\s*=\s*(\d+)", config)
+        addr_match = re.search(r"Address\s*=\s*([\d.]+)/(\d+)", config)
+        pk_match = re.search(r"PrivateKey\s*=\s*(\S+)", config)
+
+        obfuscation = {}
+        for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"):
+            m = re.search(rf"{key}\s*=\s*(\d+)", config)
+            if m:
+                obfuscation[key] = int(m.group(1))
+
+        public_key = ""
+        with contextlib.suppress(Exception):
+            public_key = (await self._cmd(
+                f"cat {AWG_SERVICE_DIR}/data/wireguard_server_public_key.key"
+            )).strip()
+
+        return {
+            "port": int(port_match.group(1)) if port_match else 51820,
+            "subnet_ip": addr_match.group(1) if addr_match else "10.8.0.1",
+            "subnet_cidr": int(addr_match.group(2)) if addr_match else 24,
+            "obfuscation": obfuscation if obfuscation else generate_obfuscation_params(),
+            "server_public_key": public_key,
+            "server_private_key": pk_match.group(1).strip() if pk_match else "",
+        }
+
     async def install(
         self,
         port: int,
         subnet_ip: str = AWG_SUBNET_IP_DEFAULT,
         subnet_cidr: int = AWG_SUBNET_CIDR_DEFAULT,
         obfuscation: dict[str, int] | None = None,
+        force: bool = False,
     ) -> dict:
         """Install AmneziaWG on the server.
 
@@ -67,18 +104,32 @@ class AWGInstaller(BaseInstaller):
             subnet_ip: Server IP within the VPN subnet (e.g. '10.8.0.1').
             subnet_cidr: Subnet CIDR mask (e.g. 24).
             obfuscation: AWG obfuscation params. Auto-generated if None.
+            force: Remove existing container before installing.
 
         Returns:
             Dict with installation details (port, subnet, obfuscation params).
 
         Raises:
-            RuntimeError: If service already installed or port is occupied.
+            AlreadyInstalledError: If service already installed and force=False.
+            RuntimeError: If port is occupied.
         """
+        service_dir = f"{AWG_SERVICE_DIR}"
+        dirs_to_clean: list[str] = []
+        ports_to_clean: list[tuple[int, str]] = []
+
         try:
             await self.prepare_host()
 
             if await self.check_already_installed():
-                raise RuntimeError(f"AWG already installed on {self.ssh.host}")
+                if force:
+                    logger.warning(f"Force reinstall: removing existing vpnbot-awg on {self.ssh.host}")
+                    await self._cmd("docker rm -f vpnbot-awg 2>/dev/null || true")
+                    await self._cmd("sleep 2")
+                else:
+                    raise AlreadyInstalledError(
+                        f"AmneziaWG уже установлен на {self.ssh.host}. "
+                        "Для переустановки нажмите кнопку ниже."
+                    )
 
             if not await self.check_port_free(port):
                 raise RuntimeError(f"Port {port}/udp is occupied on {self.ssh.host}")
@@ -86,7 +137,6 @@ class AWGInstaller(BaseInstaller):
             if obfuscation is None:
                 obfuscation = generate_obfuscation_params()
 
-            service_dir = f"{AWG_SERVICE_DIR}"
             dirs_to_clean = [service_dir]
             ports_to_clean = [(port, "udp")]
 

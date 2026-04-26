@@ -508,16 +508,272 @@ async def start_xui_install(callback: CallbackQuery, state: FSMContext, is_admin
         )
         return
 
+    if await installer.check_already_installed():
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        await status_msg.edit_text(
+            "🔍 <b>3x-ui уже установлен на этом сервере</b>\n\n"
+            "Обнаружен контейнер <code>vpnbot-xui</code> или <code>vpnbot-caddy</code>.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔌 Подключить",
+                    callback_data=f"xui_connect_existing_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 Переустановить",
+                    callback_data=f"xui_reinstall_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data=f"server_services_{server_id}",
+                )],
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
     await state.update_data(server_id=server_id)
 
-    policy_shown = await _check_first_setup(
-        callback, state, server_id, "xui",
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await status_msg.edit_text(
+        "🌐 <b>3x-ui не найден на сервере</b>\n\n"
+        "Выберите способ добавления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📦 Установить новую",
+                callback_data=f"xui_install_new_{server_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔌 Подключить существующую",
+                callback_data=f"xui_connect_existing_{server_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data=f"server_services_{server_id}",
+            )],
+        ]),
+        parse_mode="HTML",
     )
+    await callback.answer()
+    return
+
+
+@router.callback_query(F.data.startswith("xui_install_new_"))
+async def xui_install_new(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start fresh 3x-ui installation."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+
+    policy_shown = await _check_first_setup(callback, state, server_id, "xui")
     if policy_shown:
         await callback.answer()
         return
 
-    await _xui_ask_domain(status_msg, state)
+    await _xui_ask_domain(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("xui_connect_existing_"))
+async def xui_connect_existing(callback: CallbackQuery, state: FSMContext) -> None:
+    """Connect existing 3x-ui — auto-discover params, ask password choice, save to DB."""
+    server_id = int(callback.data.split("_")[-1])
+
+    msg = await callback.message.edit_text(
+        "🔍 <b>Читаю конфигурацию 3x-ui с сервера...</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+    try:
+        from app.services.installers.xui_installer import XUIInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            server = (await session.execute(
+                select(Server).where(Server.id == server_id)
+            )).scalar_one()
+
+        ssh = SSHManager(server)
+        installer = XUIInstaller(ssh)
+        params = await installer.discover_existing()
+    except Exception as e:
+        logger.error(f"XUI discover failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Не удалось прочитать конфигурацию</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    await state.update_data(
+        server_id=server_id,
+        connect_existing=True,
+        domain=params["domain"],
+        caddy_port=params["caddy_port"],
+        web_path=params["web_path"],
+        sub_path=params["sub_path"],
+        sub_json_path=params["sub_json_path"],
+        username=params["username"],
+    )
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await msg.edit_text(
+        "🌐 <b>3x-ui найден!</b> Параметры из сервера:\n\n"
+        f"Домен: <code>{params['domain']}</code>\n"
+        f"Порт: <code>{params['caddy_port']}</code>\n"
+        f"Web path: <code>{params['web_path']}</code>\n"
+        f"Sub path: <code>{params['sub_path']}</code>\n"
+        f"Sub JSON path: <code>{params['sub_json_path']}</code>\n"
+        f"Логин: <code>{params['username']}</code>\n\n"
+        "Пароль хранится как bcrypt-хеш — восстановить нельзя.\n"
+        "Выберите способ:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔑 Сгенерировать новый пароль",
+                callback_data="xui_connect_gen_password",
+            )],
+            [InlineKeyboardButton(
+                text="✏️ Ввести свой пароль",
+                callback_data="xui_connect_enter_password",
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Отмена",
+                callback_data=f"server_services_{server_id}",
+            )],
+        ]),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "xui_connect_gen_password")
+async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -> None:
+    """Generate new password, set it in 3x-ui DB, save everything."""
+    from app.services.installers.base import BaseInstaller
+
+    new_password = BaseInstaller.generate_random_string(16)
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+    domain = data["domain"]
+    caddy_port = data["caddy_port"]
+    web_path = data["web_path"]
+    sub_path = data["sub_path"]
+    sub_json_path = data["sub_json_path"]
+    username = data["username"]
+    await state.clear()
+
+    msg = await callback.message.edit_text(
+        "🔑 <b>Установка нового пароля в 3x-ui...</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+    try:
+        from app.services.installers.xui_installer import XUIInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            server = (await session.execute(
+                select(Server).where(Server.id == server_id)
+            )).scalar_one()
+
+        ssh = SSHManager(server)
+        installer = XUIInstaller(ssh)
+
+        hashed = XUIInstaller._hash_password_bcrypt(new_password)
+        sql = f"UPDATE users SET password='{hashed}' WHERE id=1;"
+        await installer._cmd(
+            "docker exec -i vpnbot-xui apk add --no-cache sqlite 2>/dev/null || true"
+        )
+        await installer._cmd(
+            f"docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db {sql!r}",
+        )
+
+        from app.database.models.services import XUIPanel
+
+        async with async_session_factory() as session:
+            result = await session.execute(
+                select(Server)
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            panel_url = f"https://{domain}:{caddy_port}"
+            existing = await session.execute(
+                select(XUIPanel).where(XUIPanel.server_id == server.id)
+            )
+            existing_panel = existing.scalar_one_or_none()
+            if existing_panel:
+                existing_panel.url = panel_url
+                existing_panel.username = username
+                existing_panel.password_encrypted = new_password
+                existing_panel.panel_path = web_path
+                existing_panel.subscription_path = sub_path
+                existing_panel.subscription_json_path = sub_json_path
+                existing_panel.caddy_port = caddy_port
+            else:
+                panel = XUIPanel(
+                    server_id=server.id,
+                    url=panel_url,
+                    username=username,
+                    password_encrypted=new_password,
+                    panel_path=web_path,
+                    subscription_path=sub_path,
+                    subscription_json_path=sub_json_path,
+                    caddy_port=caddy_port,
+                )
+                session.add(panel)
+            await session.commit()
+
+        clean_web = web_path.strip("/")
+        panel_full_url = f"{panel_url}/{clean_web}/" if clean_web else f"{panel_url}/"
+        await msg.edit_text(
+            "✅ <b>3x-ui подключён!</b>\n\n"
+            f"Панель: <code>{panel_full_url}</code>\n"
+            f"Логин: <code>{username}</code>\n"
+            f"Пароль: <code>{new_password}</code>\n\n"
+            "⚠️ <b>Сохраните пароль!</b> Он больше не будет показан.\n\n"
+            "Выполните синхронизацию для загрузки inbounds.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"XUI connect (gen password) failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Ошибка подключения</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(F.data == "xui_connect_enter_password")
+async def xui_connect_enter_password(callback: CallbackQuery, state: FSMContext) -> None:
+    """Ask admin to enter the existing password."""
+    await state.set_state(XUIInstall.waiting_for_password)
+    await callback.message.edit_text(
+        "🔑 Введите <b>пароль</b> администратора 3x-ui:",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("xui_reinstall_"))
+async def xui_reinstall(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start 3x-ui reinstallation flow (force=True)."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id, force_reinstall=True)
+    await _xui_ask_domain(callback.message, state)
     await callback.answer()
 
 
@@ -720,8 +976,14 @@ async def xui_password(message: TgMessage, state: FSMContext) -> None:
     if not password or len(password) < 6:
         await message.answer("❌ Пароль минимум 6 символов.")
         return
-    await state.update_data(password=password)
-    await _xui_ask_inbound_range(message, state)
+
+    data = await state.get_data()
+    if data.get("connect_existing"):
+        await state.update_data(password=password, inbound_ranges=[(10000, 10100)])
+        await _xui_show_confirm(message, state)
+    else:
+        await state.update_data(password=password)
+        await _xui_ask_inbound_range(message, state)
 
 
 async def _xui_ask_inbound_range(message_or_callback, state: FSMContext) -> None:
@@ -782,6 +1044,7 @@ async def _xui_show_confirm(message_or_callback, state: FSMContext) -> None:
     sub_json_path = data["sub_json_path"]
     username = data["username"]
     inbound_ranges = data["inbound_ranges"]
+    connect_existing = data.get("connect_existing", False)
 
     ranges_str = ", ".join(
         f"{s}-{e}" if s != e else str(s) for s, e in inbound_ranges
@@ -789,16 +1052,19 @@ async def _xui_show_confirm(message_or_callback, state: FSMContext) -> None:
 
     await state.set_state(XUIInstall.confirm_install)
 
+    action = "подключение" if connect_existing else "установку"
+    btn_text = "✅ Подключить" if connect_existing else "✅ Установить"
+
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Установить", callback_data="xui_confirm_install")
+    kb.button(text=btn_text, callback_data="xui_confirm_install")
     kb.button(text="❌ Отмена", callback_data="cancel")
     kb.adjust(1)
 
     target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
     await target.edit_text(
-        "🌐 <b>Подтвердите установку 3x-ui</b>\n\n"
+        f"🌐 <b>Подтвердите {action} 3x-ui</b>\n\n"
         f"Домен: <code>{domain}</code>\n"
         f"Caddy порт: <code>{caddy_port}</code>\n"
         f"webBasePath: <code>{web_path}</code>\n"
@@ -828,20 +1094,26 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
     username = data["username"]
     password = data["password"]
     inbound_ranges = data["inbound_ranges"]
+    force = data.get("force_reinstall", False)
+    connect_existing = data.get("connect_existing", False)
 
     await state.clear()
 
-    msg = await callback.message.edit_text(
-        "🔄 <b>Установка 3x-ui...</b>\n\n"
-        "Подготовка сервера, запуск контейнеров, настройка панели.\n"
-        "Это может занять 2-3 минуты.",
-        parse_mode="HTML",
-    )
+    if connect_existing:
+        msg = await callback.message.edit_text(
+            "🔌 <b>Подключение 3x-ui...</b>\n\n"
+            "Сохранение параметров в базу данных.",
+            parse_mode="HTML",
+        )
+    else:
+        msg = await callback.message.edit_text(
+            "🔄 <b>Установка 3x-ui...</b>\n\n"
+            "Подготовка сервера, запуск контейнеров, настройка панели.\n"
+            "Это может занять 2-3 минуты.",
+            parse_mode="HTML",
+        )
 
     try:
-        from app.services.installers.xui_installer import XUIInstaller
-        from app.services.ssh_service import SSHManager
-
         async with async_session_factory() as session:
             from sqlalchemy import select
             from sqlalchemy.orm import selectinload
@@ -855,36 +1127,55 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             )
             server = result.scalar_one()
 
-            ssh = SSHManager(server)
-            installer = XUIInstaller(ssh)
+            if not connect_existing:
+                from app.services.installers.xui_installer import XUIInstaller
+                from app.services.ssh_service import SSHManager
 
-            await installer.install(
-                domain=domain,
-                caddy_port=caddy_port,
-                web_path=web_path,
-                sub_path=sub_path,
-                sub_json_path=sub_json_path,
-                username=username,
-                password=password,
-                inbound_ranges=inbound_ranges,
-            )
+                ssh = SSHManager(server)
+                installer = XUIInstaller(ssh)
+
+                await installer.install(
+                    domain=domain,
+                    caddy_port=caddy_port,
+                    web_path=web_path,
+                    sub_path=sub_path,
+                    sub_json_path=sub_json_path,
+                    username=username,
+                    password=password,
+                    inbound_ranges=inbound_ranges,
+                    force=force,
+                )
 
             from app.database.models.services import XUIPanel
 
             panel_url = f"https://{domain}:{caddy_port}"
 
-            panel = XUIPanel(
-                server_id=server.id,
-                url=panel_url,
-                username=username,
-                password_encrypted=password,
-                panel_path=web_path,
-                subscription_path=sub_path,
-                subscription_json_path=sub_json_path,
-                caddy_port=caddy_port,
-                inbound_ranges=inbound_ranges,
+            existing = await session.execute(
+                select(XUIPanel).where(XUIPanel.server_id == server.id)
             )
-            session.add(panel)
+            existing_panel = existing.scalar_one_or_none()
+            if existing_panel:
+                existing_panel.url = panel_url
+                existing_panel.username = username
+                existing_panel.password_encrypted = password
+                existing_panel.panel_path = web_path
+                existing_panel.subscription_path = sub_path
+                existing_panel.subscription_json_path = sub_json_path
+                existing_panel.caddy_port = caddy_port
+                existing_panel.inbound_ranges = inbound_ranges
+            else:
+                panel = XUIPanel(
+                    server_id=server.id,
+                    url=panel_url,
+                    username=username,
+                    password_encrypted=password,
+                    panel_path=web_path,
+                    subscription_path=sub_path,
+                    subscription_json_path=sub_json_path,
+                    caddy_port=caddy_port,
+                    inbound_ranges=inbound_ranges,
+                )
+                session.add(panel)
             await session.commit()
 
         ranges_str = ", ".join(
@@ -892,14 +1183,14 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
         )
         clean_web = web_path.strip("/")
         panel_full_url = f"{panel_url}/{clean_web}/" if clean_web else f"{panel_url}/"
+        action = "подключена" if connect_existing else ("переустановлен" if force else "установлен")
         await msg.edit_text(
-            "✅ <b>3x-ui установлен!</b>\n\n"
+            f"✅ <b>3x-ui {action}!</b>\n\n"
             f"Панель: <code>{panel_full_url}</code>\n"
             f"Логин: <code>{username}</code>\n"
             f"Пароль: <code>{password}</code>\n"
             f"Inbound порты: <code>{ranges_str}</code>\n\n"
             "⚠️ <b>Сохраните пароль!</b> Он больше не будет показан.\n\n"
-            "XUIPanel добавлен в базу данных. "
             "Выполните синхронизацию для загрузки inbounds.",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
@@ -2593,17 +2884,222 @@ async def start_awg_install(callback: CallbackQuery, state: FSMContext, is_admin
         )
         return
 
+    if await installer.check_already_installed():
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        await status_msg.edit_text(
+            "🔍 <b>AmneziaWG уже установлен на этом сервере</b>\n\n"
+            "Обнаружен контейнер <code>vpnbot-awg</code>.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔌 Подключить",
+                    callback_data=f"awg_connect_existing_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 Переустановить",
+                    callback_data=f"awg_reinstall_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data=f"server_services_{server_id}",
+                )],
+            ]),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
     await state.update_data(server_id=server_id)
 
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    policy_shown = await _check_first_setup(
-        callback, state, server_id, "awg",
+    await status_msg.edit_text(
+        "🛡 <b>AmneziaWG не найден на сервере</b>\n\n"
+        "Выберите способ добавления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📦 Установить новую",
+                callback_data=f"awg_install_new_{server_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔌 Подключить существующую",
+                callback_data=f"awg_connect_existing_{server_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data=f"server_services_{server_id}",
+            )],
+        ]),
+        parse_mode="HTML",
     )
+    await callback.answer()
+    return
+
+
+@router.callback_query(F.data.startswith("awg_install_new_"))
+async def awg_install_new(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start fresh AWG installation."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+
+    policy_shown = await _check_first_setup(callback, state, server_id, "awg")
     if policy_shown:
         await callback.answer()
         return
 
-    await _awg_ask_port(status_msg, state)
+    await _awg_ask_port(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("awg_connect_existing_"))
+async def awg_connect_existing(callback: CallbackQuery, state: FSMContext) -> None:
+    """Connect existing AWG — auto-discover params and save to DB."""
+    server_id = int(callback.data.split("_")[-1])
+
+    msg = await callback.message.edit_text(
+        "🔍 <b>Читаю конфигурацию AmneziaWG с сервера...</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+    try:
+        from app.services.installers.awg_installer import AWGInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            server = (await session.execute(
+                select(Server).where(Server.id == server_id)
+            )).scalar_one()
+
+        ssh = SSHManager(server)
+        installer = AWGInstaller(ssh)
+        params = await installer.discover_existing()
+    except Exception as e:
+        logger.error(f"AWG discover failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Не удалось прочитать конфигурацию</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    obf_text = "\n".join(f"  {k} = {v}" for k, v in params["obfuscation"].items())
+    await msg.edit_text(
+        "🛡 <b>AmneziaWG найден!</b> Параметры из awg0.conf:\n\n"
+        f"Порт: <code>{params['port']}/udp</code>\n"
+        f"Подсеть: <code>{params['subnet_ip']}/{params['subnet_cidr']}</code>\n\n"
+        f"<b>Обфускация:</b>\n{obf_text}\n\n"
+        "Подключить с этими параметрами?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="✅ Подключить",
+                callback_data="awg_confirm_connect",
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Отмена",
+                callback_data=f"server_services_{server_id}",
+            )],
+        ]),
+        parse_mode="HTML",
+    )
+    await state.update_data(
+        server_id=server_id,
+        connect_existing=True,
+        port=params["port"],
+        obfuscation=params["obfuscation"],
+        subnet_ip=params["subnet_ip"],
+        subnet_cidr=params["subnet_cidr"],
+        server_public_key=params.get("server_public_key", ""),
+        server_private_key=params.get("server_private_key", ""),
+    )
+
+
+@router.callback_query(F.data == "awg_confirm_connect")
+async def awg_confirm_connect(callback: CallbackQuery, state: FSMContext) -> None:
+    """Save discovered AWG params to DB."""
+    await callback.answer()
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+    port = data["port"]
+    obf = data["obfuscation"]
+    subnet_ip = data.get("subnet_ip", "10.8.0.1")
+    subnet_cidr = data.get("subnet_cidr", 24)
+    await state.clear()
+
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+            from app.database.models.inbound import AWGInbound
+            from app.database.models.services import AWGService
+
+            server = (await session.execute(
+                select(Server).where(Server.id == server_id)
+            )).scalar_one()
+
+            existing_svc = await session.execute(
+                select(AWGService).where(AWGService.server_id == server.id)
+            )
+            existing = existing_svc.scalar_one_or_none()
+            if existing:
+                existing.port = port
+                existing.subnet_ip = subnet_ip
+                existing.subnet_cidr = subnet_cidr
+                existing.obfuscation = obf
+            else:
+                awg_service = AWGService(
+                    server_id=server.id,
+                    port=port,
+                    subnet_ip=subnet_ip,
+                    subnet_cidr=subnet_cidr,
+                    obfuscation=obf,
+                )
+                session.add(awg_service)
+
+            existing_ib = await session.execute(
+                select(AWGInbound).where(AWGInbound.server_id == server.id)
+            )
+            if not existing_ib.scalar_one_or_none():
+                awg_inbound = AWGInbound(
+                    server_id=server.id,
+                    protocol="awg",
+                    remark=f"AmneziaWG:{port}",
+                    port=port,
+                )
+                session.add(awg_inbound)
+            await session.commit()
+
+        await callback.message.edit_text(
+            f"✅ <b>AmneziaWG подключён!</b>\n\n"
+            f"Порт: <code>{port}/udp</code>\n"
+            f"Контейнер: <code>vpnbot-awg</code>\n\n"
+            "Сервис и inbound добавлены в базу данных.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"AWG connect failed: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка подключения AmneziaWG</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(F.data.startswith("awg_reinstall_"))
+async def awg_reinstall(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start AWG reinstallation flow (force=True)."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id, force_reinstall=True)
+    await _awg_ask_port(callback.message, state)
     await callback.answer()
 
 
@@ -2781,25 +3277,29 @@ async def _show_awg_confirm(message, state: FSMContext) -> None:
     data = await state.get_data()
     port = data["port"]
     obf = data["obfuscation"]
+    connect_existing = data.get("connect_existing", False)
 
     obf_text = "\n".join(f"  {k} = {v}" for k, v in obf.items())
 
     await state.set_state(AWGInstall.confirm_install)
 
+    action = "подключение" if connect_existing else "установку"
+    btn_text = "✅ Подключить" if connect_existing else "✅ Установить"
+
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Установить", callback_data="awg_confirm_install")
+    kb.button(text=btn_text, callback_data="awg_confirm_install")
     kb.button(text="❌ Отмена", callback_data="cancel")
     kb.adjust(1)
 
     target = message if isinstance(message, TgMessage) else message
 
     await target.edit_text(
-        "🛡 <b>Подтвердите установку AmneziaWG</b>\n\n"
+        f"🛡 <b>Подтвердите {action} AmneziaWG</b>\n\n"
         f"Порт: <code>{port}/udp</code>\n\n"
         f"<b>Параметры обфускации:</b>\n{obf_text}\n\n"
-        "Нажмите «Установить» для начала.",
+        f"Нажмите «{'Подключить' if connect_existing else 'Установить'}» для начала.",
         reply_markup=kb.as_markup(),
         parse_mode="HTML",
     )
@@ -2814,13 +3314,153 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
     server_id = data["server_id"]
     port = data["port"]
     obf = data["obfuscation"]
+    force = data.get("force_reinstall", False)
+    connect_existing = data.get("connect_existing", False)
 
     await state.clear()
 
+    if connect_existing:
+        msg = await callback.message.edit_text(
+            "🔌 <b>Подключение AmneziaWG...</b>\n\n"
+            "Сохранение параметров в базу данных.",
+            parse_mode="HTML",
+        )
+    else:
+        msg = await callback.message.edit_text(
+            "🔄 <b>Установка AmneziaWG...</b>\n\n"
+            "Подготовка сервера, сборка контейнера, генерация ключей.\n"
+            "Это может занять 1-2 минуты.",
+            parse_mode="HTML",
+        )
+
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server)
+                .options(selectinload(Server.awg_service))
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            install_result = None
+            if not connect_existing:
+                from app.services.installers.awg_installer import AWGInstaller
+                from app.services.ssh_service import SSHManager
+
+                ssh = SSHManager(server)
+                installer = AWGInstaller(ssh)
+
+                install_result = await installer.install(
+                    port=port,
+                    obfuscation=obf,
+                    force=force,
+                )
+
+            from app.database.models.inbound import AWGInbound
+            from app.database.models.services import AWGService
+
+            existing_svc = await session.execute(
+                select(AWGService).where(AWGService.server_id == server.id)
+            )
+            existing_awg = existing_svc.scalar_one_or_none()
+            if existing_awg:
+                existing_awg.port = port
+                if install_result:
+                    existing_awg.subnet_ip = install_result["subnet_ip"]
+                    existing_awg.subnet_cidr = install_result["subnet_cidr"]
+                    existing_awg.obfuscation = install_result["obfuscation"]
+                else:
+                    existing_awg.obfuscation = obf
+            else:
+                awg_service = AWGService(
+                    server_id=server.id,
+                    port=port,
+                    subnet_ip=install_result["subnet_ip"] if install_result else "10.8.0.1",
+                    subnet_cidr=install_result["subnet_cidr"] if install_result else 24,
+                    obfuscation=install_result["obfuscation"] if install_result else obf,
+                )
+                session.add(awg_service)
+
+            existing_ib = await session.execute(
+                select(AWGInbound).where(AWGInbound.server_id == server.id)
+            )
+            if not existing_ib.scalar_one_or_none():
+                awg_inbound = AWGInbound(
+                    server_id=server.id,
+                    protocol="awg",
+                    remark=f"AmneziaWG:{port}",
+                    port=port,
+                )
+                session.add(awg_inbound)
+            await session.commit()
+
+        action = "подключён" if connect_existing else ("переустановлен" if force else "установлен")
+        await msg.edit_text(
+            f"✅ <b>AmneziaWG {action}!</b>\n\n"
+            f"Порт: <code>{port}/udp</code>\n"
+            f"Контейнер: <code>vpnbot-awg</code>\n\n"
+            "Сервис и inbound добавлены в базу данных.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        from app.services.installers.base import AlreadyInstalledError
+
+        if isinstance(e, AlreadyInstalledError):
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Переустановить",
+                    callback_data=f"awg_force_reinstall_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data=f"server_services_{server_id}",
+                )],
+            ])
+            await msg.edit_text(
+                f"⚠️ <b>AmneziaWG уже установлен</b>\n\n{e}",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        else:
+            logger.error(f"AWG installation failed: {e}", exc_info=True)
+            await msg.edit_text(
+                f"❌ <b>Ошибка установки AmneziaWG</b>\n\n<code>{e}</code>",
+                reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+                parse_mode="HTML",
+            )
+
+
+@router.callback_query(F.data.startswith("awg_force_reinstall_"))
+async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> None:
+    """Force reinstall AWG — remove existing and install fresh."""
+    await callback.answer()
+
+    server_id = int(callback.data.split("_")[-1])
+
+    data = await state.get_data()
+    port = data.get("port")
+    obf = data.get("obfuscation")
+    await state.clear()
+
+    if not port:
+        await callback.message.edit_text(
+            "❌ Данные установки устарели. Начните установку заново.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
     msg = await callback.message.edit_text(
-        "🔄 <b>Установка AmneziaWG...</b>\n\n"
-        "Подготовка сервера, сборка контейнера, генерация ключей.\n"
-        "Это может занять 1-2 минуты.",
+        "🔄 <b>Переустановка AmneziaWG...</b>\n\n"
+        "Удаление старой установки и запуск новой.",
         parse_mode="HTML",
     )
 
@@ -2847,41 +3487,56 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             install_result = await installer.install(
                 port=port,
                 obfuscation=obf,
+                force=True,
             )
 
             from app.database.models.inbound import AWGInbound
             from app.database.models.services import AWGService
 
-            awg_service = AWGService(
-                server_id=server.id,
-                port=port,
-                subnet_ip=install_result["subnet_ip"],
-                subnet_cidr=install_result["subnet_cidr"],
-                obfuscation=install_result["obfuscation"],
+            existing_svc = await session.execute(
+                select(AWGService).where(AWGService.server_id == server.id)
             )
-            session.add(awg_service)
+            existing = existing_svc.scalar_one_or_none()
+            if existing:
+                existing.port = port
+                existing.subnet_ip = install_result["subnet_ip"]
+                existing.subnet_cidr = install_result["subnet_cidr"]
+                existing.obfuscation = install_result["obfuscation"]
+            else:
+                awg_service = AWGService(
+                    server_id=server.id,
+                    port=port,
+                    subnet_ip=install_result["subnet_ip"],
+                    subnet_cidr=install_result["subnet_cidr"],
+                    obfuscation=install_result["obfuscation"],
+                )
+                session.add(awg_service)
 
-            awg_inbound = AWGInbound(
-                server_id=server.id,
-                protocol="awg",
-                remark=f"AmneziaWG:{port}",
-                port=port,
+            existing_ib = await session.execute(
+                select(AWGInbound).where(AWGInbound.server_id == server.id)
             )
-            session.add(awg_inbound)
+            if not existing_ib.scalar_one_or_none():
+                awg_inbound = AWGInbound(
+                    server_id=server.id,
+                    protocol="awg",
+                    remark=f"AmneziaWG:{port}",
+                    port=port,
+                )
+                session.add(awg_inbound)
             await session.commit()
 
         await msg.edit_text(
-            "✅ <b>AmneziaWG установлен!</b>\n\n"
+            "✅ <b>AmneziaWG переустановлен!</b>\n\n"
             f"Порт: <code>{port}/udp</code>\n"
             f"Контейнер: <code>vpnbot-awg</code>\n\n"
-            "Сервис и inbound добавлены в базу данных.",
+            "Сервис обновлён в базе данных.",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"AWG installation failed: {e}", exc_info=True)
+        logger.error(f"AWG force reinstall failed: {e}", exc_info=True)
         await msg.edit_text(
-            f"❌ <b>Ошибка установки AmneziaWG</b>\n\n<code>{e}</code>",
+            f"❌ <b>Ошибка переустановки AmneziaWG</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
@@ -2953,16 +3608,222 @@ async def start_mtproxy_install(callback: CallbackQuery, state: FSMContext, is_a
         )
         return
 
-    await state.update_data(server_id=server_id)
+    if await installer.check_already_installed():
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-    first_setup_shown = await _check_first_setup(
-        callback, state, server_id, "mtproxy",
-    )
-    if first_setup_shown:
+        await status_msg.edit_text(
+            "🔍 <b>MTProxy уже установлен на этом сервере</b>\n\n"
+            "Обнаружен контейнер <code>vpnbot-mtproxy</code>.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔌 Подключить",
+                    callback_data=f"mtproxy_connect_existing_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔄 Переустановить",
+                    callback_data=f"mtproxy_reinstall_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data=f"server_services_{server_id}",
+                )],
+            ]),
+            parse_mode="HTML",
+        )
         await callback.answer()
         return
 
-    await _mtproxy_ask_implementation(status_msg, state)
+    await state.update_data(server_id=server_id)
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    await status_msg.edit_text(
+        "📡 <b>MTProxy не найден на сервере</b>\n\n"
+        "Выберите способ добавления:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="📦 Установить новую",
+                callback_data=f"mtproxy_install_new_{server_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔌 Подключить существующую",
+                callback_data=f"mtproxy_connect_existing_{server_id}",
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Назад",
+                callback_data=f"server_services_{server_id}",
+            )],
+        ]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    return
+
+
+@router.callback_query(F.data.startswith("mtproxy_install_new_"))
+async def mtproxy_install_new(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start fresh MTProxy installation."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+
+    policy_shown = await _check_first_setup(callback, state, server_id, "mtproxy")
+    if policy_shown:
+        await callback.answer()
+        return
+
+    await _mtproxy_ask_implementation(callback.message, state)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtproxy_connect_existing_"))
+async def mtproxy_connect_existing(callback: CallbackQuery, state: FSMContext) -> None:
+    """Connect existing MTProxy — auto-discover params and save to DB."""
+    server_id = int(callback.data.split("_")[-1])
+
+    msg = await callback.message.edit_text(
+        "🔍 <b>Читаю конфигурацию MTProxy с сервера...</b>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+    try:
+        from app.services.installers.mtproxy_installer import MTProxyInstaller
+        from app.services.ssh_service import SSHManager
+
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+
+            server = (await session.execute(
+                select(Server).where(Server.id == server_id)
+            )).scalar_one()
+
+        ssh = SSHManager(server)
+        installer = MTProxyInstaller(ssh)
+        params = await installer.discover_existing()
+    except Exception as e:
+        logger.error(f"MTProxy discover failed: {e}", exc_info=True)
+        await msg.edit_text(
+            f"❌ <b>Не удалось прочитать конфигурацию</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    impl_text = "⭐ mtg-multi" if params["implementation"] == "mtg-multi" else "🔹 mtg"
+    conns_text = f"\nМакс. подключений: <code>{params['max_connections']}</code>" if params["implementation"] == "mtg-multi" else ""
+    await msg.edit_text(
+        f"📡 <b>MTProxy найден!</b> Параметры из config.toml:\n\n"
+        f"Реализация: {impl_text}\n"
+        f"Порт: <code>{params['port']}/tcp</code>{conns_text}\n\n"
+        "Подключить с этими параметрами?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="✅ Подключить",
+                callback_data="mtproxy_confirm_connect",
+            )],
+            [InlineKeyboardButton(
+                text="🔙 Отмена",
+                callback_data=f"server_services_{server_id}",
+            )],
+        ]),
+        parse_mode="HTML",
+    )
+    await state.update_data(
+        server_id=server_id,
+        connect_existing=True,
+        implementation=params["implementation"],
+        port=params["port"],
+        domain=params["domain"],
+        max_connections=params["max_connections"],
+    )
+
+
+@router.callback_query(F.data == "mtproxy_confirm_connect")
+async def mtproxy_confirm_connect(callback: CallbackQuery, state: FSMContext) -> None:
+    """Save discovered MTProxy params to DB."""
+    await callback.answer()
+
+    data = await state.get_data()
+    server_id = data["server_id"]
+    port = data["port"]
+    domain = data["domain"]
+    implementation = data["implementation"]
+    max_connections = data.get("max_connections", 5000)
+    await state.clear()
+
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+
+            from app.database.models import Server
+            from app.database.models.inbound import MTProxyInbound
+            from app.database.models.services import MTProxyService
+
+            server = (await session.execute(
+                select(Server).where(Server.id == server_id)
+            )).scalar_one()
+
+            existing_svc = await session.execute(
+                select(MTProxyService).where(MTProxyService.server_id == server.id)
+            )
+            existing = existing_svc.scalar_one_or_none()
+            if existing:
+                existing.implementation = implementation
+                existing.port = port
+                existing.domain = domain
+                existing.max_connections = max_connections if implementation == "mtg-multi" else None
+            else:
+                mtproxy_service = MTProxyService(
+                    server_id=server.id,
+                    implementation=implementation,
+                    port=port,
+                    domain=domain,
+                    max_connections=max_connections if implementation == "mtg-multi" else None,
+                )
+                session.add(mtproxy_service)
+
+            existing_ib = await session.execute(
+                select(MTProxyInbound).where(MTProxyInbound.server_id == server.id)
+            )
+            if not existing_ib.scalar_one_or_none():
+                mtproxy_inbound = MTProxyInbound(
+                    server_id=server.id,
+                    protocol="mtproto",
+                    remark=f"MTProxy:{port}",
+                    port=port,
+                )
+                session.add(mtproxy_inbound)
+            await session.commit()
+
+        impl_text = "mtg-multi" if implementation == "mtg-multi" else "mtg"
+        await callback.message.edit_text(
+            f"✅ <b>MTProxy подключён!</b>\n\n"
+            f"Реализация: <code>{impl_text}</code>\n"
+            f"Порт: <code>{port}/tcp</code>\n"
+            f"Контейнер: <code>vpnbot-mtproxy</code>\n\n"
+            "Сервис и inbound добавлены в базу данных.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"MTProxy connect failed: {e}", exc_info=True)
+        await callback.message.edit_text(
+            f"❌ <b>Ошибка подключения MTProxy</b>\n\n<code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+
+
+@router.callback_query(F.data.startswith("mtproxy_reinstall_"))
+async def mtproxy_reinstall(callback: CallbackQuery, state: FSMContext) -> None:
+    """Start MTProxy reinstallation flow (force=True)."""
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id, force_reinstall=True)
+    await _mtproxy_ask_implementation(callback.message, state)
     await callback.answer()
 
 
@@ -3172,22 +4033,26 @@ async def _mtproxy_show_confirm(message_or_callback, state: FSMContext) -> None:
     port = data["port"]
     domain = data["domain"]
     max_conns = data.get("max_connections")
+    connect_existing = data.get("connect_existing", False)
 
     await state.set_state(MTProxyInstall.confirm_install)
 
     impl_text = "⭐ mtg-multi" if impl == "mtg-multi" else "🔹 mtg (upstream)"
     conns_text = f"\nМакс. подключений: <code>{max_conns}</code>" if max_conns else ""
 
+    action = "подключение" if connect_existing else "установку"
+    btn_text = "✅ Подключить" if connect_existing else "✅ Установить"
+
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Установить", callback_data="mtproxy_confirm_install")
+    kb.button(text=btn_text, callback_data="mtproxy_confirm_install")
     kb.button(text="❌ Отмена", callback_data="cancel")
     kb.adjust(1)
 
     target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message if hasattr(message_or_callback, "message") else message_or_callback
     await target.edit_text(
-        f"📡 <b>Подтвердите установку MTProxy</b>\n\n"
+        f"📡 <b>Подтвердите {action} MTProxy</b>\n\n"
         f"Реализация: {impl_text}\n"
         f"Порт: <code>{port}/tcp</code>\n"
         f"Fake-TLS домен: <code>{domain}</code>"
@@ -3208,12 +4073,155 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
     domain = data["domain"]
     implementation = data["implementation"]
     max_connections = data.get("max_connections", 5000)
+    force = data.get("force_reinstall", False)
+    connect_existing = data.get("connect_existing", False)
 
     await state.clear()
 
+    if connect_existing:
+        msg = await callback.message.edit_text(
+            "🔌 <b>Подключение MTProxy...</b>\n\n"
+            "Сохранение параметров в базу данных.",
+            parse_mode="HTML",
+        )
+    else:
+        msg = await callback.message.edit_text(
+            "🔄 <b>Установка MTProxy...</b>\n\n"
+            "Подготовка сервера, запуск контейнера.",
+            parse_mode="HTML",
+        )
+
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server)
+                .options(selectinload(Server.mtproxy_service))
+                .where(Server.id == server_id)
+            )
+            server = result.scalar_one()
+
+            if not connect_existing:
+                from app.services.installers.mtproxy_installer import MTProxyInstaller
+                from app.services.ssh_service import SSHManager
+
+                ssh = SSHManager(server)
+                installer = MTProxyInstaller(ssh)
+
+                await installer.install(
+                    port=port,
+                    domain=domain,
+                    implementation=implementation,
+                    max_connections=max_connections,
+                    force=force,
+                )
+
+            from app.database.models.inbound import MTProxyInbound
+            from app.database.models.services import MTProxyService
+
+            existing_svc = await session.execute(
+                select(MTProxyService).where(MTProxyService.server_id == server.id)
+            )
+            existing = existing_svc.scalar_one_or_none()
+            if existing:
+                existing.implementation = implementation
+                existing.port = port
+                existing.domain = domain
+                existing.max_connections = max_connections if implementation == "mtg-multi" else None
+            else:
+                mtproxy_service = MTProxyService(
+                    server_id=server.id,
+                    implementation=implementation,
+                    port=port,
+                    domain=domain,
+                    max_connections=max_connections if implementation == "mtg-multi" else None,
+                )
+                session.add(mtproxy_service)
+
+            existing_ib = await session.execute(
+                select(MTProxyInbound).where(MTProxyInbound.server_id == server.id)
+            )
+            if not existing_ib.scalar_one_or_none():
+                mtproxy_inbound = MTProxyInbound(
+                    server_id=server.id,
+                    protocol="mtproto",
+                    remark=f"MTProxy:{port}",
+                    port=port,
+                )
+                session.add(mtproxy_inbound)
+            await session.commit()
+
+        impl_text = "mtg-multi" if implementation == "mtg-multi" else "mtg"
+        action = "подключён" if connect_existing else ("переустановлен" if force else "установлен")
+        await msg.edit_text(
+            f"✅ <b>MTProxy {action}!</b>\n\n"
+            f"Реализация: <code>{impl_text}</code>\n"
+            f"Порт: <code>{port}/tcp</code>\n"
+            f"Fake-TLS домен: <code>{domain}</code>\n"
+            f"Контейнер: <code>vpnbot-mtproxy</code>\n\n"
+            "Сервис и inbound добавлены в базу данных.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        from app.services.installers.base import AlreadyInstalledError
+
+        if isinstance(e, AlreadyInstalledError):
+            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Переустановить",
+                    callback_data=f"mtproxy_force_reinstall_{server_id}",
+                )],
+                [InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data=f"server_services_{server_id}",
+                )],
+            ])
+            await msg.edit_text(
+                f"⚠️ <b>MTProxy уже установлен</b>\n\n{e}",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+        else:
+            logger.error(f"MTProxy installation failed: {e}", exc_info=True)
+            await msg.edit_text(
+                f"❌ <b>Ошибка установки MTProxy</b>\n\n<code>{e}</code>",
+                reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+                parse_mode="HTML",
+            )
+
+
+@router.callback_query(F.data.startswith("mtproxy_force_reinstall_"))
+async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) -> None:
+    """Force reinstall MTProxy — remove existing and install fresh."""
+    await callback.answer()
+
+    server_id = int(callback.data.split("_")[-1])
+
+    data = await state.get_data()
+    port = data.get("port")
+    domain = data.get("domain")
+    implementation = data.get("implementation")
+    max_connections = data.get("max_connections", 5000)
+    await state.clear()
+
+    if not all([port, domain, implementation]):
+        await callback.message.edit_text(
+            "❌ Данные установки устарели. Начните установку заново.",
+            reply_markup=get_back_keyboard(f"server_services_{server_id}"),
+            parse_mode="HTML",
+        )
+        return
+
     msg = await callback.message.edit_text(
-        "🔄 <b>Установка MTProxy...</b>\n\n"
-        "Подготовка сервера, запуск контейнера.",
+        "🔄 <b>Переустановка MTProxy...</b>\n\n"
+        "Удаление старой установки и запуск новой.",
         parse_mode="HTML",
     )
 
@@ -3242,44 +4250,59 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                 domain=domain,
                 implementation=implementation,
                 max_connections=max_connections,
+                force=True,
             )
 
             from app.database.models.inbound import MTProxyInbound
             from app.database.models.services import MTProxyService
 
-            mtproxy_service = MTProxyService(
-                server_id=server.id,
-                implementation=implementation,
-                port=port,
-                domain=domain,
-                max_connections=max_connections if implementation == "mtg-multi" else None,
+            existing_svc = await session.execute(
+                select(MTProxyService).where(MTProxyService.server_id == server.id)
             )
-            session.add(mtproxy_service)
+            existing = existing_svc.scalar_one_or_none()
+            if existing:
+                existing.implementation = implementation
+                existing.port = port
+                existing.domain = domain
+                existing.max_connections = max_connections if implementation == "mtg-multi" else None
+            else:
+                mtproxy_service = MTProxyService(
+                    server_id=server.id,
+                    implementation=implementation,
+                    port=port,
+                    domain=domain,
+                    max_connections=max_connections if implementation == "mtg-multi" else None,
+                )
+                session.add(mtproxy_service)
 
-            mtproxy_inbound = MTProxyInbound(
-                server_id=server.id,
-                protocol="mtproto",
-                remark=f"MTProxy:{port}",
-                port=port,
+            existing_ib = await session.execute(
+                select(MTProxyInbound).where(MTProxyInbound.server_id == server.id)
             )
-            session.add(mtproxy_inbound)
+            if not existing_ib.scalar_one_or_none():
+                mtproxy_inbound = MTProxyInbound(
+                    server_id=server.id,
+                    protocol="mtproto",
+                    remark=f"MTProxy:{port}",
+                    port=port,
+                )
+                session.add(mtproxy_inbound)
             await session.commit()
 
         impl_text = "mtg-multi" if implementation == "mtg-multi" else "mtg"
         await msg.edit_text(
-            f"✅ <b>MTProxy установлен!</b>\n\n"
+            f"✅ <b>MTProxy переустановлен!</b>\n\n"
             f"Реализация: <code>{impl_text}</code>\n"
             f"Порт: <code>{port}/tcp</code>\n"
             f"Fake-TLS домен: <code>{domain}</code>\n"
             f"Контейнер: <code>vpnbot-mtproxy</code>\n\n"
-            "Сервис и inbound добавлены в базу данных.",
+            "Сервис обновлён в базе данных.",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"MTProxy installation failed: {e}", exc_info=True)
+        logger.error(f"MTProxy force reinstall failed: {e}", exc_info=True)
         await msg.edit_text(
-            f"❌ <b>Ошибка установки MTProxy</b>\n\n<code>{e}</code>",
+            f"❌ <b>Ошибка переустановки MTProxy</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )

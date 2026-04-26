@@ -15,7 +15,7 @@ Config dir on server: /opt/vpnbot/mtproxy/
 
 import logging
 
-from app.services.installers.base import BASE_DIR, BaseInstaller
+from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +31,36 @@ class MTProxyInstaller(BaseInstaller):
 
     SERVICE_NAME = MTPROXY_CONTAINER
 
+    async def discover_existing(self) -> dict:
+        """Read config.toml from an existing MTProxy installation.
+
+        Returns dict with: port, domain, implementation, max_connections.
+        """
+        import re
+
+        config = await self._cmd(f"cat {MTPROXY_SERVICE_DIR}/config.toml")
+
+        bind_match = re.search(r'bind-to\s*=\s*"0\.0\.0\.0:(\d+)"', config)
+        secret_match = re.search(r'(?:secret|default)\s*=\s*"([^"]+)"', config)
+        conns_match = re.search(r"max-connections\s*=\s*(\d+)", config)
+
+        implementation = "mtg-multi" if "max-connections" in config or "secrets" in config else "mtg"
+
+        return {
+            "port": int(bind_match.group(1)) if bind_match else 443,
+            "domain": self.ssh.host,
+            "implementation": implementation,
+            "max_connections": int(conns_match.group(1)) if conns_match else 5000,
+            "secret": secret_match.group(1) if secret_match else None,
+        }
+
     async def install(
         self,
         port: int = 443,
         domain: str = "google.com",
         implementation: str = "mtg-multi",
         max_connections: int = 5000,
+        force: bool = False,
     ) -> dict:
         """Install MTProxy on the server.
 
@@ -45,18 +69,32 @@ class MTProxyInstaller(BaseInstaller):
             domain: Fake-TLS domain for domain fronting.
             implementation: 'mtg' or 'mtg-multi'.
             max_connections: Max concurrent connections (mtg-multi only).
+            force: Remove existing container before installing.
 
         Returns:
             Dict with installation details.
 
         Raises:
-            RuntimeError: If already installed or port occupied.
+            AlreadyInstalledError: If already installed and force=False.
+            RuntimeError: If port is occupied.
         """
+        service_dir = MTPROXY_SERVICE_DIR
+        dirs_to_clean: list[str] = []
+        ports_to_clean: list[tuple[int, str]] = []
+
         try:
             await self.prepare_host()
 
             if await self.check_already_installed():
-                raise RuntimeError(f"MTProxy already installed on {self.ssh.host}")
+                if force:
+                    logger.warning(f"Force reinstall: removing existing vpnbot-mtproxy on {self.ssh.host}")
+                    await self._cmd("docker rm -f vpnbot-mtproxy 2>/dev/null || true")
+                    await self._cmd("sleep 2")
+                else:
+                    raise AlreadyInstalledError(
+                        f"MTProxy уже установлен на {self.ssh.host}. "
+                        "Для переустановки нажмите кнопку ниже."
+                    )
 
             if not await self.check_port_free(port):
                 raise RuntimeError(f"Port {port}/tcp is occupied on {self.ssh.host}")
@@ -65,7 +103,6 @@ class MTProxyInstaller(BaseInstaller):
                 raise ValueError(f"Unknown implementation: {implementation}")
 
             image = MTG_MULTI_IMAGE if implementation == "mtg-multi" else MTG_IMAGE
-            service_dir = MTPROXY_SERVICE_DIR
             dirs_to_clean = [service_dir]
             ports_to_clean = [(port, "tcp")]
 
