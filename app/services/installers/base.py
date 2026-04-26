@@ -25,6 +25,8 @@ import logging
 import random
 import string
 
+import asyncssh
+
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.port_manager import PortManager
 
@@ -146,13 +148,21 @@ class BaseInstaller:
             return False
 
     async def prepare_host(self) -> None:
-        """Prepare server: install Docker, utils, configure UFW. Skips if already done."""
+        """Prepare server: install Docker, utils, configure UFW.
+
+        Always verifies Docker is available even if .prepared marker exists,
+        because Docker may have been removed or become inaccessible.
+        """
+        logger.info(f"Preparing host {self.ssh.host}...")
+
+        if not await self._docker_is_available():
+            logger.info("Docker not found, installing...")
+            await self._ensure_docker()
+
         if await self.is_prepared():
-            logger.info(f"Host already prepared ({PREPARED_MARKER} exists), skipping")
+            logger.info(f"Host already prepared ({PREPARED_MARKER} exists), skipping utils/UFW")
             return
 
-        logger.info(f"Preparing host {self.ssh.host}...")
-        await self._ensure_docker()
         await self._ensure_utils()
         await self._ensure_ufw()
         await self._mark_prepared()
@@ -174,69 +184,117 @@ class BaseInstaller:
         return dist
 
     async def _ensure_docker(self) -> None:
-        """Install Docker if not present, start and enable it."""
-        dist = await self._detect_os()
-        script = ""
+        """Install Docker CE with compose v2 plugin if not present.
 
+        Uses official Docker convenience script (get.docker.com) which:
+        - Installs from Docker's official repos (latest stable)
+        - Includes docker compose v2 plugin
+        - Works on all major Linux distros
+
+        After install verifies both `docker` and `docker compose` are functional.
+        """
+        if await self._docker_is_available():
+            logger.info("Docker already available")
+            await self._ensure_docker_active()
+            if not await self._compose_is_available():
+                logger.info("Docker compose v2 not found, installing plugin")
+                await self._install_compose_plugin()
+            return
+
+        logger.info("Docker not found, installing via get.docker.com...")
+        await self._cmd(
+            "curl -fsSL https://get.docker.com | sh"
+        )
+        await self._cmd("systemctl enable --now docker")
+        await self._cmd("sleep 3")
+        await self._fix_docker_path()
+        await self._ensure_docker_active()
+
+        docker_ver = await self._cmd("docker --version")
+        logger.info(f"Docker installed: {docker_ver}")
+
+        if not await self._compose_is_available():
+            await self._install_compose_plugin()
+
+        compose_ver = await self._cmd("docker compose version")
+        logger.info(f"Docker Compose: {compose_ver}")
+
+    async def _docker_is_available(self) -> bool:
+        """Check if docker command is accessible in PATH."""
+        try:
+            result = await self._cmd("docker --version")
+            return bool(result.strip())
+        except Exception:
+            return False
+
+    async def _compose_is_available(self) -> bool:
+        """Check if docker compose v2 plugin is installed."""
+        try:
+            result = await self._cmd("docker compose version")
+            return bool(result.strip())
+        except Exception:
+            return False
+
+    async def _install_compose_plugin(self) -> None:
+        """Install docker compose v2 plugin via package manager."""
+        dist = await self._detect_os()
         if dist == "debian":
-            script = (
-                "if ! command -v docker > /dev/null 2>&1; then "
-                "export DEBIAN_FRONTEND=noninteractive; "
-                "apt-get update -yq && apt-get install -yq docker.io; "
-                "systemctl enable --now docker; "
-                "sleep 3; "
-                "fi; "
-                "if [ \"$(systemctl is-active docker)\" != \"active\" ]; then "
-                "systemctl start docker; sleep 3; "
-                "fi"
+            await self._cmd(
+                "apt-get update -yq && apt-get install -yq docker-compose-plugin"
             )
         elif dist == "fedora":
-            script = (
-                "if ! command -v docker > /dev/null 2>&1; then "
-                "dnf install -yq docker; systemctl enable --now docker; sleep 3; "
-                "fi; "
-                "if [ \"$(systemctl is-active docker)\" != \"active\" ]; then "
-                "systemctl start docker; sleep 3; "
-                "fi"
-            )
+            await self._cmd("dnf install -yq docker-compose-plugin")
         elif dist == "centos":
-            script = (
-                "if ! command -v docker > /dev/null 2>&1; then "
-                "yum install -yq docker; systemctl enable --now docker; sleep 3; "
-                "fi; "
-                "if [ \"$(systemctl is-active docker)\" != \"active\" ]; then "
-                "systemctl start docker; sleep 3; "
-                "fi"
-            )
+            await self._cmd("yum install -yq docker-compose-plugin")
         elif dist == "opensuse":
-            script = (
-                "if ! command -v docker > /dev/null 2>&1; then "
-                "zypper -nq install docker; systemctl enable --now docker; sleep 3; "
-                "fi; "
-                "if [ \"$(systemctl is-active docker)\" != \"active\" ]; then "
-                "systemctl start docker; sleep 3; "
-                "fi"
-            )
+            await self._cmd("zypper -nq install docker-compose-plugin")
         elif dist == "archlinux":
-            script = (
-                "if ! command -v docker > /dev/null 2>&1; then "
-                "pacman -S --noconfirm --noprogressbar docker; systemctl enable --now docker; sleep 3; "
-                "fi; "
-                "if [ \"$(systemctl is-active docker)\" != \"active\" ]; then "
-                "systemctl start docker; sleep 3; "
-                "fi"
+            await self._cmd(
+                "pacman -S --noconfirm --noprogressbar docker-compose"
             )
         else:
-            script = (
-                "if ! command -v docker > /dev/null 2>&1; then "
-                "curl -fsSL https://get.docker.com | sh; "
-                "systemctl enable --now docker; sleep 3; "
-                "fi"
+            await self._cmd(
+                "mkdir -p /usr/local/lib/docker/cli-plugins && "
+                "curl -SL "
+                "https://github.com/docker/compose/releases/latest/download/"
+                "docker-compose-linux-x86_64 "
+                "-o /usr/local/lib/docker/cli-plugins/docker-compose && "
+                "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose"
             )
 
-        await self._cmd(script)
-        version = await self._cmd("docker --version")
-        logger.info(f"Docker: {version}")
+        if not await self._compose_is_available():
+            raise RuntimeError(
+                "Docker compose v2 plugin installation failed. "
+                "Manual intervention required."
+            )
+
+    async def _fix_docker_path(self) -> None:
+        """Fix Docker not in PATH by creating symlinks for common locations."""
+        fix_script = (
+            'docker_path=$(command -v docker 2>/dev/null); '
+            'if [ -z "$docker_path" ]; then '
+            '  for candidate in /usr/bin/docker /usr/local/bin/docker /snap/bin/docker '
+            '                   /usr/libexec/docker/docker; do '
+            '    if [ -x "$candidate" ]; then '
+            '      ln -sf "$candidate" /usr/local/bin/docker 2>/dev/null; '
+            '      ln -sf "$candidate" /usr/bin/docker 2>/dev/null; '
+            '      break; '
+            '    fi; '
+            '  done; '
+            'fi'
+        )
+        try:
+            await self._cmd(fix_script)
+        except Exception as e:
+            logger.warning(f"Docker PATH fix attempted but may have issues: {e}")
+
+    async def _ensure_docker_active(self) -> None:
+        """Ensure Docker daemon is running."""
+        await self._cmd(
+            "if [ \"$(systemctl is-active docker 2>/dev/null)\" != \"active\" ]; then "
+            "systemctl start docker; sleep 3; "
+            "fi"
+        )
 
     async def _ensure_utils(self) -> None:
         """Install essential utilities (curl, jq)."""
@@ -362,6 +420,30 @@ class BaseInstaller:
 
     # ── SSH port change ────────────────────────────────────────────────
 
+    async def _test_ssh_on_port(self, port: int) -> bool:
+        """Test SSH connectivity on a specific port using the same credentials.
+
+        Uses asyncssh directly to avoid SSHManager.__new__() hacks.
+        """
+        password = self.ssh.get_ssh_password()
+        key_data = self.ssh.get_ssh_key()
+        client_keys = None
+        if key_data:
+            client_keys = [asyncssh.import_private_key(key_data)]
+        try:
+            async with await asyncssh.connect(
+                self.ssh.host,
+                port=port,
+                username=self.ssh.username,
+                password=password,
+                client_keys=client_keys,
+                known_hosts=None,
+            ):
+                return True
+        except Exception as e:
+            logger.error(f"SSH test on port {port} failed: {e}")
+            return False
+
     async def change_ssh_port(self, new_port: int) -> tuple[bool, str]:
         """Change SSH daemon port with automatic rollback on failure.
 
@@ -406,14 +488,7 @@ class BaseInstaller:
             import asyncio
             await asyncio.sleep(3)
 
-            test_ssh = SSHManager.__new__(SSHManager)
-            test_ssh.server = self.ssh.server
-            test_ssh.host = host
-            test_ssh.port = new_port
-            test_ssh.username = self.ssh.username
-            test_ssh._decrypt = self.ssh._decrypt
-
-            if await test_ssh.test_connection():
+            if await self._test_ssh_on_port(new_port):
                 await self._cmd(
                     f"sed -i '/^Port {old_port}$/d' /etc/ssh/sshd_config"
                 )
@@ -428,7 +503,7 @@ class BaseInstaller:
         except Exception as e:
             logger.error(f"SSH port change failed, reverting: {e}")
             try:
-                await self.ssh.write_file("/etc/ssh/sshd_config", config_backup)
+                await self._write_file("/etc/ssh/sshd_config", config_backup)
                 await self._cmd("systemctl restart sshd || systemctl restart ssh")
                 await self._cmd(f"ufw delete allow {new_port}/tcp || true")
             except Exception as rollback_err:

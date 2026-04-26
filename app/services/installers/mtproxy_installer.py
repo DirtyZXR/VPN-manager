@@ -52,22 +52,22 @@ class MTProxyInstaller(BaseInstaller):
         Raises:
             RuntimeError: If already installed or port occupied.
         """
-        if await self.check_already_installed():
-            raise RuntimeError(f"MTProxy already installed on {self.ssh.host}")
-
-        if not await self.check_port_free(port):
-            raise RuntimeError(f"Port {port}/tcp is occupied on {self.ssh.host}")
-
-        if implementation not in ("mtg", "mtg-multi"):
-            raise ValueError(f"Unknown implementation: {implementation}")
-
-        image = MTG_MULTI_IMAGE if implementation == "mtg-multi" else MTG_IMAGE
-        service_dir = MTPROXY_SERVICE_DIR
-        dirs_to_clean = [service_dir]
-        ports_to_clean = [(port, "tcp")]
-
         try:
             await self.prepare_host()
+
+            if await self.check_already_installed():
+                raise RuntimeError(f"MTProxy already installed on {self.ssh.host}")
+
+            if not await self.check_port_free(port):
+                raise RuntimeError(f"Port {port}/tcp is occupied on {self.ssh.host}")
+
+            if implementation not in ("mtg", "mtg-multi"):
+                raise ValueError(f"Unknown implementation: {implementation}")
+
+            image = MTG_MULTI_IMAGE if implementation == "mtg-multi" else MTG_IMAGE
+            service_dir = MTPROXY_SERVICE_DIR
+            dirs_to_clean = [service_dir]
+            ports_to_clean = [(port, "tcp")]
 
             logger.info(
                 f"Installing MTProxy ({implementation}) on {self.ssh.host}:{port}"
@@ -108,7 +108,7 @@ class MTProxyInstaller(BaseInstaller):
 
     async def _generate_secret(self, service_dir: str, domain: str) -> None:
         await self._cmd(
-            f"docker run --rm {MTG_MULTI_IMAGE} generate-secret --hex {domain} "
+            f"docker run --rm {MTG_MULTI_IMAGE} generate-secret {domain} "
             f"> {service_dir}/secret.txt"
         )
 
@@ -126,7 +126,6 @@ class MTProxyInstaller(BaseInstaller):
             config = (
                 f'bind-to = "0.0.0.0:{port}"\n'
                 f"api-bind-to = \"127.0.0.1:9090\"\n"
-                f"public-ipv4 = \"auto\"\n"
                 f"\n"
                 f"[throttle]\n"
                 f"max-connections = {max_connections}\n"
@@ -196,7 +195,7 @@ class MTProxyInstaller(BaseInstaller):
             Generated secret string.
         """
         secret = (await self._cmd(
-            f"docker run --rm {MTG_MULTI_IMAGE} generate-secret --hex {domain}"
+            f"docker run --rm {MTG_MULTI_IMAGE} generate-secret {domain}"
         )).strip()
 
         config_path = f"{MTPROXY_SERVICE_DIR}/config.toml"

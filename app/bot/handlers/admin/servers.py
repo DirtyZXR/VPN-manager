@@ -816,6 +816,8 @@ async def _xui_show_confirm(message_or_callback, state: FSMContext) -> None:
 @router.callback_query(XUIInstall.confirm_install, F.data == "xui_confirm_install")
 async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> None:
     """Execute 3x-ui installation."""
+    await callback.answer()
+
     data = await state.get_data()
     server_id = data["server_id"]
     domain = data["domain"]
@@ -904,6 +906,7 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
+
     except Exception as e:
         logger.error(f"3x-ui installation failed: {e}", exc_info=True)
         await msg.edit_text(
@@ -911,8 +914,6 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
-
-    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("cleanup_inbounds_"))
@@ -2668,6 +2669,8 @@ async def _show_awg_confirm(message, state: FSMContext) -> None:
 @router.callback_query(AWGInstall.confirm_install, F.data == "awg_confirm_install")
 async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> None:
     """Execute AWG installation."""
+    await callback.answer()
+
     data = await state.get_data()
     server_id = data["server_id"]
     port = data["port"]
@@ -2743,8 +2746,6 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
-
-    await callback.answer()
 
 
 # ── MTProxy Installation Flow ─────────────────────────────────────────
@@ -3060,6 +3061,8 @@ async def _mtproxy_show_confirm(message_or_callback, state: FSMContext) -> None:
 @router.callback_query(MTProxyInstall.confirm_install, F.data == "mtproxy_confirm_install")
 async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) -> None:
     """Execute MTProxy installation."""
+    await callback.answer()
+
     data = await state.get_data()
     server_id = data["server_id"]
     port = data["port"]
@@ -3141,5 +3144,3 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
-
-    await callback.answer()

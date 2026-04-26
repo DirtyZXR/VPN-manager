@@ -96,12 +96,6 @@ class XUIInstaller(BaseInstaller):
         Raises:
             RuntimeError: If service already installed or port occupied.
         """
-        if await self.check_already_installed():
-            raise RuntimeError(f"3x-ui already installed on {self.ssh.host}")
-
-        if not await self.check_port_free(caddy_port):
-            raise RuntimeError(f"Port {caddy_port} is occupied on {self.ssh.host}")
-
         if inbound_ranges is None:
             inbound_ranges = [(10000, 10100)]
 
@@ -119,6 +113,12 @@ class XUIInstaller(BaseInstaller):
 
         try:
             await self.prepare_host()
+
+            if await self.check_already_installed():
+                raise RuntimeError(f"3x-ui already installed on {self.ssh.host}")
+
+            if not await self.check_port_free(caddy_port):
+                raise RuntimeError(f"Port {caddy_port} is occupied on {self.ssh.host}")
 
             logger.info(
                 f"Installing 3x-ui on {self.ssh.host}, "
@@ -240,7 +240,6 @@ class XUIInstaller(BaseInstaller):
   }}
 
   handle /{web_path_stripped}/* {{
-    rewrite /{web_path_stripped}/*
     reverse_proxy 127.0.0.1:{XUI_INTERNAL_PORT}
   }}
 
@@ -272,23 +271,35 @@ class XUIInstaller(BaseInstaller):
         clean_sub = "/" + sub_path.strip("/") + "/"
         clean_json = "/" + sub_json_path.strip("/") + "/"
 
+        await self._cmd(f"docker exec -i {name} apk add --no-cache sqlite")
+
+        sql_del = (
+            "DELETE FROM settings WHERE key IN "
+            "('webBasePath', 'subPath', 'subJsonPath')"
+        )
         await self._cmd(
-            f'docker exec -i {name} sqlite3 {db_path} '
-            f'"DELETE FROM settings WHERE key IN '
-            f"('webBasePath', 'subPath', 'subJsonPath');\""
+            f"docker exec -i {name} sqlite3 {db_path}",
+            input_data=sql_del,
         )
 
-        await self._cmd(
-            f'docker exec -i {name} sqlite3 {db_path} '
-            f"\"INSERT INTO settings (key, value) VALUES "
+        sql_ins = (
+            f"INSERT INTO settings (key, value) VALUES "
             f"('webBasePath', '{clean_web}'), "
             f"('subPath', '{clean_sub}'), "
-            f"('subJsonPath', '{clean_json}');\""
+            f"('subJsonPath', '{clean_json}')"
+        )
+        await self._cmd(
+            f"docker exec -i {name} sqlite3 {db_path}",
+            input_data=sql_ins,
         )
 
+        sql_user = (
+            f"UPDATE users SET username='{username}', password='{password}' "
+            f"WHERE id=1"
+        )
         await self._cmd(
-            f'docker exec -i {name} x-ui setting '
-            f'-username "{username}" -password "{password}"'
+            f"docker exec -i {name} sqlite3 {db_path}",
+            input_data=sql_user,
         )
 
         await self._cmd(f"docker restart {name}")
@@ -298,16 +309,24 @@ class XUIInstaller(BaseInstaller):
         self, caddy_port: int, domain: str, web_path: str
     ) -> None:
         clean_web = web_path.strip("/")
-        url = f"http://127.0.0.1:{caddy_port}/{clean_web}/" if clean_web else f"http://127.0.0.1:{caddy_port}/"
+        xui_url = f"http://127.0.0.1:{XUI_INTERNAL_PORT}/{clean_web}/" if clean_web else f"http://127.0.0.1:{XUI_INTERNAL_PORT}/"
+
         result = await self._cmd(
-            f"curl -sk -o /dev/null -w '%{{http_code}}' {url}"
+            f"curl -s -o /dev/null -w '%{{http_code}}' {xui_url}"
         )
         code = result.strip().strip("'")
         if code not in ("200", "301", "302"):
             raise RuntimeError(
-                f"Panel verification failed: HTTP {code} from {url}"
+                f"Panel verification failed: HTTP {code} from {xui_url}"
             )
-        logger.info(f"Panel verified: HTTP {code}")
+        logger.info(f"Panel verified via internal port: HTTP {code}")
+
+        caddy_url = f"https://{domain}:{caddy_port}/{clean_web}/" if clean_web else f"https://{domain}:{caddy_port}/"
+        caddy_result = await self._cmd(
+            f"curl -sk -o /dev/null -w '%{{http_code}}' {caddy_url}"
+        )
+        caddy_code = caddy_result.strip().strip("'")
+        logger.info(f"Caddy proxy verified: HTTP {caddy_code} from {caddy_url}")
 
     async def open_inbound_ports(self, ranges: list[tuple[int, int]]) -> None:
         """Open additional port ranges for VPN inbounds (post-install)."""

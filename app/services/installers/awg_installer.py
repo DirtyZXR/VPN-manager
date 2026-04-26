@@ -74,21 +74,21 @@ class AWGInstaller(BaseInstaller):
         Raises:
             RuntimeError: If service already installed or port is occupied.
         """
-        if await self.check_already_installed():
-            raise RuntimeError(f"AWG already installed on {self.ssh.host}")
-
-        if not await self.check_port_free(port):
-            raise RuntimeError(f"Port {port}/udp is occupied on {self.ssh.host}")
-
-        if obfuscation is None:
-            obfuscation = generate_obfuscation_params()
-
-        service_dir = f"{AWG_SERVICE_DIR}"
-        dirs_to_clean = [service_dir]
-        ports_to_clean = [(port, "udp")]
-
         try:
             await self.prepare_host()
+
+            if await self.check_already_installed():
+                raise RuntimeError(f"AWG already installed on {self.ssh.host}")
+
+            if not await self.check_port_free(port):
+                raise RuntimeError(f"Port {port}/udp is occupied on {self.ssh.host}")
+
+            if obfuscation is None:
+                obfuscation = generate_obfuscation_params()
+
+            service_dir = f"{AWG_SERVICE_DIR}"
+            dirs_to_clean = [service_dir]
+            ports_to_clean = [(port, "udp")]
 
             logger.info(
                 f"Installing AWG on {self.ssh.host}:{port} "
@@ -173,6 +173,7 @@ tail -f /dev/null
     build: {service_dir}
     container_name: vpnbot-awg
     restart: unless-stopped
+    entrypoint: ["/opt/amnezia/start.sh"]
     privileged: true
     cap_add:
       - NET_ADMIN
