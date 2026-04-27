@@ -1,45 +1,35 @@
 # TODO
 
-## Баг: sync_service ломается на MTProxyInbound — нет атрибута xui_id
+## Баг: sync_service ломается на AWGInbound/MTProxyInbound — нет xui_id
 
 **Приоритет:** высокий
 **Файл:** `app/services/sync_service.py:247`
 
-### Ошибка
+### Ошибки
 
 ```
 AttributeError: 'MTProxyInbound' object has no attribute 'xui_id'
+AttributeError: 'AWGInbound' object has no attribute 'xui_id'
 XUIError: Failed to get inbound: Obtain (record not found)
 ```
 
 ### Суть
 
-Синхронизация клиентов перебирает **все** inbound'ы сервера, включая MTProxy и AWG. Эти модели не имеют `xui_id` и не являются XUI-inbound'ами. Попытка обратиться к `xui_id` вызывает `AttributeError`, а затем XUI API возвращает «record not found» для несуществующего inbound.
+Синхронизация клиентов перебирает **все** inbound'ы сервера, включая MTProxy и AWG. Эти модели не имеют `xui_id`. Попытка обратиться к `xui_id` вызывает `AttributeError`, XUI API возвращает 404.
 
 ### Фикс
 
-В `sync_service.sync_server()` фильтровать inbound'ы по типу — синхронизировать только XUI-inbound'ы (модель `Inbound` с `xui_id`), пропускать `MTProxyInbound` и `AWGInbound`.
+В `sync_service.sync_server()` фильтровать inbound'ы по типу — синхронизировать только XUI-inbound'ы (модель `Inbound` с `xui_id`), пропускать `MTProxyInbound` и `AWGInbound`. Либо фильтровать query: `select(Inbound).where(Inbound.xui_id.isnot(None))`.
 
 ---
 
-## Баг: sync_service пытается получить inbound по xui_id для не-XUI записей
+## Баг: сгенерированный пароль XUI не работает
 
 **Приоритет:** высокий
-**Файл:** `app/services/sync_service.py:247`
-
-### Ошибка
-
-```
-XUIError - Failed to get inbound: Obtain (record not found)
-```
 
 ### Суть
 
-Inbound ID 17 в БД — это MTProxyInbound/AWGInbound, у него нет `xui_id` (или он None). Синхронизация пытается получить его из XUI панели и получает 404.
-
-### Фикс
-
-Добавить `isinstance` или `hasattr` проверку перед обращением к `xui_id`, либо фильтровать query на уровне SQLAlchemy (`select(Inbound).where(Inbound.xui_id.isnot(None))`).
+При подключении существующей 3x-ui с генерацией нового пароля — пароль не подходит для входа в панель. SQL с bcrypt-хешем передаётся через stdin (`input_data=`), но результат в 3x-ui DB не соответствует ожидаемому. Нужно проверить: фактически ли хеш записывается корректно, перезапускается ли контейнер, и совпадает ли bcrypt rounds с тем что ожидает 3x-ui.
 
 ---
 
@@ -67,13 +57,51 @@ Inbound ID 17 в БД — это MTProxyInbound/AWGInbound, у него нет `
 
 ---
 
-## Инсталлеры: автопоиск сервисов на сервере
+## Фича: восстановление сервисов из дампа БД
 
 **Приоритет:** средний
 
 ### Суть
 
-При добавлении сервера бот должен автоматически находить уже установленные VPN-сервисы (3x-ui, AWG, MTProxy) и предлагать подключить их. Сейчас автопоиск находит только MTProxy.
+При установке новых сервисов на сервер предложить восстановить конфигурацию из дампа БД бота. Админ отправляет файл дампа (.sql / .json / .db), бот парсит и восстанавливает привязки серверов, inbounds, подписки.
+
+### Применение
+
+- Переустановка бота на новом сервере — не нужно заново добавлять все серверы и настраивать подписки
+- Миграция между инстансами бота
+
+### Что нужно
+
+1. Команда /backup — экспорт БД в файл
+2. Команда /restore — приём файла, парсинг, восстановление
+3. При первом запуске (нет серверов) — предложить восстановить из дампа
+
+---
+
+## Инсталлеры: progress bar при установке
+
+**Приоритет:** низкий
+
+### Суть
+
+Установка сервисов занимает 1-3 минуты. Сейчас показывается статичное сообщение «Установка...». Нужно пошагово обновлять сообщение в Telegram по мере выполнения шагов.
+
+### Что нужно
+
+1. В `BaseInstaller` добавить `_progress(step, total, text)` callback
+2. Инсталлеры вызывают `self._progress()` на каждом шаге (prepare_host, compose, configure, verify)
+3. Handler передаёт callback при создании инсталлера, который делает `msg.edit_text()`
+4. Обновлять не чаще 1 раза в секунду (rate limit Telegram)
+
+### Пример
+
+```
+⏳ [3/6] Запись docker-compose.yml...
+```
+
+---
+
+## Инсталлеры: автопоиск сервисов на сервере
 
 ### Что нужно
 

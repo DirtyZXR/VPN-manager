@@ -640,7 +640,7 @@ async def xui_connect_existing(callback: CallbackQuery, state: FSMContext) -> No
                 callback_data="xui_connect_gen_password",
             )],
             [InlineKeyboardButton(
-                text="✏️ Ввести свой пароль",
+                text="✏️ Я помню пароль",
                 callback_data="xui_connect_enter_password",
             )],
             [InlineKeyboardButton(
@@ -692,13 +692,18 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
         installer = XUIInstaller(ssh)
 
         hashed = XUIInstaller._hash_password_bcrypt(new_password)
-        sql = f"UPDATE users SET password='{hashed}' WHERE id=1;"
+        sql = (
+            f"UPDATE users SET password='{hashed}' WHERE id=1"
+        )
         await installer._cmd(
             "docker exec -i vpnbot-xui apk add --no-cache sqlite 2>/dev/null || true"
         )
         await installer._cmd(
-            f"docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db {sql!r}",
+            "docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db",
+            input_data=sql,
         )
+        await installer._cmd("docker restart vpnbot-xui")
+        await installer._cmd("sleep 3")
 
         from app.database.models.services import XUIPanel
 
@@ -1063,7 +1068,7 @@ async def _xui_show_confirm(message_or_callback, state: FSMContext) -> None:
     kb.adjust(1)
 
     target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
-    await target.edit_text(
+    text = (
         f"🌐 <b>Подтвердите {action} 3x-ui</b>\n\n"
         f"Домен: <code>{domain}</code>\n"
         f"Caddy порт: <code>{caddy_port}</code>\n"
@@ -1073,10 +1078,20 @@ async def _xui_show_confirm(message_or_callback, state: FSMContext) -> None:
         f"Логин: <code>{username}</code>\n"
         f"Пароль: <code>{data['password']}</code>\n"
         f"Inbound порты: <code>{ranges_str}</code>\n\n"
-        "⚠️ Пароль будет показан только сейчас. Сохраните его!",
-        reply_markup=kb.as_markup(),
-        parse_mode="HTML",
+        "⚠️ Пароль будет показан только сейчас. Сохраните его!"
     )
+    try:
+        await target.edit_text(
+            text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+        )
+    except Exception:
+        await target.answer(
+            text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(XUIInstall.confirm_install, F.data == "xui_confirm_install")
