@@ -83,6 +83,11 @@ class MTProxyInstaller(BaseInstaller):
         ports_to_clean: list[tuple[int, str]] = []
 
         try:
+            logger.info(
+                f"Installing MTProxy ({implementation}) on {self.ssh.host}:{port}"
+            )
+
+            await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
             await self.prepare_host()
 
             if await self.check_already_installed():
@@ -106,17 +111,28 @@ class MTProxyInstaller(BaseInstaller):
             dirs_to_clean = [service_dir]
             ports_to_clean = [(port, "tcp")]
 
-            logger.info(
-                f"Installing MTProxy ({implementation}) on {self.ssh.host}:{port}"
-            )
-
+            await self._progress(2, 9, "Открытие портов в файрволе...")
             await self._open_firewall_port(port)
+
+            await self._progress(3, 9, "Создание директорий...")
             await self._create_dirs(service_dir)
+
+            await self._progress(4, 9, "Генерация секрета...")
             await self._generate_secret(service_dir, domain)
+
+            await self._progress(5, 9, "Запись конфигурации...")
             await self._write_config(service_dir, port, domain, implementation, max_connections)
+
+            await self._progress(6, 9, "Запись docker-compose.yml...")
             await self._write_compose_file(service_dir, port, image, implementation)
+
+            await self._progress(7, 9, "Запуск контейнера...")
             await self._start_container(service_dir)
+
+            await self._progress(8, 9, "Проверка доступности...")
             await self._verify(port)
+
+            await self._progress(9, 9, "Установка завершена")
 
             logger.info(f"MTProxy ({implementation}) installed on {self.ssh.host}:{port}")
 

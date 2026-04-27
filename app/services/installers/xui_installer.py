@@ -72,11 +72,14 @@ class XUIInstaller(BaseInstaller):
     async def check_already_installed(self) -> bool:
         """Check if vpnbot-xui OR vpnbot-caddy container exists."""
         for name in ("vpnbot-xui", "vpnbot-caddy"):
-            result = await self._cmd(
-                f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
-            )
-            if result.strip():
-                return True
+            try:
+                result = await self._cmd(
+                    f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
+                )
+                if result.strip():
+                    return True
+            except Exception:
+                return False
         return False
 
     async def discover_existing(self) -> dict:
@@ -179,6 +182,12 @@ class XUIInstaller(BaseInstaller):
                 ports_to_clean.append((port, "udp"))
 
         try:
+            logger.info(
+                f"Installing 3x-ui on {self.ssh.host}, "
+                f"domain={domain}, caddy_port={caddy_port}"
+            )
+
+            await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
             await self.prepare_host()
 
             if await self.check_already_installed():
@@ -195,19 +204,29 @@ class XUIInstaller(BaseInstaller):
             if not await self.check_port_free(caddy_port):
                 raise RuntimeError(f"Port {caddy_port} is occupied on {self.ssh.host}")
 
-            logger.info(
-                f"Installing 3x-ui on {self.ssh.host}, "
-                f"domain={domain}, caddy_port={caddy_port}"
-            )
-
+            await self._progress(2, 9, "Открытие портов в файрволе...")
             await self._open_firewall_ports(caddy_port, inbound_ranges)
             await self._block_internal_ports()
+
+            await self._progress(3, 9, "Создание директорий...")
             await self._create_dirs(service_dir)
+
+            await self._progress(4, 9, "Запись docker-compose.yml...")
             await self._write_compose_file(service_dir, domain, caddy_port)
+
+            await self._progress(5, 9, "Запись Caddyfile...")
             await self._write_caddyfile(service_dir, domain, caddy_port, sub_path, sub_json_path, web_path)
+
+            await self._progress(6, 9, "Запуск контейнеров (может занять 1-2 мин)...")
             await self._start_containers(service_dir)
+
+            await self._progress(7, 9, "Настройка 3x-ui (credentials, пути, порты)...")
             await self._configure_xui(username, password, web_path, sub_path, sub_json_path)
+
+            await self._progress(8, 9, "Проверка доступности панели...")
             await self._verify_panel(caddy_port, domain, web_path)
+
+            await self._progress(9, 9, "Установка завершена")
 
             logger.info(f"3x-ui installed successfully on {self.ssh.host}")
 

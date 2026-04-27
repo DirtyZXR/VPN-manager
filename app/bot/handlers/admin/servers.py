@@ -1147,7 +1147,13 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 from app.services.ssh_service import SSHManager
 
                 ssh = SSHManager(server)
-                installer = XUIInstaller(ssh)
+                installer = XUIInstaller(
+                    ssh,
+                    progress_callback=lambda text: msg.edit_text(
+                        f"🔄 <b>Установка 3x-ui</b>\n\n{text}",
+                        parse_mode="HTML",
+                    ),
+                )
 
                 await installer.install(
                     domain=domain,
@@ -1291,7 +1297,13 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             server = result.scalar_one()
 
             ssh = SSHManager(server)
-            installer = XUIInstaller(ssh)
+            installer = XUIInstaller(
+                ssh,
+                progress_callback=lambda text: msg.edit_text(
+                    f"🔄 <b>Переустановка 3x-ui</b>\n\n{text}",
+                    parse_mode="HTML",
+                ),
+            )
 
             await installer.install(
                 domain=domain,
@@ -3368,7 +3380,13 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 from app.services.ssh_service import SSHManager
 
                 ssh = SSHManager(server)
-                installer = AWGInstaller(ssh)
+                installer = AWGInstaller(
+                    ssh,
+                    progress_callback=lambda text: msg.edit_text(
+                        f"🔄 <b>Установка AmneziaWG</b>\n\n{text}",
+                        parse_mode="HTML",
+                    ),
+                )
 
                 install_result = await installer.install(
                     port=port,
@@ -3497,7 +3515,13 @@ async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             server = result.scalar_one()
 
             ssh = SSHManager(server)
-            installer = AWGInstaller(ssh)
+            installer = AWGInstaller(
+                ssh,
+                progress_callback=lambda text: msg.edit_text(
+                    f"🔄 <b>Переустановка AmneziaWG</b>\n\n{text}",
+                    parse_mode="HTML",
+                ),
+            )
 
             install_result = await installer.install(
                 port=port,
@@ -4125,7 +4149,13 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                 from app.services.ssh_service import SSHManager
 
                 ssh = SSHManager(server)
-                installer = MTProxyInstaller(ssh)
+                installer = MTProxyInstaller(
+                    ssh,
+                    progress_callback=lambda text: msg.edit_text(
+                        f"🔄 <b>Установка MTProxy</b>\n\n{text}",
+                        parse_mode="HTML",
+                    ),
+                )
 
                 await installer.install(
                     port=port,
@@ -4258,7 +4288,13 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
             server = result.scalar_one()
 
             ssh = SSHManager(server)
-            installer = MTProxyInstaller(ssh)
+            installer = MTProxyInstaller(
+                ssh,
+                progress_callback=lambda text: msg.edit_text(
+                    f"🔄 <b>Переустановка MTProxy</b>\n\n{text}",
+                    parse_mode="HTML",
+                ),
+            )
 
             await installer.install(
                 port=port,

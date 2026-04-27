@@ -24,11 +24,15 @@ commands into single bash scripts sent via one run_command() call.
 import logging
 import random
 import string
+import time
+from collections.abc import Awaitable, Callable
 
 import asyncssh
 
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.port_manager import PortManager
+
+ProgressCallback = Callable[[str], Awaitable[None]]
 
 
 class AlreadyInstalledError(RuntimeError):
@@ -53,10 +57,45 @@ class BaseInstaller:
 
     # ── Container identification ──────────────────────────────────────
 
-    def __init__(self, ssh: SSHManager) -> None:
+    def __init__(
+        self,
+        ssh: SSHManager,
+        progress_callback: ProgressCallback | None = None,
+    ) -> None:
         self.ssh = ssh
         self.port_manager = PortManager(ssh)
         self._use_sudo = False
+        self._progress_callback = progress_callback
+        self._last_progress_ts: float = 0.0
+
+    async def _progress(self, step: int, total: int, text: str) -> None:
+        """Report installation progress.
+
+        Rate-limited to 1 call per second to avoid Telegram API limits.
+        The final step (step == total) always bypasses rate limiting.
+
+        Args:
+            step: Current step number (1-based).
+            total: Total number of steps.
+            text: Human-readable description of current step.
+        """
+        if self._progress_callback is None:
+            return
+
+        now = time.monotonic()
+        if now - self._last_progress_ts < 1.0 and step < total:
+            return
+        self._last_progress_ts = now
+
+        message = f"[{step}/{total}] {text}"
+        try:
+            await self._progress_callback(message)
+        except Exception as e:
+            from aiogram.exceptions import TelegramAPIError
+
+            if not isinstance(e, TelegramAPIError):
+                raise
+            logger.debug(f"Progress callback suppressed: {e}")
 
     async def _cmd(self, command: str, input_data: str | None = None) -> str:
         """Execute command with optional sudo prefix."""
@@ -128,18 +167,24 @@ class BaseInstaller:
     async def check_already_installed(self) -> bool:
         """Check if a container with our naming convention already exists."""
         name = _container_name(self.SERVICE_NAME)
-        result = await self._cmd(
-            f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
-        )
-        return bool(result.strip())
+        try:
+            result = await self._cmd(
+                f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
+            )
+            return bool(result.strip())
+        except Exception:
+            return False
 
     async def list_installed_services(self) -> list[str]:
         """List all vpnbot-managed containers on the server."""
-        result = await self._cmd(
-            f"docker ps -a --filter name={CONTAINER_PREFIX}- --format '{{{{.Names}}}}'"
-        )
-        names = [n.strip() for n in result.strip().split("\n") if n.strip()]
-        return [n.removeprefix(f"{CONTAINER_PREFIX}-") for n in names]
+        try:
+            result = await self._cmd(
+                f"docker ps -a --filter name={CONTAINER_PREFIX}- --format '{{{{.Names}}}}'"
+            )
+            names = [n.strip() for n in result.strip().split("\n") if n.strip()]
+            return [n.removeprefix(f"{CONTAINER_PREFIX}-") for n in names]
+        except Exception:
+            return []
 
     # ── Host preparation ──────────────────────────────────────────────
 

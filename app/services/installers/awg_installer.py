@@ -118,6 +118,12 @@ class AWGInstaller(BaseInstaller):
         ports_to_clean: list[tuple[int, str]] = []
 
         try:
+            logger.info(
+                f"Installing AWG on {self.ssh.host}:{port} "
+                f"subnet={subnet_ip}/{subnet_cidr}"
+            )
+
+            await self._progress(1, 11, "Подготовка сервера (Docker, утилиты)...")
             await self.prepare_host()
 
             if await self.check_already_installed():
@@ -140,22 +146,36 @@ class AWGInstaller(BaseInstaller):
             dirs_to_clean = [service_dir]
             ports_to_clean = [(port, "udp")]
 
-            logger.info(
-                f"Installing AWG on {self.ssh.host}:{port} "
-                f"subnet={subnet_ip}/{subnet_cidr}"
-            )
-
+            await self._progress(2, 11, "Открытие портов в файрволе...")
             await self._open_firewall_port(port)
+
+            await self._progress(3, 11, "Создание директорий...")
             await self._create_service_dir(service_dir)
+
+            await self._progress(4, 11, "Запись Dockerfile...")
             await self._write_dockerfile(service_dir)
+
+            await self._progress(5, 11, "Запись стартового скрипта...")
             await self._write_start_script(service_dir, subnet_ip, subnet_cidr)
+
+            await self._progress(6, 11, "Запись docker-compose.yml...")
             await self._write_compose_file(service_dir, port)
+
+            await self._progress(7, 11, "Сборка Docker-образа (может занять 1-2 мин)...")
             await self._build_image()
+
+            await self._progress(8, 11, "Запуск контейнера...")
             await self._start_container(port)
+
+            await self._progress(9, 11, "Генерация ключей и конфигурации...")
             await self._generate_keys_and_config(
                 port, subnet_ip, subnet_cidr, obfuscation
             )
+
+            await self._progress(10, 11, "Перезапуск с конфигурацией...")
             await self._restart_container()
+
+            await self._progress(11, 11, "Установка завершена")
 
             logger.info(f"AWG installed successfully on {self.ssh.host}:{port}")
 
