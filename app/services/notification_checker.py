@@ -391,7 +391,7 @@ class NotificationChecker:
         }
 
     async def _get_connection_traffic(self, conn: InboundConnection) -> dict | None:
-        """Get traffic data for inbound connection from XUI.
+        """Get traffic data for inbound connection.
 
         Args:
             conn: Inbound connection (must have eager loaded inbound and server)
@@ -400,7 +400,6 @@ class NotificationChecker:
             Traffic info or None
         """
 
-        # Use eager loaded relationships
         if not hasattr(conn, "inbound") or not conn.inbound:
             logger.warning(f"Connection {conn.id} has no eager loaded inbound")
             return None
@@ -412,6 +411,9 @@ class NotificationChecker:
             return None
 
         server = inbound.server
+
+        if conn.type not in ("xui_inbound_connection",):
+            return None
 
         try:
             # Get or create XUI client using the cache

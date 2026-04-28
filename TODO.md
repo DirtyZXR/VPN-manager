@@ -399,3 +399,15 @@ AWG-подписка показывает "Токен: vs9KM7rOR9naZi_0" хот�
 2. SSH `docker pull <image>` → сравнить с текущим → `docker compose up -d` если обновился
 3. Логировать результат, уведомлять админа при обновлении
 4. Кнопка «Обновить образы» в меню сервера для ручного запуска
+
+---
+
+## Баг: sync_service пытается синхронизировать удалённые с панели inbound'ы
+
+**Приоритет:** средний
+
+```
+ERROR | app.services.sync_service:sync_server:248 - [ERROR] Ошибка синхронизации клиентов для inbound 16: XUIError - Failed to get inbound: Obtain (record not found)
+```
+
+Inbound был удалён с 3x-ui панели через веб-интерфейс, но бот продолжает попытки синхронизации. Нужна обработка: при `record not found` — помечать inbound как `is_active=False` и уведомлять админа.

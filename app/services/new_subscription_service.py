@@ -516,15 +516,19 @@ class NewSubscriptionService:
         toggled_count = 0
         for subscription in subscriptions:
             for connection in subscription.inbound_connections:
-                # Update in provider
                 inbound = connection.inbound
-                connection.is_enabled = enable
                 provider = await self._get_provider(inbound.server, inbound=inbound)
-                await provider.update_client(
-                    inbound, connection, connection.total_gb, connection.expiry_date
-                )
 
-                # Update in database
+                if inbound.type in ("awg_inbound", "mtproxy_inbound"):
+                    if enable:
+                        await provider.enable_client(inbound, connection)
+                    else:
+                        await provider.disable_client(inbound, connection)
+                else:
+                    await provider.update_client(
+                        inbound, connection, connection.total_gb, connection.expiry_date
+                    )
+
                 connection.is_enabled = enable
                 toggled_count += 1
 

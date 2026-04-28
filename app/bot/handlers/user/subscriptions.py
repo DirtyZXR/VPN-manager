@@ -592,38 +592,39 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                 traffic_text = t("user.status.traffic_gb", "{gb} ГБ", gb=conn.total_gb)
 
                 # Get actual traffic from XUI
-                try:
-                    async with async_session_factory() as traffic_session:
-                        xui_service = XUIService(traffic_session)
-                        if server.id not in xui_clients:
-                            xui_clients[server.id] = await xui_service._get_client(server)
+                if conn.type == "xui_inbound_connection":
+                    try:
+                        async with async_session_factory() as traffic_session:
+                            xui_service = XUIService(traffic_session)
+                            if server.id not in xui_clients:
+                                xui_clients[server.id] = await xui_service._get_client(server)
 
-                        xui_client = xui_clients[server.id]
-                        clients = await xui_client.get_clients(inbound.xui_id)
+                            xui_client = xui_clients[server.id]
+                            clients = await xui_client.get_clients(inbound.xui_id)
 
-                        for xui_conn in clients:
-                            if xui_conn.get("id") == conn.uuid:
-                                used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
-                                    1024**3
-                                )
-                                remaining_gb = conn.total_gb - used_gb
-
-                                if remaining_gb <= 5:
-                                    traffic_text += t(
-                                        "user.status.traffic_low",
-                                        " (⚠️ осталось {gb:.2f} ГБ)",
-                                        gb=remaining_gb,
+                            for xui_conn in clients:
+                                if xui_conn.get("id") == conn.uuid:
+                                    used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
+                                        1024**3
                                     )
-                                else:
-                                    traffic_text += t(
-                                        "user.status.traffic_remaining",
-                                        " (осталось {gb:.2f} ГБ)",
-                                        gb=remaining_gb,
-                                    )
-                                break
-                except Exception as e:
-                    logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
-                    traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
+                                    remaining_gb = conn.total_gb - used_gb
+
+                                    if remaining_gb <= 5:
+                                        traffic_text += t(
+                                            "user.status.traffic_low",
+                                            " (⚠️ осталось {gb:.2f} ГБ)",
+                                            gb=remaining_gb,
+                                        )
+                                    else:
+                                        traffic_text += t(
+                                            "user.status.traffic_remaining",
+                                            " (осталось {gb:.2f} ГБ)",
+                                            gb=remaining_gb,
+                                        )
+                                    break
+                    except Exception as e:
+                        logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
+                        traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
 
             # Add connection status indicator
             conn_status = "✅" if conn.is_connection_active else "❌"

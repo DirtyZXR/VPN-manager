@@ -837,7 +837,7 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
                 try:
                     inbound = conn.inbound
                     server = inbound.server
-                    provider = await sub_service._get_provider(server)
+                    provider = await sub_service._get_provider(server, inbound=inbound)
                     await provider.remove_client(inbound, conn)
                     deleted_count += 1
                 except Exception as e:
