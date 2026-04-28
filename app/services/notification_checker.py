@@ -413,27 +413,35 @@ class NotificationChecker:
         server = inbound.server
 
         if conn.type not in ("xui_inbound_connection",):
+            logger.debug(f"Skipping traffic for connection {conn.id} (type={conn.type})")
             return None
 
         try:
-            # Get or create XUI client using the cache
+            logger.debug(f"Getting traffic for connection {conn.id} (type={conn.type}, inbound={inbound.id}, server={server.id})")
+
             if server.id not in self._xui_clients:
                 from app.services.xui_service import XUIService
 
+                logger.debug(f"Creating new XUIService for server {server.id}")
                 xui_service = XUIService(self.session)
+                logger.debug(f"Calling _get_client for server {server.id}, xui_panel={bool(server.xui_panel)}")
                 self._xui_clients[server.id] = await xui_service._get_client(server)
+                logger.debug(f"XUI client created for server {server.id}")
 
             client = self._xui_clients[server.id]
 
-            # Get client stats from XUI
+            logger.debug(f"Getting clients from XUI for inbound {inbound.id}, xui_id={getattr(inbound, 'xui_id', 'N/A')}")
             clients = await client.get_clients(inbound.xui_id)
             for xui_client in clients:
                 if xui_client.get("id") == conn.uuid:
                     used_gb = (xui_client.get("up", 0) + xui_client.get("down", 0)) / (1024**3)
+                    logger.debug(f"Traffic for connection {conn.id}: {used_gb:.2f} GB")
                     return {"used_gb": used_gb}
 
+            logger.debug(f"No matching XUI client found for connection {conn.id} uuid={conn.uuid}")
+
         except Exception as e:
-            logger.error(f"Error getting traffic for connection {conn.id}: {e}", exc_info=True)
+            logger.error(f"Error getting traffic for connection {conn.id} (type={conn.type}, server={server.id}): {e}", exc_info=True)
 
         return None
 
