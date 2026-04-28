@@ -310,3 +310,130 @@ Middleware (`app/bot/middlewares/auth.py`) уже передаёт `db_session` 
 - `app/bot/handlers/admin/clients.py`
 - `app/bot/handlers/user/subscriptions.py`
 - Остальные хендлеры, использующие `async_session_factory()`
+
+---
+
+## Фича: мониторинг трафика AWG
+
+**Приоритет:** средний
+
+### Суть
+
+AWG (WireGuard) отдаёт per-peer трафик через `awg show awg0 transfer`:
+```
+peer_pubkey    rx_bytes    tx_bytes    last_handshake
+```
+
+Счётчики сырые — с момента старта интерфейса, сбрасываются при рестарте контейнера.
+
+### Реализация
+
+1. В `AWGProtocolSync.sync_clients()` — SSH `docker exec vpnbot-awg awg show awg0 transfer`
+2. Парсить public_key → rx/tx bytes
+3. Сравнить с предыдущим значением из `connection.provider_payload["last_rx"]`/`"last_tx"`
+4. Если дельта > 0 — прибавить к `connection.used_gb` (нужна колонка)
+5. Если `used_gb >= total_gb` → disable
+6. Компенсация сброса: если текущие счётчики < предыдущих → перезапуск контейнера, прибавить текущие к accumulated
+
+### Ограничения
+
+- Точность ±5 минут (зависит от sync interval)
+- Лёгкий SSH-вызов раз в 5 минут
+- Нужна колонка `used_gb` в `AWGInboundConnection` + Alembic миграция
+
+### Файлы
+
+- `app/services/protocol_sync/awg_sync.py` — основная логика
+- `app/services/vpn_providers/amnezia_awg.py` — `get_client_traffic()`
+- `app/database/models/inbound_connection.py` — колонка `used_gb`
+- `app/bot/handlers/user/subscriptions.py` — отображение трафика
+
+---
+
+## Баг: кнопка Inbounds в меню сервера не работает
+
+**Приоритет:** высокий
+
+Кнопка "Inbounds" в меню сервера (admin) не открывает список inbound'ов.
+
+---
+
+## Баг: Unclosed client session (aiohttp)
+
+**Приоритет:** высокий
+
+```
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x...>
+```
+
+Найти все места где создаются aiohttp-сессии и убедиться что они закрываются (context manager / `finally`).
+
+---
+
+## Баг: TelegramBadRequest — query is too old
+
+**Приоритет:** высокий
+
+```
+aiogram.exceptions.TelegramBadRequest: Telegram server says - Bad Request: query is too old and response timeout expired or query ID is invalid
+```
+
+Лечится early `callback.answer()` + graceful обработка исключения при `edit_text`/`edit_reply_markup`.
+
+---
+
+## Баг: greenlet_spawn error при создании AWG/XUI клиентов
+
+**Приоритет:** высокий
+
+```
+ERROR | app.services.notification_checker:_get_connection_traffic:434 - Error getting traffic for connection 194: greenlet_spawn has not been called; can't call await_only() here.
+```
+
+Ошибка возникает при создании AWG и XUI клиентов. Попытка выполнить async DB операцию в sync контексте. Проверить `_get_connection_traffic()` и все вызовы DB в процессе создания подключения.
+
+---
+
+## Фича: уведомления о нескольких протоколах
+
+**Приоритет:** средний
+
+Если у подписки несколько протоколов (XUI + AWG), уведомление клиента показывает только один. Нужно сообщать обо всех.
+
+---
+
+## Баг: QR-кнопка для vless ссылок бесполезна
+
+**Приоритет:** средний
+
+Кнопка "📱 QR" для vless/XUI ссылок отправляет ту же ссылку текстом. Заменить на кнопку "📋 Скопировать" или убрать.
+
+---
+
+## Баг: токен показывается для подписок без XUI
+
+**Приоритет:** средний
+
+AWG-подписка показывает "Токен: vs9KM7rOR9naZi_0" хотя у AWG нет подписочного URL. Токен показывается если хотя бы один connection в подписке XUI — нужно скрывать для чисто AWG/MTProxy подписок. Проверка: `has_xui` в `show_user_subscription_details()`.
+
+---
+
+## Баг: некорректная группировка подключений в подписке
+
+**Приоритет:** средний
+
+Подписка с 4 подключениями (2 XUI + 2 AWG) показывает некорректную группировку:
+- XUI сгруппированы правильно (по URL)
+- AWG подключения показаны под первым XUI URL вместо отдельной группы
+- Два XUI на одном сервере разделены на разные группы
+
+Нужно проверить логику `config_groups` — AWG должен быть отдельной группой с кнопками, XUI — с URL.
+
+---
+
+## Рефакторинг: поддержка domain для AWG Endpoint
+
+**Приоритет:** низкий
+
+`get_client_config()` использует `self.server.ip_address` для Endpoint. Поддерживает домены, но поле называется `ip_address`. Добавить отдельное поле `domain` в Server или в UI выбор IP/domain при настройке.

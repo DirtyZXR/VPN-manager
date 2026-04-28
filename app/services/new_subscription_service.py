@@ -961,6 +961,10 @@ class NewSubscriptionService:
                 connection.expiry_date = subscription.expiry_date
                 connection.sync_status = "synced"
                 connection.last_sync_at = now
+
+                if connection.inbound.type in ("awg_inbound", "mtproxy_inbound") and not connection.is_enabled and subscription.is_active:
+                    await provider.enable_client(connection.inbound, connection)
+                    connection.is_enabled = True
             except Exception as e:
                 logger.warning(f"Failed to update VPN client for connection {connection.id}: {e}")
                 connection.sync_status = "error"
@@ -1049,12 +1053,14 @@ class NewSubscriptionService:
                         subscription.expiry_date,
                     )
 
-                    # Update local connection expiry
                     connection.expiry_date = subscription.expiry_date
                     connection.sync_status = "synced"
                     connection.last_sync_at = now
 
-                # Reset traffic
+                    if connection.inbound.type in ("awg_inbound", "mtproxy_inbound") and not connection.is_enabled:
+                        await provider.enable_client(connection.inbound, connection)
+                        connection.is_enabled = True
+
                 await provider.reset_client_traffic(connection.inbound, connection)
             except Exception as e:
                 logger.warning(
