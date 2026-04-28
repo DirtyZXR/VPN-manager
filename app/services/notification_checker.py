@@ -418,6 +418,10 @@ class NotificationChecker:
             logger.debug(f"Skipping traffic for connection {conn.id} (type={conn.type})")
             return None
 
+        if getattr(server, "is_online", True) is False:
+            logger.debug(f"Skipping traffic for connection {conn.id} (server {server.id} offline)")
+            return None
+
         try:
             logger.debug(f"Getting traffic for connection {conn.id} (type={conn.type}, inbound={inbound.id}, server={server.id})")
 

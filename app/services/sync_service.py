@@ -206,7 +206,7 @@ class SyncService:
                 logger.debug(f"[SYNC] Сервер {server.id} ping: {'Успешно' if is_online else 'Неудачно'}")
 
             xui_client = None
-            if server.xui_panel and server.xui_panel.url and server.xui_panel.username:
+            if server.is_online and server.xui_panel and server.xui_panel.url and server.xui_panel.username:
                 # Получить XUI клиент
                 xui_client = await self._xui_service._get_client(server)
                 # Синхронизировать inbounds
