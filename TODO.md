@@ -1,24 +1,5 @@
 # TODO
 
-## Баг: sync_service ломается на AWGInbound/MTProxyInbound — нет xui_id ✅ DONE
-
-**Приоритет:** высокий
-**Коммит:** `bf38764`
-
-Рефакторинг в protocol_sync registry. Каждый протокол — свой `ProtocolSyncBase`.
-
----
-
-## Баг: сгенерированный пароль XUI не работает
-
-**Приоритет:** высокий
-
-### Суть
-
-При подключении существующей 3x-ui с генерацией нового пароля — пароль не подходит для входа в панель. SQL с bcrypt-хешем передаётся через stdin (`input_data=`), но результат в 3x-ui DB не соответствует ожидаемому. Нужно проверить: фактически ли хеш записывается корректно, перезапускается ли контейнер, и совпадает ли bcrypt rounds с тем что ожидает 3x-ui.
-
----
-
 ## Баг: callback.answer() MESSAGE_TOO_LONG
 
 **Приоритет:** высокий
@@ -32,26 +13,6 @@
 ### Фикс
 
 Обрезать `message` до 190 символов перед передачей в `callback.answer()`, либо отправлять `callback.message.answer()` вместо alert если текст длинный.
-
----
-
-## Баг: XUI не синхронизируется после добавления ✅ FIXED
-
-**Приоритет:** высокий
-**Коммит:** (pending)
-
-### Корневые причины
-
-1. **Пароль хранился plain text** — 3 handler'а записывали `password_encrypted = password` без Fernet-шифрования. `_decrypt_password` молча возвращал `""`.
-2. **`verify_ssl = True`** — default в модели, handler'ы не устанавливали при создании XUIPanel. Caddy self-signed → `SSLCertVerificationError`.
-3. **Handler игнорировал `sync_server()` return** — всегда показывал «✅ Синхронизация завершена» даже при `False`.
-
-### Фикс
-
-1. Добавлен `encrypt_password()` в `app/utils/__init__.py`. Все 3 handler'а шифруют пароль перед записью.
-2. `verify_ssl=False` при создании XUIPanel через инсталлер.
-3. `_decrypt_password` теперь кидает `ValueError` вместо возврата `""`.
-4. `sync_server` handler проверяет результат и показывает ошибку при `False`
 
 ---
 
@@ -86,20 +47,6 @@ await callback.message.answer("✅ Результат: ...")
 
 - `test_server` handler (`servers.py:385`) — обрезать error message до 190 символов + early `callback.answer()`
 - Проверить все handler'ы где `callback.answer()` вызывается после SSH/API операций
-
----
-
-## Инсталлеры: предпроверка «уже установлен» ДО мастера установки ✅ DONE
-
-**Коммит:** `4c78942`
-
----
-
-## Инсталлеры: progress bar при установке ✅ DONE
-
-**Коммит:** `7ddbc22`
-
-`BaseInstaller._progress(step, total, text)` с rate limiting 1/сек. Все 3 инсталлера + 6 handlers.
 
 ---
 
