@@ -116,8 +116,12 @@ class XUIClient:
             return
 
         # Fall back to login
-        await self.login()
-        logger.info("Successfully connected to {}", self.base_url)
+        try:
+            await self.login()
+            logger.info("Successfully connected to {}", self.base_url)
+        except Exception:
+            await self.close()
+            raise
 
     async def close(self) -> None:
         """Close session properly.
