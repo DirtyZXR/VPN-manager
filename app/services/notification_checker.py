@@ -15,6 +15,7 @@ from app.database.models import (
     Inbound,
     InboundConnection,
     NotificationLog,
+    Server,
     Subscription,
 )
 from app.database.models.notification_log import (
@@ -68,6 +69,7 @@ class NotificationChecker:
                     .selectinload(Subscription.inbound_connections)
                     .selectinload(InboundConnection.inbound)
                     .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
                 )
             )
             clients = list(clients_result.scalars())
