@@ -245,10 +245,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         )
         return
 
-    # Answer immediately with a loading text
-    await callback.answer(t("user.subs.loading_details", "⏳ Загрузка деталей подписки..."))
-
     subscription_id = int(callback.data.split("_")[-1])
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
 
     async with async_session_factory() as session:
         service = NewSubscriptionService(session)
@@ -350,7 +350,6 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                         text=f"📱 QR {inbound_remark}", callback_data=f"user_dl_conf_{conn_id}"
                     ))
                 else:
-                    text += t("user.subs.conn_file", "  • Конфиг: (см. кнопку ниже)\n")
                     conn_id = conn_list[0]["connection"].id
                     server_name = conn_list[0].get("server_name", "")
                     remark = conn_list[0]["inbound"].remark.split(":")[0]
