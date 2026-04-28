@@ -207,6 +207,9 @@ class BaseInstaller:
         if not await self._docker_is_available():
             logger.info("Docker not found, installing...")
             await self._ensure_docker()
+        elif not await self._compose_is_available():
+            logger.info("Docker found but compose v2 missing, installing plugin...")
+            await self._install_compose_plugin()
 
         if await self.is_prepared():
             logger.info(f"Host already prepared ({PREPARED_MARKER} exists), skipping utils/UFW")
@@ -285,31 +288,34 @@ class BaseInstaller:
             return False
 
     async def _install_compose_plugin(self) -> None:
-        """Install docker compose v2 plugin via package manager."""
+        """Install docker compose v2 plugin via package manager or direct binary download."""
         dist = await self._detect_os()
-        if dist == "debian":
-            await self._cmd(
-                "apt-get update -yq && apt-get install -yq docker-compose-plugin"
-            )
-        elif dist == "fedora":
-            await self._cmd("dnf install -yq docker-compose-plugin")
-        elif dist == "centos":
-            await self._cmd("yum install -yq docker-compose-plugin")
-        elif dist == "opensuse":
-            await self._cmd("zypper -nq install docker-compose-plugin")
-        elif dist == "archlinux":
-            await self._cmd(
-                "pacman -S --noconfirm --noprogressbar docker-compose"
-            )
-        else:
-            await self._cmd(
-                "mkdir -p /usr/local/lib/docker/cli-plugins && "
-                "curl -SL "
-                "https://github.com/docker/compose/releases/latest/download/"
-                "docker-compose-linux-x86_64 "
-                "-o /usr/local/lib/docker/cli-plugins/docker-compose && "
-                "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose"
-            )
+
+        pkg_cmds = {
+            "debian": "apt-get update -yq && apt-get install -yq docker-compose-plugin",
+            "fedora": "dnf install -yq docker-compose-plugin",
+            "centos": "yum install -yq docker-compose-plugin",
+            "opensuse": "zypper -nq install docker-compose-plugin",
+            "archlinux": "pacman -S --noconfirm --noprogressbar docker-compose",
+        }
+
+        cmd = pkg_cmds.get(dist)
+        if cmd:
+            try:
+                await self._cmd(cmd)
+                if await self._compose_is_available():
+                    return
+            except Exception:
+                logger.warning(f"Package manager install failed for dist '{dist}', trying binary download")
+
+        await self._cmd(
+            "mkdir -p /usr/local/lib/docker/cli-plugins && "
+            "curl -SL "
+            "https://github.com/docker/compose/releases/latest/download/"
+            "docker-compose-linux-x86_64 "
+            "-o /usr/local/lib/docker/cli-plugins/docker-compose && "
+            "chmod +x /usr/local/lib/docker/cli-plugins/docker-compose"
+        )
 
         if not await self._compose_is_available():
             raise RuntimeError(

@@ -961,14 +961,23 @@ async def get_connection_config(callback: CallbackQuery, is_admin: bool) -> None
                     buf.read(),
                     filename=config.get("filename", "vpn_config.conf"),
                 )
-                await callback.message.answer_document(
-                    file,
-                    caption=t(
-                        "admin.subscriptions.config_file_caption",
-                        "📄 Конфиг для {remark}",
-                        remark=inbound.remark,
-                    ),
+                caption = t(
+                    "admin.subscriptions.config_file_caption",
+                    "📄 Конфиг для {remark}",
+                    remark=inbound.remark,
                 )
+                await callback.message.answer_document(file, caption=caption)
+
+                if config.get("vpn_uri"):
+                    await callback.message.answer(
+                        t(
+                            "admin.subscriptions.config_vpn_uri",
+                            "📱 Нативная ссылка AmneziaVPN:\n\n<code>{uri}</code>\n\n"
+                            "Нажмите на ссылку чтобы открыть в приложении AmneziaVPN.",
+                            uri=config["vpn_uri"][:200] + "..." if len(config["vpn_uri"]) > 200 else config["vpn_uri"],
+                        ),
+                        parse_mode="HTML",
+                    )
             elif config["config_type"] == "link":
                 await callback.message.answer(
                     t(

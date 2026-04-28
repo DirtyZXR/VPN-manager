@@ -1435,6 +1435,8 @@ async def show_inbound_stats(callback: CallbackQuery, is_admin: bool) -> None:
             return
 
         try:
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+
             # Get inbounds from database
             inbounds = await service.get_server_inbounds(server_id)
 
@@ -1471,8 +1473,6 @@ async def show_inbound_stats(callback: CallbackQuery, is_admin: bool) -> None:
                     disabled=stats["disabled_clients"],
                     used=stats["total_used_gb"],
                 )
-
-            from aiogram.utils.keyboard import InlineKeyboardBuilder
 
             kb = InlineKeyboardBuilder()
             kb.button(
@@ -3051,8 +3051,12 @@ async def awg_connect_existing(callback: CallbackQuery, state: FSMContext) -> No
         return
 
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from aiogram.utils.text_decorations import html_decoration
 
-    obf_text = "\n".join(f"  {k} = {v}" for k, v in params["obfuscation"].items())
+    obf_text = "\n".join(
+        f"  {k} = {html_decoration.quote(v)}"
+        for k, v in params["obfuscation"].items()
+    )
     await msg.edit_text(
         "🛡 <b>AmneziaWG найден!</b> Параметры из awg0.conf:\n\n"
         f"Порт: <code>{params['port']}/udp</code>\n"
@@ -3337,12 +3341,16 @@ async def awg_obf_params_input(message: TgMessage, state: FSMContext) -> None:
 
 async def _show_awg_confirm(message, state: FSMContext) -> None:
     """Show installation confirmation with all parameters."""
+    from aiogram.utils.text_decorations import html_decoration
+
     data = await state.get_data()
     port = data["port"]
     obf = data["obfuscation"]
     connect_existing = data.get("connect_existing", False)
 
-    obf_text = "\n".join(f"  {k} = {v}" for k, v in obf.items())
+    obf_text = "\n".join(
+        f"  {k} = {html_decoration.quote(str(v))}" for k, v in obf.items()
+    )
 
     await state.set_state(AWGInstall.confirm_install)
 

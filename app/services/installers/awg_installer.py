@@ -29,23 +29,42 @@ AWG_SUBNET_CIDR_DEFAULT = 24
 AWG_SUBNET_IP_DEFAULT = "10.8.0.1"
 
 
-def generate_obfuscation_params() -> dict[str, int]:
-    """Generate random AWG obfuscation parameters within safe ranges.
+I1_DEFAULT = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
 
-    Based on original AmneziaVPN defaults and community recommendations.
+
+def generate_obfuscation_params() -> dict[str, str]:
+    """Generate AWG v2 obfuscation parameters matching original AmneziaVPN.
+
+    H1-H4: non-overlapping ascending ranges in [5, 2^31-1].
+    I1: DNS A response for icloud.com (default anti-DPI junk).
+    I2-I5: empty (reserved for future use).
     """
+    max_val = (2**31) - 1
+    headers = []
+    lo = 5
+    for _ in range(4):
+        first = random.randint(lo, max_val)
+        second = random.randint(first, max_val)
+        headers.append(f"{first}-{second}")
+        lo = second + 1
+
     return {
-        "Jc": random.randint(3, 10),
-        "Jmin": random.randint(50, 300),
-        "Jmax": random.randint(500, 1500),
-        "S1": random.randint(20, 100),
-        "S2": random.randint(20, 100),
-        "S3": random.randint(20, 100),
-        "S4": random.randint(20, 100),
-        "H1": random.randint(1, 2**32 - 1),
-        "H2": random.randint(1, 2**32 - 1),
-        "H3": random.randint(1, 2**32 - 1),
-        "H4": random.randint(1, 2**32 - 1),
+        "Jc": str(random.randint(3, 10)),
+        "Jmin": str(random.randint(10, 50)),
+        "Jmax": str(random.randint(50, 100)),
+        "S1": str(random.randint(15, 100)),
+        "S2": str(random.randint(15, 100)),
+        "S3": str(random.randint(15, 100)),
+        "S4": str(random.randint(15, 100)),
+        "H1": headers[0],
+        "H2": headers[1],
+        "H3": headers[2],
+        "H4": headers[3],
+        "I1": I1_DEFAULT,
+        "I2": "",
+        "I3": "",
+        "I4": "",
+        "I5": "",
     }
 
 
@@ -70,9 +89,12 @@ class AWGInstaller(BaseInstaller):
 
         obfuscation = {}
         for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"):
-            m = re.search(rf"{key}\s*=\s*(\d+)", config)
+            m = re.search(rf"{key}\s*=\s*(.+)", config)
             if m:
-                obfuscation[key] = int(m.group(1))
+                obfuscation[key] = m.group(1).strip()
+        for key in ("I1", "I2", "I3", "I4", "I5"):
+            m = re.search(rf"{key}\s*=\s*(.*)", config)
+            obfuscation[key] = m.group(1).strip() if m else ""
 
         public_key = ""
         with contextlib.suppress(Exception):
@@ -94,7 +116,7 @@ class AWGInstaller(BaseInstaller):
         port: int,
         subnet_ip: str = AWG_SUBNET_IP_DEFAULT,
         subnet_cidr: int = AWG_SUBNET_CIDR_DEFAULT,
-        obfuscation: dict[str, int] | None = None,
+        obfuscation: dict[str, str] | None = None,
         force: bool = False,
     ) -> dict:
         """Install AmneziaWG on the server.
@@ -272,7 +294,7 @@ tail -f /dev/null
         port: int,
         subnet_ip: str,
         subnet_cidr: int,
-        obfuscation: dict[str, int],
+        obfuscation: dict[str, str],
     ) -> None:
         name = f"vpnbot-{AWG_CONTAINER_NAME}"
 
@@ -297,9 +319,11 @@ tail -f /dev/null
                 input_data=content,
             )
 
-        obf_lines = "\n".join(
-            f"{k} = {v}" for k, v in obfuscation.items()
-        )
+        obf_keys = ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"]
+        obf_lines = "\n".join(f"{k} = {obfuscation[k]}" for k in obf_keys if obfuscation.get(k))
+
+        i_keys = ["I1", "I2", "I3", "I4", "I5"]
+        i_lines = "\n".join(f"# {k} = {obfuscation.get(k, '')}" for k in i_keys)
 
         config = (
             f"[Interface]\n"
@@ -307,6 +331,7 @@ tail -f /dev/null
             f"Address = {subnet_ip}/{subnet_cidr}\n"
             f"ListenPort = {port}\n"
             f"{obf_lines}\n"
+            f"{i_lines}\n"
         )
 
         await self._cmd(

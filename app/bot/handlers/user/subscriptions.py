@@ -254,46 +254,43 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription(subscription_id)
 
-    if not subscription or subscription.client_id != client.id:
-        await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
-        return
+        if not subscription or subscription.client_id != client.id:
+            await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
+            return
 
-    # Use new subscription status property
-    status = subscription.subscription_status
+        status = subscription.subscription_status
 
-    has_xui = any(
-        getattr(conn.inbound.server, "panel_type", "xui") == "xui"
-        for conn in subscription.inbound_connections
-    )
-    token_text = (
-        t(
-            "user.subs.details_token",
-            "\nТокен: <code>{token}</code>",
-            token=subscription.subscription_token,
+        has_xui = any(
+            getattr(conn.inbound.server, "panel_type", "xui") == "xui"
+            for conn in subscription.inbound_connections
         )
-        if has_xui
-        else ""
-    )
+        token_text = (
+            t(
+                "user.subs.details_token",
+                "\nТокен: <code>{token}</code>",
+                token=subscription.subscription_token,
+            )
+            if has_xui
+            else ""
+        )
 
-    text = t(
-        "user.subs.details_header",
-        "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n",
-        name=subscription.name,
-        status=status,
-        created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
-        active=subscription.active_connections_count,
-        total=len(subscription.inbound_connections),
-        token_text=token_text,
-    )
+        text = t(
+            "user.subs.details_header",
+            "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n",
+            name=subscription.name,
+            status=status,
+            created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
+            active=subscription.active_connections_count,
+            total=len(subscription.inbound_connections),
+            token_text=token_text,
+        )
 
-    # Group configs by URL or connection ID
-    config_groups = defaultdict(list)
-    builder = InlineKeyboardBuilder()
+        config_groups = defaultdict(list)
+        builder = InlineKeyboardBuilder()
 
-    from app.services.vpn_providers import get_vpn_provider
+        from app.services.vpn_providers import get_vpn_provider
 
-    providers = {}
-    try:
+        providers = {}
         for conn in subscription.inbound_connections:
             if conn.is_enabled:
                 server = conn.inbound.server
@@ -325,7 +322,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 except Exception as e:
                     logger.warning(f"Failed to get config for conn {conn.id}: {e}", exc_info=True)
 
-        if config_groups:
+    if config_groups:
             logger.info(
                 f"Rendering config_groups for subscription {subscription.id}: {list(config_groups.keys())}"
             )
@@ -397,19 +394,19 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
                 text += "\n"
 
-        builder.button(
-            text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
-            callback_data="my_subscriptions",
-        )
-        builder.adjust(1)
+    builder.button(
+        text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+        callback_data="my_subscriptions",
+    )
+    builder.adjust(1)
 
-        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    finally:
-        for p in providers.values():
-            try:
-                await p.close()
-            except Exception as e:
-                logger.warning(f"Failed to close provider: {e}")
+    import contextlib
+
+    for p in providers.values():
+        with contextlib.suppress(Exception):
+            await p.close()
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_export")
@@ -805,7 +802,6 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
                 config_type = config.get("config_type", "file")
 
                 if config_type == "file":
-                    # Send as .conf document
                     file_content = config_data.encode("utf-8")
                     filename = f"{conn.subscription.name}_{conn.inbound.remark}.conf".replace(
                         " ", "_"
@@ -819,6 +815,19 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
                             remark=conn.inbound.remark,
                         ),
                     )
+
+                    if config.get("vpn_uri"):
+                        uri = config["vpn_uri"]
+                        display = uri[:150] + "..." if len(uri) > 150 else uri
+                        await callback.message.answer(
+                            text=t(
+                                "user.subs.vpn_uri_caption",
+                                "📱 Нативная ссылка AmneziaVPN:\n\n<code>{uri}</code>\n\n"
+                                "Нажмите чтобы открыть в приложении.",
+                                uri=display,
+                            ),
+                            parse_mode="HTML",
+                        )
                 else:
                     # Send as link message
                     if config_data.startswith("tg://") or "t.me" in config_data:
