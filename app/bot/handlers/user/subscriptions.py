@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
@@ -317,6 +317,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                             "inbound": conn.inbound,
                             "connection": conn,
                             "config_type": config_type,
+                            "vpn_uri": config_dict.get("vpn_uri"),
                         }
                     )
                 except Exception as e:
@@ -343,21 +344,29 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                             "user.subs.conn_url", "  • URL: <code>{url}</code>\n", url=group_key
                         )
 
-                    # Add QR code button
                     conn_id = conn_list[0]["connection"].id
                     inbound_remark = conn_list[0]["inbound"].remark
-                    builder.button(
+                    builder.row(InlineKeyboardButton(
                         text=f"📱 QR {inbound_remark}", callback_data=f"user_dl_conf_{conn_id}"
-                    )
+                    ))
                 else:
-                    # Indicate that it's a file configuration
                     text += t("user.subs.conn_file", "  • Конфиг: (см. кнопку ниже)\n")
-                    # Add a download button for this specific file
                     conn_id = conn_list[0]["connection"].id
                     inbound_remark = conn_list[0]["inbound"].remark
-                    builder.button(
-                        text=f"📥 Скачать {inbound_remark}", callback_data=f"user_dl_conf_{conn_id}"
+                    has_vpn_uri = any(c.get("vpn_uri") for c in conn_list)
+                    uri_btn = None
+                    if has_vpn_uri:
+                        uri_btn = InlineKeyboardButton(
+                            text="🔗 Ссылка",
+                            callback_data=f"user_uri_conf_{conn_id}",
+                        )
+                    dl_btn = InlineKeyboardButton(
+                        text="📥 Скачать", callback_data=f"user_dl_conf_{conn_id}"
                     )
+                    if uri_btn:
+                        builder.row(uri_btn, dl_btn)
+                    else:
+                        builder.row(dl_btn)
 
                 # Show per-inbound traffic and expiry
                 for _i, conn_data in enumerate(conn_list):
@@ -394,11 +403,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
                 text += "\n"
 
-    builder.button(
+    builder.row(InlineKeyboardButton(
         text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
         callback_data="my_subscriptions",
-    )
-    builder.adjust(1)
+    ))
 
     import contextlib
 
@@ -743,6 +751,77 @@ async def process_subscription_request_name(message: Message, state: FSMContext,
     await state.clear()
 
 
+@router.callback_query(F.data.startswith("user_uri_conf_"))
+async def send_vpn_uri(callback: CallbackQuery, client) -> None:
+    if not client:
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
+        return
+
+    conn_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Inbound, InboundConnection
+        from app.database.models.server import Server
+
+        conn_result = await session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.id == conn_id)
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.subscription),
+            )
+        )
+        conn = conn_result.scalar_one_or_none()
+
+        if not conn or conn.subscription.client_id != client.id:
+            await callback.answer(
+                t("user.subs.not_found", "❌ Подключение не найдено."), show_alert=True
+            )
+            return
+
+        from app.services.vpn_providers import get_vpn_provider
+
+        provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
+
+        await callback.answer()
+
+        try:
+            config = await provider.get_client_config(conn.inbound, conn)
+            vpn_uri = config.get("vpn_uri")
+
+            if not vpn_uri:
+                await callback.message.answer(
+                    "❌ Ссылка недоступна для этого подключения."
+                )
+                return
+
+            await callback.message.answer(
+                "📱 <b>Ссылка AmneziaVPN</b>\n\n"
+                "⚠️ Ссылка очень длинная. Скопируйте <b>всё сообщение</b> целиком "
+                "(удерживайте → «Копировать») и вставьте в AmneziaVPN: "
+                "Добавить → Вставить из буфера.\n\n"
+                f"<code>{vpn_uri}</code>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get vpn_uri for connection {conn_id}: {e}", exc_info=True)
+            await callback.message.answer(
+                t("user.subs.download_error", "❌ Ошибка при получении ссылки.")
+            )
+        finally:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await provider.close()
+
+
 @router.callback_query(F.data.startswith("user_dl_conf_"))
 async def download_file_config(callback: CallbackQuery, client) -> None:
     """Download file config (like Wireguard .conf) and QR code."""
@@ -816,18 +895,6 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
                         ),
                     )
 
-                    if config.get("vpn_uri"):
-                        uri = config["vpn_uri"]
-                        display = uri[:150] + "..." if len(uri) > 150 else uri
-                        await callback.message.answer(
-                            text=t(
-                                "user.subs.vpn_uri_caption",
-                                "📱 Нативная ссылка AmneziaVPN:\n\n<code>{uri}</code>\n\n"
-                                "Нажмите чтобы открыть в приложении.",
-                                uri=display,
-                            ),
-                            parse_mode="HTML",
-                        )
                 else:
                     # Send as link message
                     if config_data.startswith("tg://") or "t.me" in config_data:
@@ -886,16 +953,13 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
 
                 logger.warning(f"Failed to close provider: {e}")
 
-            # Restore keyboard
             builder = InlineKeyboardBuilder()
-            # Add back button to return to the subscription details
             builder.button(
                 text=t("user.subs.btn_back_to_sub", "🔙 Назад к подписке"),
                 callback_data=f"user_sub_select_{conn.subscription.id}",
             )
-            # Add back button to return to all subscriptions
             builder.button(
-                text=t("user.subs.btn_back_to_subs", "🔙 Назад ко всем подпискам"),
+                text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
                 callback_data="my_subscriptions",
             )
             builder.adjust(1)
