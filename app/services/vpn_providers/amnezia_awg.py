@@ -300,7 +300,9 @@ class AmneziaAWGProvider(BaseVPNProvider):
     async def get_client_config(
         self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
     ) -> dict[str, Any]:
-        sp = await self._get_awg_server_params()
+        awg = self.server.awg_service
+        if not awg:
+            return {"config_type": "empty", "config_data": None}
 
         private_key = connection.private_key
         public_key = connection.public_key
@@ -308,14 +310,14 @@ class AmneziaAWGProvider(BaseVPNProvider):
         psk = connection.psk
 
         host = self.server.ip_address
-        port = sp.get("ListenPort", "51820")
-        server_pub_key = (await self._get_server_public_key()).strip()
+        port = str(awg.port)
+        server_pub_key = awg.server_public_key or ""
 
+        obfuscation = awg.obfuscation or {}
         obfs_keys = ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"]
         i_keys = ["I1", "I2", "I3", "I4", "I5"]
         i_params = self._get_i_params()
 
-        # .conf file
         config_lines = [
             "[Interface]",
             f"Address = {client_ip}/32",
@@ -323,8 +325,9 @@ class AmneziaAWGProvider(BaseVPNProvider):
             f"PrivateKey = {private_key}",
         ]
         for key in obfs_keys:
-            if sp.get(key):
-                config_lines.append(f"{key} = {sp[key]}")
+            val = obfuscation.get(key)
+            if val:
+                config_lines.append(f"{key} = {val}")
         for key in i_keys:
             val = i_params.get(key, "")
             if val:
@@ -341,7 +344,6 @@ class AmneziaAWGProvider(BaseVPNProvider):
         ])
         config_str = "\n".join(config_lines)
 
-        # Native AmneziaVPN JSON (last_config format)
         amnezia_json = {
             "client_priv_key": private_key,
             "client_pub_key": public_key,
@@ -357,17 +359,17 @@ class AmneziaAWGProvider(BaseVPNProvider):
             "config": config_str,
         }
         for key in obfs_keys:
-            amnezia_json[key] = sp.get(key, "")
+            amnezia_json[key] = obfuscation.get(key, "")
         for key in i_keys:
             amnezia_json[key] = i_params.get(key, "")
 
-        # AmneziaVPN container structure (matches original client export format)
+        subnet = f"{awg.subnet_ip}/{awg.subnet_cidr}" if awg.subnet_ip else "10.8.0.0/24"
         awg_container = {
             "container": "amnezia-awg2",
             "awg": {
                 "port": port,
                 "transport_proto": "udp",
-                "subnet_address": self._get_subnet_address(sp),
+                "subnet_address": subnet,
                 "mtu": "1280",
                 "protocol_version": "2",
                 "last_config": json.dumps(amnezia_json, ensure_ascii=False),
@@ -384,14 +386,10 @@ class AmneziaAWGProvider(BaseVPNProvider):
 
         vpn_uri = self._encode_vpn_uri(server_config)
 
-        # TODO: QR-код генерируется, но не используется — приложение AmneziaVPN пока не поддерживает QR для AWG
-        qr_base64 = self._generate_qr_code(config_str)
-
         return {
             "config_type": "file",
             "config_data": config_str,
             "filename": f"AWG_{connection.subscription.name}.conf",
-            "qr_code_base64": qr_base64,
             "vpn_uri": vpn_uri,
             "amnezia_json": amnezia_json,
         }

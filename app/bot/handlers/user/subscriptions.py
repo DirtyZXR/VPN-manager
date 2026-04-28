@@ -288,21 +288,42 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         config_groups = defaultdict(list)
         builder = InlineKeyboardBuilder()
 
-        from app.services.vpn_providers import get_vpn_provider
-
-        providers = {}
         for conn in subscription.inbound_connections:
             if conn.is_enabled:
                 server = conn.inbound.server
-                try:
-                    cache_key = (server.id, conn.inbound.type)
-                    if cache_key not in providers:
-                        providers[cache_key] = get_vpn_provider(server, inbound_type=conn.inbound.type)
-                    provider = providers[cache_key]
+                inbound = conn.inbound
 
-                    config_dict = await provider.get_client_config(conn.inbound, conn)
-                    config_type = config_dict.get("config_type")
-                    config_data = config_dict.get("config_data")
+                if inbound.type in ("awg",):
+                    config_type = "file"
+                    has_vpn_uri = bool(server.awg_service)
+                    group_key = f"file_{conn.id}"
+                elif inbound.type in ("mtproxy",):
+                    config_type = "link"
+                    if server.mtproxy_service and server.mtproxy_service.default_secret:
+                        config_data = f"tg://proxy?server={server.ip_address}&port={server.mtproxy_service.port}&secret={server.mtproxy_service.default_secret}"
+                    else:
+                        config_type = "empty"
+                        config_data = None
+                    group_key = config_data or f"link_{conn.id}"
+                    has_vpn_uri = False
+                else:
+                    try:
+                        from app.services.vpn_providers import get_vpn_provider
+
+                        provider = get_vpn_provider(server, inbound_type=inbound.type)
+                        config_dict = await provider.get_client_config(inbound, conn)
+                        config_type = config_dict.get("config_type")
+                        config_data = config_dict.get("config_data")
+                        has_vpn_uri = bool(config_dict.get("vpn_uri"))
+                        import contextlib
+
+                        with contextlib.suppress(Exception):
+                            await provider.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to get config for conn {conn.id}: {e}", exc_info=True)
+                        config_type = "empty"
+                        config_data = None
+                        has_vpn_uri = False
 
                     if config_type == "empty":
                         group_key = f"empty_{conn.id}"
@@ -311,17 +332,15 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                     else:
                         group_key = f"file_{conn.id}"
 
-                    config_groups[group_key].append(
-                        {
-                            "server_name": server.name,
-                            "inbound": conn.inbound,
-                            "connection": conn,
-                            "config_type": config_type,
-                            "vpn_uri": config_dict.get("vpn_uri"),
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to get config for conn {conn.id}: {e}", exc_info=True)
+                config_groups[group_key].append(
+                    {
+                        "server_name": server.name,
+                        "inbound": inbound,
+                        "connection": conn,
+                        "config_type": config_type,
+                        "vpn_uri": has_vpn_uri,
+                    }
+                )
 
     if config_groups:
             logger.info(
@@ -407,12 +426,6 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
         callback_data="my_subscriptions",
     ))
-
-    import contextlib
-
-    for p in providers.values():
-        with contextlib.suppress(Exception):
-            await p.close()
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
@@ -614,11 +627,12 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
 
             # Add connection status indicator
             conn_status = "✅" if conn.is_connection_active else "❌"
+            display_remark = inbound.remark.split(":")[0]
             text += t(
                 "user.status.conn_info",
-                "      {status} {remark} ({server})\n",
+                "      {status} {remark} | {server}\n",
                 status=conn_status,
-                remark=inbound.remark,
+                remark=display_remark,
                 server=server.name,
             )
             text += t("user.status.conn_expiry", "        📅 Срок: {expiry}\n", expiry=conn_expiry)
@@ -801,10 +815,6 @@ async def send_vpn_uri(callback: CallbackQuery, client) -> None:
                 return
 
             await callback.message.answer(
-                "📱 <b>Ссылка AmneziaVPN</b>\n\n"
-                "⚠️ Ссылка очень длинная. Скопируйте <b>всё сообщение</b> целиком "
-                "(удерживайте → «Копировать») и вставьте в AmneziaVPN: "
-                "Добавить → Вставить из буфера.\n\n"
                 f"<code>{vpn_uri}</code>",
                 parse_mode="HTML",
             )
