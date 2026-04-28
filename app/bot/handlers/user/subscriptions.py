@@ -352,18 +352,19 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 else:
                     text += t("user.subs.conn_file", "  • Конфиг: (см. кнопку ниже)\n")
                     conn_id = conn_list[0]["connection"].id
-                    inbound_remark = conn_list[0]["inbound"].remark
+                    server_name = conn_list[0].get("server_name", "")
+                    remark = conn_list[0]["inbound"].remark.split(":")[0]
+                    label = f"{remark} | {server_name}" if server_name else remark
                     has_vpn_uri = any(c.get("vpn_uri") for c in conn_list)
-                    uri_btn = None
                     if has_vpn_uri:
                         uri_btn = InlineKeyboardButton(
-                            text="🔗 Ссылка",
+                            text=f"🔗 {label}",
                             callback_data=f"user_uri_conf_{conn_id}",
                         )
                     dl_btn = InlineKeyboardButton(
-                        text="📥 Скачать", callback_data=f"user_dl_conf_{conn_id}"
+                        text=f"📥 {label}", callback_data=f"user_dl_conf_{conn_id}"
                     )
-                    if uri_btn:
+                    if has_vpn_uri:
                         builder.row(uri_btn, dl_btn)
                     else:
                         builder.row(dl_btn)
@@ -388,12 +389,12 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                     # Add connection status indicator with server name
                     conn_status = "✅" if conn.is_connection_active else "❌"
                     server_name = conn_data.get("server_name", "Unknown")
+                    display_remark = inbound.remark.split(":")[0]
                     text += t(
                         "user.subs.conn_info",
-                        "    └ {status} {remark} ({protocol}) | {server}\n",
+                        "    └ {status} {remark} | {server}\n",
                         status=conn_status,
-                        remark=inbound.remark,
-                        protocol=inbound.protocol,
+                        remark=display_remark,
                         server=server_name,
                     )
                     text += t(
@@ -797,9 +798,7 @@ async def send_vpn_uri(callback: CallbackQuery, client) -> None:
             vpn_uri = config.get("vpn_uri")
 
             if not vpn_uri:
-                await callback.message.answer(
-                    "❌ Ссылка недоступна для этого подключения."
-                )
+                await callback.message.answer("❌ Ссылка недоступна для этого подключения.")
                 return
 
             await callback.message.answer(
@@ -820,6 +819,21 @@ async def send_vpn_uri(callback: CallbackQuery, client) -> None:
 
             with contextlib.suppress(Exception):
                 await provider.close()
+
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text=t("user.subs.btn_back_to_sub", "🔙 Назад к подписке"),
+                callback_data=f"user_sub_select_{conn.subscription.id}",
+            )
+            builder.button(
+                text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+                callback_data="my_subscriptions",
+            )
+            builder.adjust(1)
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
 
 
 @router.callback_query(F.data.startswith("user_dl_conf_"))
@@ -868,7 +882,6 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
 
         provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
 
-        await callback.message.edit_reply_markup(reply_markup=None)  # temporary disable buttons
         await callback.answer(t("user.subs.downloading", "⏳ Загрузка конфига..."))
 
         try:
@@ -882,7 +895,8 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
 
                 if config_type == "file":
                     file_content = config_data.encode("utf-8")
-                    filename = f"{conn.subscription.name}_{conn.inbound.remark}.conf".replace(
+                    display_remark = conn.inbound.remark.split(":")[0]
+                    filename = f"{conn.subscription.name}_{display_remark}.conf".replace(
                         " ", "_"
                     )
                     doc = BufferedInputFile(file_content, filename=filename)
@@ -891,7 +905,7 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
                         caption=t(
                             "user.subs.config_caption",
                             "📁 Ваш конфигурационный файл для {remark}",
-                            remark=conn.inbound.remark,
+                            remark=display_remark,
                         ),
                     )
 
