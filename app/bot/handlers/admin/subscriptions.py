@@ -1215,21 +1215,42 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
                     inbound = conn.inbound
                     server = inbound.server
 
+                    if conn.type == "xui_inbound_connection":
+                        conn_detail = t(
+                            "admin.subscriptions.inbound_item_xui",
+                            "   Email: {email}\n   UUID: {uuid}\n",
+                            email=conn.email or "N/A",
+                            uuid=conn.uuid or "N/A",
+                        )
+                    elif conn.type == "awg_inbound_connection":
+                        conn_detail = t(
+                            "admin.subscriptions.inbound_item_awg",
+                            "   IP: {ip}\n   Public Key: {pub_key}\n",
+                            ip=conn.client_ip or "N/A",
+                            pub_key=(conn.public_key or "N/A")[:20] + "...",
+                        )
+                    elif conn.type == "mtproxy_inbound_connection":
+                        conn_detail = t(
+                            "admin.subscriptions.inbound_item_mtproxy",
+                            "   Secret: {secret}\n",
+                            secret=(conn.secret or "N/A")[:20] + "...",
+                        )
+                    else:
+                        conn_detail = ""
+
                     text += t(
                         "admin.subscriptions.inbound_item",
                         "{status} {remark} ({protocol})\n"
                         "   Сервер: {server_name}\n"
                         "   Порт: {port}\n"
-                        "   Email: {email}\n"
-                        "   UUID: {uuid}\n"
+                        "{conn_detail}"
                         "   ID подключения: {conn_id}\n\n",
                         status=conn_status,
                         remark=inbound.remark,
                         protocol=inbound.protocol,
                         server_name=server.name,
                         port=inbound.port,
-                        email=conn.email,
-                        uuid=conn.uuid,
+                        conn_detail=conn_detail,
                         conn_id=conn.id,
                     )
 
@@ -1533,12 +1554,22 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
                     inbound = conn.inbound
                     server = inbound.server
 
+                    if conn.type == "xui_inbound_connection":
+                        conn_detail = f"   Email: {conn.email or 'N/A'}\n   UUID: {conn.uuid or 'N/A'}\n"
+                    elif conn.type == "awg_inbound_connection":
+                        pub_key = (conn.public_key or "N/A")
+                        conn_detail = f"   IP: {conn.client_ip or 'N/A'}\n   Public Key: {pub_key[:20]}...\n"
+                    elif conn.type == "mtproxy_inbound_connection":
+                        secret = conn.secret or "N/A"
+                        conn_detail = f"   Secret: {secret[:20]}...\n"
+                    else:
+                        conn_detail = ""
+
                     text += (
                         f"{status} {inbound.remark} ({inbound.protocol})\n"
                         f"   Сервер: {server.name}\n"
                         f"   Порт: {inbound.port}\n"
-                        f"   Email: {conn.email}\n"
-                        f"   UUID: {conn.uuid}\n"
+                        f"{conn_detail}"
                         f"   ID подключения: {conn.id}\n\n"
                     )
 
@@ -1669,12 +1700,22 @@ async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> 
         inbound = conn.inbound
         server = inbound.server
 
+        if conn.type == "xui_inbound_connection":
+            conn_detail = f"   Email: {conn.email or 'N/A'}\n   UUID: {conn.uuid or 'N/A'}\n"
+        elif conn.type == "awg_inbound_connection":
+            pub_key = conn.public_key or "N/A"
+            conn_detail = f"   IP: {conn.client_ip or 'N/A'}\n   Public Key: {pub_key[:20]}...\n"
+        elif conn.type == "mtproxy_inbound_connection":
+            secret = conn.secret or "N/A"
+            conn_detail = f"   Secret: {secret[:20]}...\n"
+        else:
+            conn_detail = ""
+
         text += (
             f"{status} {inbound.remark} ({inbound.protocol})\n"
             f"   Сервер: {server.name}\n"
             f"   Порт: {inbound.port}\n"
-            f"   Email: {conn.email}\n"
-            f"   UUID: {conn.uuid}\n"
+            f"{conn_detail}"
             f"   ID подключения: {conn.id}\n\n"
         )
 

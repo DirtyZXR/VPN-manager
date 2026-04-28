@@ -190,7 +190,7 @@ class AWGInstaller(BaseInstaller):
             await self._start_container(port)
 
             await self._progress(9, 11, "Генерация ключей и конфигурации...")
-            await self._generate_keys_and_config(
+            keys = await self._generate_keys_and_config(
                 port, subnet_ip, subnet_cidr, obfuscation
             )
 
@@ -208,6 +208,8 @@ class AWGInstaller(BaseInstaller):
                 "subnet_cidr": subnet_cidr,
                 "obfuscation": obfuscation,
                 "service_dir": service_dir,
+                "server_private_key": keys["server_private_key"],
+                "server_public_key": keys["server_public_key"],
             }
         except Exception:
             logger.exception("AWG installation failed, running cleanup")
@@ -295,7 +297,7 @@ tail -f /dev/null
         subnet_ip: str,
         subnet_cidr: int,
         obfuscation: dict[str, str],
-    ) -> None:
+    ) -> dict[str, str]:
         name = f"vpnbot-{AWG_CONTAINER_NAME}"
 
         private_key = await self._cmd(
@@ -338,6 +340,11 @@ tail -f /dev/null
             f"docker exec -i {name} bash -c 'cat > /opt/amnezia/awg/awg0.conf'",
             input_data=config,
         )
+
+        return {
+            "server_private_key": private_key,
+            "server_public_key": public_key,
+        }
 
     async def _restart_container(self) -> None:
         name = f"vpnbot-{AWG_CONTAINER_NAME}"

@@ -683,9 +683,7 @@ admin:
 
       \   Порт: {port}
 
-      \   Email: {email}
-
-      \   UUID: {uuid}
+      {conn_detail}
 
       \   ID подключения: {conn_id}
 

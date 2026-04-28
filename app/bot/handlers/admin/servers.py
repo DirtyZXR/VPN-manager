@@ -3121,6 +3121,10 @@ async def awg_confirm_connect(callback: CallbackQuery, state: FSMContext) -> Non
                 existing.subnet_ip = subnet_ip
                 existing.subnet_cidr = subnet_cidr
                 existing.obfuscation = obf
+                if data.get("server_public_key"):
+                    existing.server_public_key = data["server_public_key"]
+                if data.get("server_private_key"):
+                    existing.server_private_key = data["server_private_key"]
             else:
                 awg_service = AWGService(
                     server_id=server.id,
@@ -3128,6 +3132,8 @@ async def awg_confirm_connect(callback: CallbackQuery, state: FSMContext) -> Non
                     subnet_ip=subnet_ip,
                     subnet_cidr=subnet_cidr,
                     obfuscation=obf,
+                    server_public_key=data.get("server_public_key"),
+                    server_private_key=data.get("server_private_key"),
                 )
                 session.add(awg_service)
 
@@ -3451,6 +3457,8 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                     existing_awg.subnet_ip = install_result["subnet_ip"]
                     existing_awg.subnet_cidr = install_result["subnet_cidr"]
                     existing_awg.obfuscation = install_result["obfuscation"]
+                    existing_awg.server_public_key = install_result.get("server_public_key")
+                    existing_awg.server_private_key = install_result.get("server_private_key")
                 else:
                     existing_awg.obfuscation = obf
             else:
@@ -3460,6 +3468,8 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                     subnet_ip=install_result["subnet_ip"] if install_result else "10.8.0.1",
                     subnet_cidr=install_result["subnet_cidr"] if install_result else 24,
                     obfuscation=install_result["obfuscation"] if install_result else obf,
+                    server_public_key=install_result.get("server_public_key") if install_result else None,
+                    server_private_key=install_result.get("server_private_key") if install_result else None,
                 )
                 session.add(awg_service)
 
@@ -3585,6 +3595,8 @@ async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
                 existing.subnet_ip = install_result["subnet_ip"]
                 existing.subnet_cidr = install_result["subnet_cidr"]
                 existing.obfuscation = install_result["obfuscation"]
+                existing.server_public_key = install_result.get("server_public_key")
+                existing.server_private_key = install_result.get("server_private_key")
             else:
                 awg_service = AWGService(
                     server_id=server.id,
@@ -3592,6 +3604,8 @@ async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
                     subnet_ip=install_result["subnet_ip"],
                     subnet_cidr=install_result["subnet_cidr"],
                     obfuscation=install_result["obfuscation"],
+                    server_public_key=install_result.get("server_public_key"),
+                    server_private_key=install_result.get("server_private_key"),
                 )
                 session.add(awg_service)
 

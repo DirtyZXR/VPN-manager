@@ -293,11 +293,11 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                 server = conn.inbound.server
                 inbound = conn.inbound
 
-                if inbound.type in ("awg",):
+                if inbound.type in ("awg_inbound",):
                     config_type = "file"
                     has_vpn_uri = bool(server.awg_service)
                     group_key = f"file_{conn.id}"
-                elif inbound.type in ("mtproxy",):
+                elif inbound.type in ("mtproxy_inbound",):
                     config_type = "link"
                     if server.mtproxy_service and server.mtproxy_service.default_secret:
                         config_data = f"tg://proxy?server={server.ip_address}&port={server.mtproxy_service.port}&secret={server.mtproxy_service.default_secret}"

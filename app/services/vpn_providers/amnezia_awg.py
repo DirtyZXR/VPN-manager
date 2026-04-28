@@ -242,6 +242,8 @@ class AmneziaAWGProvider(BaseVPNProvider):
 
         try:
             await self._kick_peer_from_kernel(public_key)
+            await self._remove_peer_from_config(public_key)
+            await self._sync_config()
             return True
         except Exception as e:
             logger.error(f"Failed to disable AWG client: {e}")
@@ -311,7 +313,9 @@ class AmneziaAWGProvider(BaseVPNProvider):
 
         host = self.server.ip_address
         port = str(awg.port)
-        server_pub_key = awg.server_public_key or ""
+        server_pub_key = awg.server_public_key
+        if not server_pub_key:
+            server_pub_key = (await self._get_server_public_key()).strip()
 
         obfuscation = awg.obfuscation or {}
         obfs_keys = ["Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"]
