@@ -298,9 +298,10 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
             if conn.is_enabled:
                 server = conn.inbound.server
                 try:
-                    if server.id not in providers:
-                        providers[server.id] = get_vpn_provider(server)
-                    provider = providers[server.id]
+                    cache_key = (server.id, conn.inbound.type)
+                    if cache_key not in providers:
+                        providers[cache_key] = get_vpn_provider(server, inbound_type=conn.inbound.type)
+                    provider = providers[cache_key]
 
                     config_dict = await provider.get_client_config(conn.inbound, conn)
                     config_type = config_dict.get("config_type")
@@ -761,12 +762,21 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
         from sqlalchemy.orm import selectinload
 
         from app.database.models import Inbound, InboundConnection
+        from app.database.models.server import Server
 
         conn_result = await session.execute(
             select(InboundConnection)
             .where(InboundConnection.id == conn_id)
             .options(
-                selectinload(InboundConnection.inbound).selectinload(Inbound.server),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
                 selectinload(InboundConnection.subscription),
             )
         )
@@ -780,7 +790,7 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
 
         from app.services.vpn_providers import get_vpn_provider
 
-        provider = get_vpn_provider(conn.inbound.server)
+        provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
 
         await callback.message.edit_reply_markup(reply_markup=None)  # temporary disable buttons
         await callback.answer(t("user.subs.downloading", "⏳ Загрузка конфига..."))

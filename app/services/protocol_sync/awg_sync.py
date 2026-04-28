@@ -49,7 +49,7 @@ class AWGProtocolSync(ProtocolSyncBase):
 
         server = inbound.server
         try:
-            provider = get_vpn_provider(server)
+            provider = get_vpn_provider(server, inbound_type="awg_inbound")
         except ValueError:
             logger.warning(f"[AWG SYNC] No provider for server {server.id}")
             return 0

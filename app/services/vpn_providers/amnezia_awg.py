@@ -31,7 +31,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
     def __init__(self, server: Server) -> None:
         super().__init__(server)
         self.ssh = SSHManager(server)
-        self.container_name = "amnezia-awg"
+        self.container_name = "vpnbot-awg"
         self.interface_name = "awg0"
         self.config_path = f"/opt/amnezia/awg/{self.interface_name}.conf"
 
@@ -290,6 +290,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         )
 
         config_str = "\n".join(config_lines)
+        # TODO: QR-код генерируется, но не используется — приложение AmneziaVPN пока не поддерживает QR для AWG
         qr_base64 = self._generate_qr_code(config_str)
 
         return {

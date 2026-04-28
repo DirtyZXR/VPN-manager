@@ -232,7 +232,7 @@ class NewSubscriptionService:
 
                 try:
                     inbound = conn.inbound
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
 
                     await provider.reset_client_traffic(inbound, conn)
 
@@ -309,7 +309,7 @@ class NewSubscriptionService:
         client_email = None
 
         try:
-            provider = await self._get_provider(inbound.server)
+            provider = await self._get_provider(inbound.server, inbound=inbound)
         except Exception as e:
             raise XUIError(f"Failed to get VPN provider: {e}") from e
 
@@ -414,7 +414,7 @@ class NewSubscriptionService:
 
         # Delete from provider
         if inbound and inbound.server:
-            provider = await self._get_provider(inbound.server)
+            provider = await self._get_provider(inbound.server, inbound=inbound)
             await provider.remove_client(inbound, connection)
             if hasattr(inbound, "client_count"):
                 inbound.client_count -= 1
@@ -458,15 +458,20 @@ class NewSubscriptionService:
         if not connection:
             return None
 
-        # Update in provider
         inbound = connection.inbound
-        connection.is_enabled = enable  # Update flag before calling provider
-        provider = await self._get_provider(inbound.server)
-        await provider.update_client(
-            inbound, connection, connection.total_gb, connection.expiry_date
-        )
+        provider = await self._get_provider(inbound.server, inbound=inbound)
 
-        # Update in database
+        if inbound.type in ("awg_inbound", "mtproxy_inbound"):
+            if enable:
+                await provider.enable_client(inbound, connection)
+            else:
+                await provider.disable_client(inbound, connection)
+        else:
+            connection.is_enabled = enable
+            await provider.update_client(
+                inbound, connection, connection.total_gb, connection.expiry_date
+            )
+
         connection.is_enabled = enable
         await self.session.flush()
 
@@ -514,7 +519,7 @@ class NewSubscriptionService:
                 # Update in provider
                 inbound = connection.inbound
                 connection.is_enabled = enable
-                provider = await self._get_provider(inbound.server)
+                provider = await self._get_provider(inbound.server, inbound=inbound)
                 await provider.update_client(
                     inbound, connection, connection.total_gb, connection.expiry_date
                 )
@@ -563,7 +568,7 @@ class NewSubscriptionService:
                 # Delete from provider
                 inbound = connection.inbound
                 try:
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
                     await provider.remove_client(inbound, connection)
                     deleted_count += 1
                 except Exception as e:
@@ -615,7 +620,7 @@ class NewSubscriptionService:
                 # Update tg_id in provider
                 inbound = connection.inbound
                 try:
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
                     # For XUI this works because it pulls latest from subscription.client.telegram_id
                     await provider.update_client(
                         inbound, connection, connection.total_gb, connection.expiry_date
@@ -632,21 +637,25 @@ class NewSubscriptionService:
 
     # Helper methods
 
-    async def _get_provider(self, server: Any) -> BaseVPNProvider:
+    async def _get_provider(self, server: Any, inbound: Any = None) -> BaseVPNProvider:
         """Get or create VPN provider for server.
 
         Args:
             server: Server model
+            inbound: Optional Inbound model (used to select correct provider
+                     when server has multiple services)
 
         Returns:
             VPN provider instance
         """
-        if server.id not in self._providers:
-            provider = get_vpn_provider(server)
+        inbound_type = inbound.type if inbound else None
+        cache_key = (server.id, inbound_type)
+        if cache_key not in self._providers:
+            provider = get_vpn_provider(server, inbound_type=inbound_type)
             if hasattr(provider, "_session"):
                 provider._session = self.session
-            self._providers[server.id] = provider
-        return self._providers[server.id]
+            self._providers[cache_key] = provider
+        return self._providers[cache_key]
 
     async def close_all_clients(self) -> None:
         """Close all VPN providers properly."""
@@ -680,7 +689,7 @@ class NewSubscriptionService:
                     if not conn.is_enabled:
                         continue
                     try:
-                        provider = await self._get_provider(conn.inbound.server)
+                        provider = await self._get_provider(conn.inbound.server, inbound=conn.inbound)
                         config = await provider.get_client_config(conn.inbound, conn)
                         config_data = config.get("config_data")
                         config_type = config.get("config_type")
@@ -721,7 +730,7 @@ class NewSubscriptionService:
                     if not conn.is_enabled:
                         continue
                     try:
-                        provider = await self._get_provider(conn.inbound.server)
+                        provider = await self._get_provider(conn.inbound.server, inbound=conn.inbound)
                         config = await provider.get_client_config(
                             conn.inbound, conn, prefer_json=True
                         )
@@ -861,7 +870,7 @@ class NewSubscriptionService:
 
             for connection in connections:
                 try:
-                    provider = await self._get_provider(connection.inbound.server)
+                    provider = await self._get_provider(connection.inbound.server, inbound=connection.inbound)
 
                     connection.is_enabled = subscription.is_active
                     await provider.update_client(
@@ -945,7 +954,7 @@ class NewSubscriptionService:
 
         for connection in connections:
             try:
-                provider = await self._get_provider(connection.inbound.server)
+                provider = await self._get_provider(connection.inbound.server, inbound=connection.inbound)
                 await provider.update_client(
                     connection.inbound, connection, subscription.total_gb, subscription.expiry_date
                 )
@@ -1030,7 +1039,7 @@ class NewSubscriptionService:
 
         for connection in connections:
             try:
-                provider = await self._get_provider(connection.inbound.server)
+                provider = await self._get_provider(connection.inbound.server, inbound=connection.inbound)
 
                 if base_days > 0:
                     await provider.update_client(
@@ -1097,7 +1106,7 @@ class NewSubscriptionService:
             try:
                 inbound = connection.inbound
                 if inbound and inbound.server:
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
                     await provider.remove_client(inbound, connection)
                     if hasattr(inbound, "client_count"):
                         inbound.client_count -= 1
