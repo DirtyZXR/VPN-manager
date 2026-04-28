@@ -1,25 +1,11 @@
 # TODO
 
-## Баг: sync_service ломается на AWGInbound/MTProxyInbound — нет xui_id
+## Баг: sync_service ломается на AWGInbound/MTProxyInbound — нет xui_id ✅ DONE
 
 **Приоритет:** высокий
-**Файл:** `app/services/sync_service.py:247`
+**Коммит:** `bf38764`
 
-### Ошибки
-
-```
-AttributeError: 'MTProxyInbound' object has no attribute 'xui_id'
-AttributeError: 'AWGInbound' object has no attribute 'xui_id'
-XUIError: Failed to get inbound: Obtain (record not found)
-```
-
-### Суть
-
-Синхронизация клиентов перебирает **все** inbound'ы сервера, включая MTProxy и AWG. Эти модели не имеют `xui_id`. Попытка обратиться к `xui_id` вызывает `AttributeError`, XUI API возвращает 404.
-
-### Фикс
-
-В `sync_service.sync_server()` фильтровать inbound'ы по типу — синхронизировать только XUI-inbound'ы (модель `Inbound` с `xui_id`), пропускать `MTProxyInbound` и `AWGInbound`. Либо фильтровать query: `select(Inbound).where(Inbound.xui_id.isnot(None))`.
+Рефакторинг в protocol_sync registry. Каждый протокол — свой `ProtocolSyncBase`.
 
 ---
 
@@ -33,27 +19,180 @@ XUIError: Failed to get inbound: Obtain (record not found)
 
 ---
 
-## Инсталлеры: предпроверка «уже установлен» ДО мастера установки ✅ DONE
+## Баг: callback.answer() MESSAGE_TOO_LONG
+
+**Приоритет:** высокий
+**Файл:** `app/bot/handlers/admin/servers.py:405`
+**Ошибка:** `TelegramBadRequest: Bad Request: MESSAGE_TOO_LONG`
+
+### Суть
+
+`test_server` handler вызывает `callback.answer(message, show_alert=True)` с полным текстом ошибки SSH-команды. Telegram ограничивает `callback.answer()` до 200 символов. Если SSH-команда возвращает длинный stderr — ответ превышает лимит.
+
+### Фикс
+
+Обрезать `message` до 190 символов перед передачей в `callback.answer()`, либо отправлять `callback.message.answer()` вместо alert если текст длинный.
+
+---
+
+## Баг: XUI не синхронизируется после добавления ✅ FIXED
+
+**Приоритет:** высокий
+**Коммит:** (pending)
+
+### Корневые причины
+
+1. **Пароль хранился plain text** — 3 handler'а записывали `password_encrypted = password` без Fernet-шифрования. `_decrypt_password` молча возвращал `""`.
+2. **`verify_ssl = True`** — default в модели, handler'ы не устанавливали при создании XUIPanel. Caddy self-signed → `SSLCertVerificationError`.
+3. **Handler игнорировал `sync_server()` return** — всегда показывал «✅ Синхронизация завершена» даже при `False`.
+
+### Фикс
+
+1. Добавлен `encrypt_password()` в `app/utils/__init__.py`. Все 3 handler'а шифруют пароль перед записью.
+2. `verify_ssl=False` при создании XUIPanel через инсталлер.
+3. `_decrypt_password` теперь кидает `ValueError` вместо возврата `""`.
+4. `sync_server` handler проверяет результат и показывает ошибку при `False`
+
+---
+
+## Баг: callback.answer() после долгих операций (Telegram 30с timeout)
 
 **Приоритет:** высокий
 
 ### Суть
 
-Сейчас `check_already_installed()` вызывается внутри `install()` — пользователь проходит весь мастер (домен, порт, пути, логин, пароль) и только в конце узнаёт что сервис уже стоит. Трата времени.
+Telegram callback queries живут ~30 секунд. Если handler выполняет долгую операцию (SSH sync, Docker install) и затем вызывает `callback.answer()` — получаем `Bad Request: query is too old`. Также `callback.answer()` имеет лимит 200 символов для `text` — длинные ошибки SSH вызывают `MESSAGE_TOO_LONG`.
 
-### Правильный подход ✅ РЕАЛИЗОВАНО
+### Места где это происходит
 
-1. При нажатии «Установить [сервис]» → сразу SSH-проверка `docker ps | grep vpnbot-xui`
-2. Если контейнер есть → показать inline-кнопки:
-   - **«Переустановить»** — пойти в мастер установки с `force=True`
-   - **«Отмена»**
-3. Если контейнера нет → обычный мастер установки
+1. **`sync_server` handler** — `sync_server()` делает SSH + API calls (5-30 сек). **FIXED**: теперь `callback.answer()` вызывается до sync, результат отправляется через `message.answer()`.
+2. **`test_server` handler** — SSH ping/connection test. Нужен аналогичный фикс.
+3. **Все installer handlers** — `install()` может занимать 1-3 мин. Используют `msg.edit_text()` (OK, это не callback), но прогресс-бар может упасть при `TelegramBadRequest`.
 
-### Применимо ко всем трём инсталлерам
+### Паттерн для исправления
 
-- XUI: `vpnbot-xui` / `vpnbot-caddy`
-- AWG: `vpnbot-awg`
-- MTProxy: `vpnbot-mtproxy`
+```python
+# 1. Ответить на callback СРАЗУ (до долгой операции)
+await callback.answer("🔄 Начинаю...", show_alert=False)
+
+# 2. Выполнить долгую операцию
+result = await long_operation()
+
+# 3. Результат отправить через message.answer() (не callback)
+await callback.message.answer("✅ Результат: ...")
+```
+
+### Осталось исправить
+
+- `test_server` handler (`servers.py:385`) — обрезать error message до 190 символов + early `callback.answer()`
+- Проверить все handler'ы где `callback.answer()` вызывается после SSH/API операций
+
+---
+
+## Инсталлеры: предпроверка «уже установлен» ДО мастера установки ✅ DONE
+
+**Коммит:** `4c78942`
+
+---
+
+## Инсталлеры: progress bar при установке ✅ DONE
+
+**Коммит:** `7ddbc22`
+
+`BaseInstaller._progress(step, total, text)` с rate limiting 1/сек. Все 3 инсталлера + 6 handlers.
+
+---
+
+## Архитектура: полный CRUD через BaseVPNProvider
+
+**Приоритет:** высокий
+
+### Суть
+
+Привести `BaseVPNProvider` к единому контракту CRUD для всех 3 протоколов (XUI, AWG, MTProxy). Сейчас `update_client` и `reset_client_traffic` не в абстрактном интерфейсе — вызываются через duck typing. AWG/MTProxy disable — деструктивный (remove вместо мягкого переключения).
+
+### Предлагаемый контракт
+
+```python
+class BaseVPNProvider(ABC):
+    # CRUD
+    async def add_client(inbound, subscription, ...) -> dict
+    async def remove_client(inbound, connection) -> bool
+    async def update_client(inbound, connection, **kwargs) -> bool
+    async def enable_client(inbound, connection) -> bool
+    async def disable_client(inbound, connection) -> bool
+
+    # Config
+    async def get_client_config(inbound, connection, ...) -> dict
+
+    # Traffic
+    async def reset_client_traffic(inbound, connection) -> bool
+    async def get_client_traffic(inbound, connection) -> dict | None
+
+    # Lifecycle
+    async def close() -> None
+```
+
+### Реализация по протоколам
+
+| Метод | XUI | AWG | MTProxy |
+|-------|-----|-----|---------|
+| `add_client` | REST API ✅ | SSH + awg ✅ | SSH + config ✅ |
+| `remove_client` | REST API ✅ | SSH + awg ✅ | SSH + config ✅ |
+| `update_client` | REST API ✅ | no-op | no-op |
+| `enable_client` | REST API ✅ | SSH (re-add peer) | SSH (re-add secret) |
+| `disable_client` | REST API ✅ | SSH (remove from kernel, сохранить данные) | SSH (remove secret) |
+| `reset_client_traffic` | REST API ✅ | no-op | no-op |
+| `get_client_traffic` | REST API ✅ | no-op (None) | no-op (None) |
+| `get_client_config` | sub URL ✅ | .conf + QR ✅ | tg:// link ✅ |
+
+### Дизайн AWG: резервирование данных при отключении
+
+Для AWG критично, чтобы при отключении клиента (disable/expire) его данные **оставались зарезервированными**:
+- IP-адрес не освобождался — остаётся за клиентом
+- Public/private ключи сохраняются в БД
+- Peer удаляется из ядра WG (`awg set wg0 peer ... remove`), но **конфиг не перезаписывается**
+
+При включении (enable/renew):
+- Peer добавляется обратно с **теми же** ключами и IP
+- Конфиг клиента (`.conf`) не нужно перегенерировать — те же данные
+
+Это позволяет:
+- Время истекло → клиент выключился (peer removed from kernel)
+- Админ обновил подписку → клиент включился (peer re-added, тот же конфиг)
+- Админ очистил → данные удаляются, IP освобождается
+
+### Проверка expiry на стороне бота (AWG)
+
+AWG не имеет API для проверки лимитов. Бот должен:
+1. При фоновой синхронизации проверять `connection.expiry_date` и `connection.is_enabled`
+2. Если `expiry_date < now()` и `is_enabled` → вызвать `provider.disable_client()`
+3. Если админ обновил подписку → вызвать `provider.enable_client()`
+4. Это аналогично XUI, но проверка на стороне бота, не панели
+
+MTProxy (классический) — такого функционала не будет.
+MTProxy (multi) — будет в будущем, через API mtg-multi.
+
+### План
+
+1. Обновить `BaseVPNProvider` — добавить `update_client`, `reset_client_traffic`, `get_client_traffic`
+2. Обновить `XUIProvider` — привести в соответствие
+3. Обновить `AmneziaAWGProvider` — реализовать enable/disable с резервированием, no-op для traffic
+4. Обновить `MTProxyProvider` — no-op для traffic, enable/disable
+5. Обновить `NewSubscriptionService` — убрать duck typing
+6. Обновить handlers — убрать хардкод XUI в toggle/rebuild
+7. Добавить expiry checker для AWG в sync_service / отдельный background task
+
+### Файлы
+
+- `app/services/vpn_providers/base.py`
+- `app/services/vpn_providers/xui_provider.py`
+- `app/services/vpn_providers/amnezia_awg.py`
+- `app/services/vpn_providers/mtproxy.py`
+- `app/services/vpn_providers/factory.py`
+- `app/services/new_subscription_service.py`
+- `app/bot/handlers/admin/subscriptions.py`
+- `app/services/protocol_sync/awg_sync.py` (будущий expiry checker)
 
 ---
 
@@ -78,30 +217,9 @@ XUIError: Failed to get inbound: Obtain (record not found)
 
 ---
 
-## Инсталлеры: progress bar при установке
-
-**Приоритет:** низкий
-
-### Суть
-
-Установка сервисов занимает 1-3 минуты. Сейчас показывается статичное сообщение «Установка...». Нужно пошагово обновлять сообщение в Telegram по мере выполнения шагов.
-
-### Что нужно
-
-1. В `BaseInstaller` добавить `_progress(step, total, text)` callback
-2. Инсталлеры вызывают `self._progress()` на каждом шаге (prepare_host, compose, configure, verify)
-3. Handler передаёт callback при создании инсталлера, который делает `msg.edit_text()`
-4. Обновлять не чаще 1 раза в секунду (rate limit Telegram)
-
-### Пример
-
-```
-⏳ [3/6] Запись docker-compose.yml...
-```
-
----
-
 ## Инсталлеры: автопоиск сервисов на сервере
+
+**Приоритет:** средний
 
 ### Что нужно
 
@@ -152,4 +270,3 @@ Middleware (`app/bot/middlewares/auth.py`) уже передаёт `db_session` 
 - `app/bot/handlers/admin/clients.py`
 - `app/bot/handlers/user/subscriptions.py`
 - Остальные хендлеры, использующие `async_session_factory()`
-

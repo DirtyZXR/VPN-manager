@@ -1,5 +1,7 @@
 """Admin server management handlers."""
 
+import contextlib
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
@@ -327,12 +329,16 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
 
     server_id = int(callback.data.split("_")[-1])
 
+    await callback.answer(
+        t("admin.servers.sync_started", "🔄 Синхронизация запущена..."),
+        show_alert=False,
+    )
+
     async with async_session_factory() as session:
         from app.services import SyncService
 
         sync_service = SyncService(session)
         try:
-            # Sync inbounds and clients
             from sqlalchemy.orm import selectinload
 
             from app.database.models import Server
@@ -348,29 +354,26 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
                 ]
             )
             if server:
-                await sync_service.sync_server(server, force=True)
+                result = await sync_service.sync_server(server, force=True)
                 await session.commit()
-                await callback.answer(
-                    t(
-                        "admin.servers.sync_success",
+                if result:
+                    await callback.message.answer(
                         "✅ Синхронизация завершена! Inbounds и клиенты синхронизированы",
-                    ),
-                    show_alert=True,
-                )
+                    )
+                else:
+                    await callback.message.answer(
+                        "⚠️ Синхронизация завершена с ошибкой. Проверьте статус сервера.",
+                    )
             else:
-                await callback.answer(
-                    t("admin.servers.errors.not_found", "❌ Сервер не найден"), show_alert=True
+                await callback.message.answer(
+                    t("admin.servers.errors.not_found", "❌ Сервер не найден")
                 )
         except Exception as e:
             logger.error("Error syncing server {}: {}", server_id, e, exc_info=True)
-            await callback.answer(
-                t(
-                    "admin.servers.errors.sync_failed",
-                    "❌ Ошибка при синхронизации: {error}",
-                    error=str(e),
-                ),
-                show_alert=True,
-            )
+            with contextlib.suppress(Exception):
+                await callback.message.answer(
+                    f"❌ Ошибка при синхронизации: {str(e)[:200]}",
+                )
 
 
 @router.callback_query(F.data.startswith("server_test_"))
@@ -714,6 +717,9 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
             )
             server = result.scalar_one()
 
+            from app.utils import encrypt_password
+
+            encrypted_pwd = encrypt_password(new_password)
             panel_url = f"https://{domain}:{caddy_port}"
             existing = await session.execute(
                 select(XUIPanel).where(XUIPanel.server_id == server.id)
@@ -722,7 +728,7 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
             if existing_panel:
                 existing_panel.url = panel_url
                 existing_panel.username = username
-                existing_panel.password_encrypted = new_password
+                existing_panel.password_encrypted = encrypted_pwd
                 existing_panel.panel_path = web_path
                 existing_panel.subscription_path = sub_path
                 existing_panel.subscription_json_path = sub_json_path
@@ -732,11 +738,12 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
                     server_id=server.id,
                     url=panel_url,
                     username=username,
-                    password_encrypted=new_password,
+                    password_encrypted=encrypted_pwd,
                     panel_path=web_path,
                     subscription_path=sub_path,
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
+                    verify_ssl=False,
                 )
                 session.add(panel)
             await session.commit()
@@ -1168,7 +1175,9 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 )
 
             from app.database.models.services import XUIPanel
+            from app.utils import encrypt_password
 
+            encrypted_pwd = encrypt_password(password)
             panel_url = f"https://{domain}:{caddy_port}"
 
             existing = await session.execute(
@@ -1178,7 +1187,7 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             if existing_panel:
                 existing_panel.url = panel_url
                 existing_panel.username = username
-                existing_panel.password_encrypted = password
+                existing_panel.password_encrypted = encrypted_pwd
                 existing_panel.panel_path = web_path
                 existing_panel.subscription_path = sub_path
                 existing_panel.subscription_json_path = sub_json_path
@@ -1189,12 +1198,13 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                     server_id=server.id,
                     url=panel_url,
                     username=username,
-                    password_encrypted=password,
+                    password_encrypted=encrypted_pwd,
                     panel_path=web_path,
                     subscription_path=sub_path,
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
                     inbound_ranges=inbound_ranges,
+                    verify_ssl=False,
                 )
                 session.add(panel)
             await session.commit()
@@ -1318,7 +1328,9 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             )
 
             from app.database.models.services import XUIPanel
+            from app.utils import encrypt_password
 
+            encrypted_pwd = encrypt_password(password)
             panel_url = f"https://{domain}:{caddy_port}"
             clean_web = web_path.strip("/")
             panel_full_url = f"{panel_url}/{clean_web}/" if clean_web else f"{panel_url}/"
@@ -1330,7 +1342,7 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             if existing_panel:
                 existing_panel.url = panel_url
                 existing_panel.username = username
-                existing_panel.password_encrypted = password
+                existing_panel.password_encrypted = encrypted_pwd
                 existing_panel.panel_path = web_path
                 existing_panel.subscription_path = sub_path
                 existing_panel.subscription_json_path = sub_json_path
@@ -1341,12 +1353,13 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
                     server_id=server.id,
                     url=panel_url,
                     username=username,
-                    password_encrypted=password,
+                    password_encrypted=encrypted_pwd,
                     panel_path=web_path,
                     subscription_path=sub_path,
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
                     inbound_ranges=inbound_ranges,
+                    verify_ssl=False,
                 )
                 session.add(panel)
             await session.commit()

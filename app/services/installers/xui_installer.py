@@ -221,7 +221,7 @@ class XUIInstaller(BaseInstaller):
             await self._start_containers(service_dir)
 
             await self._progress(7, 9, "Настройка 3x-ui (credentials, пути, порты)...")
-            await self._configure_xui(username, password, web_path, sub_path, sub_json_path)
+            await self._configure_xui(username, password, web_path, sub_path, sub_json_path, domain, caddy_port)
 
             await self._progress(8, 9, "Проверка доступности панели...")
             await self._verify_panel(caddy_port, domain, web_path)
@@ -357,6 +357,8 @@ class XUIInstaller(BaseInstaller):
         web_path: str,
         sub_path: str,
         sub_json_path: str,
+        domain: str,
+        caddy_port: int,
     ) -> None:
         name = f"vpnbot-{XUI_CONTAINER}"
         db_path = "/etc/x-ui/x-ui.db"
@@ -364,12 +366,16 @@ class XUIInstaller(BaseInstaller):
         clean_web = "/" + web_path.strip("/") + "/" if web_path.strip("/") else "/"
         clean_sub = "/" + sub_path.strip("/") + "/"
         clean_json = "/" + sub_json_path.strip("/") + "/"
+        base_url = f"https://{domain}:{caddy_port}"
+        sub_uri = f"{base_url}{clean_sub}"
+        sub_json_uri = f"{base_url}{clean_json}"
 
         await self._cmd(f"docker exec -i {name} apk add --no-cache sqlite")
 
         sql_del = (
             "DELETE FROM settings WHERE key IN "
-            "('webBasePath', 'subPath', 'subJsonPath')"
+            "('webBasePath', 'subPath', 'subJsonPath', "
+            "'subEnable', 'subJsonEnable', 'subURI', 'subJsonURI')"
         )
         await self._cmd(
             f"docker exec -i {name} sqlite3 {db_path}",
@@ -380,7 +386,11 @@ class XUIInstaller(BaseInstaller):
             f"INSERT INTO settings (key, value) VALUES "
             f"('webBasePath', '{clean_web}'), "
             f"('subPath', '{clean_sub}'), "
-            f"('subJsonPath', '{clean_json}')"
+            f"('subJsonPath', '{clean_json}'), "
+            f"('subEnable', 'true'), "
+            f"('subJsonEnable', 'true'), "
+            f"('subURI', '{sub_uri}'), "
+            f"('subJsonURI', '{sub_json_uri}')"
         )
         await self._cmd(
             f"docker exec -i {name} sqlite3 {db_path}",

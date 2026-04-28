@@ -1323,9 +1323,9 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
 
         from app.database.models import InboundConnection
         from app.services.new_subscription_service import NewSubscriptionService
-        from app.services.xui_service import XUIService
+        from app.services.vpn_providers.base import BaseVPNProvider
+        from app.services.vpn_providers.factory import get_vpn_provider
 
-        # Get all connections with their inbound and server info in THIS session
         result = await session.execute(
             select(InboundConnection)
             .where(InboundConnection.id.in_(list(selected_connections)))
@@ -1345,27 +1345,31 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
         try:
             try:
                 success_count = 0
-                xui_service = XUIService(session)
+                providers: dict[int, BaseVPNProvider] = {}
 
-                # Process each connection
                 for conn in connections:
                     try:
                         new_state = action == "enable"
                         inbound = conn.inbound
                         server = inbound.server
 
-                        # Get XUI client
-                        xui_client = await xui_service._get_client(server)
+                        if server.id not in providers:
+                            providers[server.id] = get_vpn_provider(server)
+                        provider = providers[server.id]
 
-                        # Update in XUI
-                        await xui_client.enable_client(inbound.xui_id, conn.uuid, new_state)
+                        if new_state:
+                            await provider.enable_client(inbound, conn)
+                        else:
+                            await provider.disable_client(inbound, conn)
 
-                        # Update in database
                         conn.is_enabled = new_state
                         success_count += 1
 
                     except Exception as e:
                         logger.warning(f"Failed to {action} connection {conn.id}: {e}")
+
+                for provider in providers.values():
+                    await provider.close()
 
                 await session.commit()
 

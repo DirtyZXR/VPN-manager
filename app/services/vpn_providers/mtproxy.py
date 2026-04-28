@@ -1,9 +1,14 @@
 """MTProxy Provider implementation."""
 
+import base64
+import io
 import logging
 import secrets
 import uuid
+from datetime import datetime
 from typing import Any
+
+import qrcode
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.ssh_service import SSHManager
@@ -13,31 +18,36 @@ logger = logging.getLogger(__name__)
 
 
 class MTProxyProvider(BaseVPNProvider):
-    """Provider for Telegram MTProxy via Docker."""
+    """Provider for Telegram MTProxy via Docker.
+
+    Client lifecycle:
+    - add_client: generates secret, appends to config, restarts container
+    - enable_client: re-adds secret to config, restarts container
+    - disable_client: removes secret from config, restarts container
+    - remove_client: same as disable_client (secret stored in DB for re-enable)
+
+    Note: every config change restarts the container, briefly disrupting all users.
+    MTProxy has no per-user traffic or expiry tracking.
+    """
 
     def __init__(self, server: Server) -> None:
-        """Initialize provider with server and setup SSH."""
         super().__init__(server)
         self.ssh = SSHManager(server)
-
         self.container_name = "vpnbot-mtproxy"
         self.config_path = "/opt/vpnbot/mtproxy/config.toml"
-        self.domain = "google.com"  # Fake-TLS domain
+        self.domain = "google.com"
         self.port = "443"
 
     def _generate_secret(self) -> str:
-        """Generate a 16-byte Fake-TLS secret.
-
-        Format: 'ee' + 16 random hex bytes (32 chars) + hex-encoded domain.
-        Actually, the 'ee' format uses 16 bytes. Let's just generate a standard ee-secret.
-        """
-        # 16 bytes = 32 hex chars. We need 'ee' + 30 hex chars + domain hex.
-        random_hex = secrets.token_hex(15)  # 30 chars
+        random_hex = secrets.token_hex(15)
         secret = f"ee{random_hex}"
-
-        # Add domain
         domain_hex = self.domain.encode("utf-8").hex()
         return f"{secret}{domain_hex}"
+
+    async def _restart_container(self) -> None:
+        await self.ssh.run_command(f"docker restart {self.container_name}")
+
+    # ── CRUD ──────────────────────────────────────────────────────────
 
     async def add_client(
         self,
@@ -46,74 +56,68 @@ class MTProxyProvider(BaseVPNProvider):
         client_uuid: str | None = None,
         email: str | None = None,
     ) -> dict[str, Any]:
-        """Add a new secret to MTProxy."""
         secret = self._generate_secret()
-
-        # Add to secrets file
         await self.ssh.append_to_file(self.config_path, secret)
-
-        # Soft restart MTProxy
-        await self.ssh.run_command(f"docker restart {self.container_name}")
-
+        await self._restart_container()
         return {"uuid": client_uuid or str(uuid.uuid4()), "secret": secret}
 
-    async def remove_client(self, inbound: Inbound, connection: Any) -> bool:
-        """Remove a secret from MTProxy."""
+    async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
         secret = connection.secret
-
         if not secret:
             return False
 
         try:
-            # Remove from secrets file using sed
             sed_cmd = f"sed -i '/^{secret}$/d' {self.config_path}"
             await self.ssh.run_command(sed_cmd)
-
-            # Restart
-            await self.ssh.run_command(f"docker restart {self.container_name}")
+            await self._restart_container()
             return True
         except Exception as e:
             logger.error(f"Failed to remove MTProxy secret: {e}")
             return False
 
-    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
-        """Temporarily disable the client by removing their secret from the configuration."""
-        # For MTProxy, disabling is effectively the same as removing from the live config
-        return await self.remove_client(inbound, connection)
+    async def update_client(
+        self,
+        inbound: Inbound,
+        connection: InboundConnection,
+        new_total_gb: int | None = None,
+        new_expiry_date: datetime | None = None,
+    ) -> bool:
+        return True
 
-    async def enable_client(self, inbound: Inbound, connection: Any) -> bool:
-        """Re-enable a disabled client using their existing secret."""
+    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
         secret = connection.secret
-
         if not secret:
             return False
 
         try:
-            # Add to secrets file
             await self.ssh.append_to_file(self.config_path, secret)
-
-            # Soft restart MTProxy
-            await self.ssh.run_command(f"docker restart {self.container_name}")
+            await self._restart_container()
             return True
         except Exception as e:
             logger.error(f"Failed to enable MTProxy secret: {e}")
             return False
 
+    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        return await self.remove_client(inbound, connection)
+
+    async def reset_client_traffic(
+        self, inbound: Inbound, connection: InboundConnection
+    ) -> bool:
+        return True
+
+    async def get_client_traffic(
+        self, inbound: Inbound, connection: InboundConnection
+    ) -> dict[str, Any] | None:
+        return None
+
+    # ── Config generation ─────────────────────────────────────────────
+
     async def get_client_config(
-        self, inbound: Inbound, connection: Any, prefer_json: bool = False
+        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
     ) -> dict[str, Any]:
-        """Generate tg:// proxy link."""
         secret = connection.secret
-
         host = self.ssh.host
-
         link = f"tg://proxy?server={host}&port={self.port}&secret={secret}"
-
-        # MTProxy doesn't usually use QR codes, but Telegram supports them for links
-        import base64
-        import io
-
-        import qrcode
 
         qr = qrcode.QRCode(version=1, box_size=10, border=4)
         qr.add_data(link)

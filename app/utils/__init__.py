@@ -3,6 +3,17 @@
 import secrets
 import uuid as uuid_lib
 
+from cryptography.fernet import Fernet
+
+from app.config import get_settings
+
+
+def encrypt_password(password: str) -> str:
+    """Encrypt password using Fernet for storage in database."""
+    settings = get_settings()
+    cipher = Fernet(settings.encryption_key.encode())
+    return cipher.encrypt(password.encode()).decode()
+
 
 def generate_uuid() -> str:
     """Generate a random UUID v4."""

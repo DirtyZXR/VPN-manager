@@ -116,12 +116,11 @@ class XUIProvider(BaseVPNProvider):
         self,
         inbound: Inbound,
         connection: InboundConnection,
-        new_total_gb: int,
-        new_expiry_date: Any,
+        new_total_gb: int | None = None,
+        new_expiry_date: Any | None = None,
     ) -> bool:
         client = await self._get_client()
 
-        # Extract UUID and email (handle legacy connection fields or provider_payload)
         payload = connection.provider_payload or {}
         c_uuid = connection.uuid or payload.get("uuid")
         c_email = connection.email or payload.get("email")
@@ -129,8 +128,10 @@ class XUIProvider(BaseVPNProvider):
         if not c_uuid or not c_email:
             raise ValueError("Missing UUID or email for XUI connection update")
 
-        expiry_time_ms = int(new_expiry_date.timestamp() * 1000) if new_expiry_date else 0
-        total_bytes = new_total_gb * 1024 * 1024 * 1024
+        total_gb = new_total_gb if new_total_gb is not None else (connection.subscription.total_gb if connection.subscription else 0)
+        expiry_date = new_expiry_date if new_expiry_date is not None else (connection.subscription.expiry_date if connection.subscription else None)
+        expiry_time_ms = int(expiry_date.timestamp() * 1000) if expiry_date else 0
+        total_bytes = total_gb * 1024 * 1024 * 1024
 
         req = XUIAddClientRequest(
             id=c_uuid,
@@ -216,6 +217,20 @@ class XUIProvider(BaseVPNProvider):
         x_id = getattr(inbound, "xui_id", inbound.id)
         await client.reset_client_traffic(x_id, c_email)
         return True
+
+    async def get_client_traffic(
+        self, inbound: Inbound, connection: InboundConnection
+    ) -> dict[str, Any] | None:
+        client = await self._get_client()
+        payload = connection.provider_payload or {}
+        c_email = connection.email or payload.get("email")
+
+        if not c_email:
+            return None
+
+        x_id = getattr(inbound, "xui_id", inbound.id)
+        traffic_data = await client.get_client_traffic(x_id, c_email)
+        return traffic_data
 
     async def get_client_config(
         self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False

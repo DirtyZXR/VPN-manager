@@ -50,12 +50,18 @@ class XUIService:
 
         Returns:
             Plain text password
+
+        Raises:
+            ValueError: If decryption fails (e.g., plain text stored as encrypted).
         """
         try:
             return self._cipher.decrypt(encrypted.encode()).decode()
         except Exception as e:
             logger.error(f"Failed to decrypt password: {e}")
-            return ""
+            raise ValueError(
+                f"Password decryption failed — password may be stored as plain text. "
+                f"Re-save the panel credentials to fix. Error: {e}"
+            ) from e
 
     async def _get_client(self, server: Server) -> XUIClient:
         """Get or create XUI client for server.

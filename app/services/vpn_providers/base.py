@@ -1,20 +1,23 @@
 """Base VPN Provider interface."""
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Any
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 
 
 class BaseVPNProvider(ABC):
-    """Abstract base class for all VPN Panel providers."""
+    """Abstract base class for all VPN Panel providers.
+
+    All VPN providers (XUI, AmneziaWG, MTProxy) must implement this interface.
+    Protocol-specific limitations:
+    - AWG: no traffic tracking, enable/disable is kernel-level peer management
+    - MTProxy: no traffic tracking, no per-user expiry
+    - XUI: full REST API with all features
+    """
 
     def __init__(self, server: Server) -> None:
-        """Initialize provider with server.
-
-        Args:
-            server: Server model instance
-        """
         self.server = server
 
     @abstractmethod
@@ -25,16 +28,51 @@ class BaseVPNProvider(ABC):
         client_uuid: str | None = None,
         email: str | None = None,
     ) -> dict[str, Any]:
-        """Add a new client to the VPN panel.
-
-        Args:
-            inbound: The inbound/protocol to add the client to
-            subscription: The subscription details (limits, expiry, etc.)
-            client_uuid: Optional UUID to force (for rebuilds)
-            email: Optional email to force
+        """Add a new client to the VPN service.
 
         Returns:
-            Dictionary to be stored in InboundConnection.provider_payload
+            Dictionary with protocol-specific data (uuid, keys, secrets, etc.)
+            to be stored in InboundConnection fields.
+        """
+        pass
+
+    @abstractmethod
+    async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        """Permanently remove a client and free their resources (IP, keys, etc.)."""
+        pass
+
+    @abstractmethod
+    async def update_client(
+        self,
+        inbound: Inbound,
+        connection: InboundConnection,
+        new_total_gb: int | None = None,
+        new_expiry_date: datetime | None = None,
+    ) -> bool:
+        """Update client settings (traffic limit, expiry).
+
+        For protocols without traffic/expiry support (AWG, MTProxy),
+        this is a no-op that returns True.
+        """
+        pass
+
+    @abstractmethod
+    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        """Re-enable a previously disabled client.
+
+        For AWG: re-adds peer to kernel with same keys/IP (config unchanged).
+        For MTProxy: re-adds secret to config and restarts container.
+        For XUI: updates client enable flag via API.
+        """
+        pass
+
+    @abstractmethod
+    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        """Temporarily disable a client without deleting their data.
+
+        For AWG: removes peer from kernel, keeps config entry and reserved IP.
+        For MTProxy: removes secret from config (destructive, secret stored in DB).
+        For XUI: updates client enable flag via API.
         """
         pass
 
@@ -44,61 +82,40 @@ class BaseVPNProvider(ABC):
     ) -> dict[str, Any]:
         """Get client configuration (links, files, QR codes).
 
-        Args:
-            inbound: The inbound/protocol
-            connection: The inbound connection
-            prefer_json: Whether to return config as JSON
-
         Returns:
-            Dictionary containing config data, e.g.:
             {
-                "config_type": "link", # or "file"
-                "config_data": "vless://...", # or raw file content for .conf
-                "qr_code_base64": "...", # optional
+                "config_type": "link" | "file",
+                "config_data": str,
+                "filename": str (optional, for file type),
+                "qr_code_base64": str (optional),
             }
         """
         pass
 
     @abstractmethod
-    async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
-        """Remove a client's access (delete/revoke).
+    async def reset_client_traffic(
+        self, inbound: Inbound, connection: InboundConnection
+    ) -> bool:
+        """Reset client traffic counters.
 
-        Args:
-            inbound: The inbound/protocol
-            connection: The inbound connection to remove
-
-        Returns:
-            True if successfully removed, False otherwise
+        For protocols without traffic tracking (AWG, MTProxy),
+        this is a no-op that returns True.
         """
         pass
 
     @abstractmethod
-    async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
-        """Temporarily disable a client without removing them.
-
-        Args:
-            inbound: The inbound/protocol
-            connection: The inbound connection to disable
+    async def get_client_traffic(
+        self, inbound: Inbound, connection: InboundConnection
+    ) -> dict[str, Any] | None:
+        """Get client traffic statistics.
 
         Returns:
-            True if successfully disabled, False otherwise
-        """
-        pass
-
-    @abstractmethod
-    async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
-        """Re-enable a previously disabled client.
-
-        Args:
-            inbound: The inbound/protocol
-            connection: The inbound connection to enable
-
-        Returns:
-            True if successfully enabled, False otherwise
+            {"upload": int, "download": int, "total": int} in bytes,
+            or None if the protocol doesn't support traffic tracking.
         """
         pass
 
     @abstractmethod
     async def close(self) -> None:
-        """Close any open HTTP sessions."""
+        """Release resources (HTTP sessions, SSH connections, etc.)."""
         pass
