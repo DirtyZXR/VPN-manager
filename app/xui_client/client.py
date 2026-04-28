@@ -100,10 +100,12 @@ class XUIClient:
         connector_args["enable_cleanup_closed"] = True
 
         connector = aiohttp.TCPConnector(**connector_args)
+        jar = aiohttp.CookieJar(unsafe=True)
         self._session = aiohttp.ClientSession(
             timeout=self.timeout,
             connector=connector,
-            trust_env=True,  # Allow environment variables
+            trust_env=True,
+            cookie_jar=jar,
         )
 
         logger.info("Attempting to connect to {}", self.base_url)
@@ -231,15 +233,6 @@ class XUIClient:
                     raise XUIAuthError(f"Login failed: {data.get('msg', 'Unknown error')}")
 
                 self._cookies = {cookie.key: cookie.value for cookie in session.cookie_jar}
-
-                set_cookie_headers = response.headers.getall("Set-Cookie", [])
-                if not self._cookies and set_cookie_headers:
-                    for header in set_cookie_headers:
-                        cookie_part = header.split(";")[0]
-                        if "=" in cookie_part:
-                            key, value = cookie_part.split("=", 1)
-                            self._cookies[key.strip()] = value.strip()
-
                 logger.info(
                     f"Logged in to {self.base_url}, "
                     f"cookies={list(self._cookies.keys())}"
