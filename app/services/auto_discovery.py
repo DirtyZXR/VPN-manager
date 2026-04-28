@@ -1,7 +1,10 @@
-"""Service for auto-discovering VPN panels installed on a server via SSH."""
+"""Service for auto-discovering VPN services installed on a server via SSH.
+
+Uses installer discover_existing() methods to read configuration from
+vpnbot-* containers.
+"""
 
 import logging
-import re
 from typing import Any
 
 from app.database.models import Server
@@ -17,127 +20,79 @@ class AutoDiscoveryService:
         self.server = server
         self.ssh = SSHManager(server)
 
+    async def _vpnbot_containers(self) -> list[str]:
+        """List all vpnbot-* container names on the server."""
+        try:
+            output = await self.ssh.run_command(
+                "docker ps -a --filter name=vpnbot- --format '{{.Names}}'"
+            )
+            return [name.strip() for name in output.strip().split("\n") if name.strip()]
+        except Exception:
+            return []
+
     async def discover_all(self) -> dict[str, dict[str, Any]]:
         """Run all discovery checks.
 
         Returns:
-            Dict of discovered services and their details.
-            e.g. {
-                "3x-ui": {"port": 2053, "username": "admin", ...},
-                "amnezia-awg": {"port": 51820, "public_key": "...", ...},
-                "mtproxy": {"port": 443, ...}
+            Dict of discovered services and their details:
+            {
+                "3x-ui": {"domain": ..., "caddy_port": ..., "web_path": ..., ...},
+                "amnezia-awg": {"port": ..., "subnet_ip": ..., ...},
+                "mtproxy": {"port": ..., "implementation": ..., ...}
             }
         """
-        discovered = {}
+        containers = await self._vpnbot_containers()
+        if not containers:
+            return {}
 
-        awg_details = await self.discover_amnezia_awg()
-        if awg_details:
-            discovered["amnezia-awg"] = awg_details
+        discovered: dict[str, dict[str, Any]] = {}
 
-        mtproxy_details = await self.discover_mtproxy()
-        if mtproxy_details:
-            discovered["mtproxy"] = mtproxy_details
+        if "vpnbot-xui" in containers:
+            details = await self.discover_xui()
+            if details:
+                discovered["3x-ui"] = details
 
-        xui_details = await self.discover_xui()
-        if xui_details:
-            discovered["3x-ui"] = xui_details
+        if "vpnbot-awg" in containers:
+            details = await self.discover_amnezia_awg()
+            if details:
+                discovered["amnezia-awg"] = details
+
+        if "vpnbot-mtproxy" in containers:
+            details = await self.discover_mtproxy()
+            if details:
+                discovered["mtproxy"] = details
 
         return discovered
 
-    async def discover_amnezia_awg(self) -> dict[str, Any] | None:
-        """Check if AmneziaWG is installed and running."""
+    async def discover_xui(self) -> dict[str, Any] | None:
+        """Discover 3x-ui + Caddy installation via XUIInstaller.discover_existing()."""
         try:
-            # Check if container exists
-            check_cmd = "docker ps -a -q -f name=amnezia-awg"
-            container_id = await self.ssh.run_command(check_cmd)
-            if not container_id:
-                return None
+            from app.services.installers.xui_installer import XUIInstaller
 
-            # Read config
-            cat_cmd = "docker exec -i amnezia-awg cat /opt/amnezia/awg/awg0.conf"
-            config = await self.ssh.run_command(cat_cmd)
+            installer = XUIInstaller(self.ssh)
+            return await installer.discover_existing()
+        except Exception as e:
+            logger.debug(f"XUI discovery failed on server {self.server.id}: {e}")
+            return None
 
-            # Parse details
-            port_match = re.search(r"ListenPort\s*=\s*(\d+)", config)
-            port = int(port_match.group(1)) if port_match else 51820
+    async def discover_amnezia_awg(self) -> dict[str, Any] | None:
+        """Discover AmneziaWG installation via AWGInstaller.discover_existing()."""
+        try:
+            from app.services.installers.awg_installer import AWGInstaller
 
-            peers = re.findall(r"\[Peer\]", config)
-
-            return {
-                "container_name": "amnezia-awg",
-                "port": port,
-                "peer_count": len(peers),
-            }
+            installer = AWGInstaller(self.ssh)
+            return await installer.discover_existing()
         except Exception as e:
             logger.debug(f"AWG discovery failed on server {self.server.id}: {e}")
             return None
 
     async def discover_mtproxy(self) -> dict[str, Any] | None:
-        """Check if MTProxy is installed and running."""
+        """Discover MTProxy installation via MTProxyInstaller.discover_existing()."""
         try:
-            check_cmd = "docker ps -a -q -f name=mtproxy"
-            container_id = await self.ssh.run_command(check_cmd)
-            if not container_id:
-                return None
+            from app.services.installers.mtproxy_installer import MTProxyInstaller
 
-            # Get exposed port
-            port_cmd = "docker port mtproxy | head -n 1 | awk -F ':' '{print $NF}'"
-            port_str = await self.ssh.run_command(port_cmd)
-            port = int(port_str) if port_str.isdigit() else 443
-
-            return {
-                "container_name": "mtproxy",
-                "port": port,
-            }
+            installer = MTProxyInstaller(self.ssh)
+            return await installer.discover_existing()
         except Exception as e:
             logger.debug(f"MTProxy discovery failed on server {self.server.id}: {e}")
-            return None
-
-    async def discover_xui(self) -> dict[str, Any] | None:
-        """Check if 3x-ui is installed and extract settings from its database."""
-        try:
-            # Check container
-            check_cmd = "docker ps -a -q -f name=3x-ui"
-            container_id = await self.ssh.run_command(check_cmd)
-            if not container_id:
-                return None
-
-            # Make sure sqlite3 is installed in the container
-            try:
-                await self.ssh.run_command("docker exec -i 3x-ui sqlite3 -version")
-            except Exception:
-                await self.ssh.run_command(
-                    "docker exec -i 3x-ui apt-get update && docker exec -i 3x-ui apt-get install -y sqlite3"
-                )
-
-            # Extract basic settings
-            db_cmd = "docker exec -i 3x-ui sqlite3 /etc/x-ui/x-ui.db"
-
-            port_str = await self.ssh.run_command(
-                f"{db_cmd} \"SELECT value FROM settings WHERE key='webPort';\""
-            )
-            port = int(port_str) if port_str.isdigit() else 2053
-
-            base_path = await self.ssh.run_command(
-                f"{db_cmd} \"SELECT value FROM settings WHERE key='webBasePath';\""
-            )
-            if not base_path:
-                base_path = "/"
-
-            sub_path = await self.ssh.run_command(
-                f"{db_cmd} \"SELECT value FROM settings WHERE key='subPath';\""
-            )
-
-            # Extract user info
-            username = await self.ssh.run_command(f'{db_cmd} "SELECT username FROM users LIMIT 1;"')
-
-            return {
-                "container_name": "3x-ui",
-                "port": port,
-                "base_path": base_path,
-                "sub_path": sub_path or "/sub/",
-                "username": username,
-            }
-        except Exception as e:
-            logger.debug(f"3x-ui discovery failed on server {self.server.id}: {e}")
             return None

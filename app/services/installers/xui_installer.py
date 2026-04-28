@@ -85,8 +85,8 @@ class XUIInstaller(BaseInstaller):
     async def discover_existing(self) -> dict:
         """Read configs from an existing installation and return params.
 
-        Returns dict with: domain, caddy_port, web_path, sub_path, sub_json_path,
-        username. Password is bcrypt-hashed and cannot be recovered.
+        Reads domain/port from Caddyfile, paths from 3x-ui SQLite DB.
+        Password is bcrypt-hashed and cannot be recovered.
         """
         import re
 
@@ -99,31 +99,32 @@ class XUIInstaller(BaseInstaller):
         web_path = "/"
         sub_path = "/sub/"
         sub_json_path = "/json/"
-
-        for match in re.finditer(r"handle\s+/(\w[\w\-]*)/\*\s*\{", caddyfile):
-            path_segment = match.group(1)
-            proxy_match = re.search(
-                r"reverse_proxy\s+127\.0\.0\.1:(\d+)",
-                caddyfile[match.start():match.end() + 200],
-            )
-            if proxy_match:
-                target_port = int(proxy_match.group(1))
-                if target_port == XUI_SUB_PORT:
-                    if path_segment not in ("json",):
-                        sub_path = f"/{path_segment}/"
-                    else:
-                        sub_json_path = f"/{path_segment}/"
-                elif target_port == XUI_INTERNAL_PORT:
-                    web_path = f"/{path_segment}/"
-
         username = "admin"
+
         try:
-            row = await self._cmd(
-                "docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db "
-                '"SELECT username FROM users LIMIT 1"',
-            )
+            db = "docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db"
+
+            row = await self._cmd(f'{db} "SELECT username FROM users LIMIT 1"')
             if row.strip():
                 username = row.strip()
+
+            row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='webBasePath'\"")
+            if row.strip():
+                web_path = row.strip()
+                if not web_path.endswith("/"):
+                    web_path += "/"
+
+            row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='subPath'\"")
+            if row.strip():
+                sub_path = row.strip()
+                if not sub_path.endswith("/"):
+                    sub_path += "/"
+
+            row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='subJsonPath'\"")
+            if row.strip():
+                sub_json_path = row.strip()
+                if not sub_json_path.endswith("/"):
+                    sub_json_path += "/"
         except Exception:
             pass
 

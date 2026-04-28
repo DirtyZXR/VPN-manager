@@ -2522,52 +2522,75 @@ async def run_server_autodiscover(
 
         discovered_list = []
         if "3x-ui" in discovered:
+            details = discovered["3x-ui"]
             if not server.xui_panel:
-                details = discovered["3x-ui"]
                 panel = XUIPanel(
                     server_id=server.id,
+                    url=f"https://{details['domain']}:{details['caddy_port']}",
                     username=details.get("username"),
-                    panel_path=details.get("base_path"),
-                    subscription_path=details.get("sub_path"),
+                    password_encrypted="",
+                    panel_path=details.get("web_path", "/"),
+                    subscription_path=details.get("sub_path", "/sub/"),
+                    subscription_json_path=details.get("sub_json_path", "/json/"),
+                    caddy_port=details.get("caddy_port", 8443),
+                    verify_ssl=False,
                 )
                 session.add(panel)
-                discovered_list.append("3x-ui")
+                discovered_list.append(
+                    f"3x-ui ({details['domain']}:{details['caddy_port']})"
+                )
             else:
-                discovered_list.append("3x-ui (уже был)")
+                discovered_list.append("3x-ui (уже подключён)")
 
         if "amnezia-awg" in discovered:
+            details = discovered["amnezia-awg"]
             if not server.awg_service:
-                awg = AWGService(server_id=server.id)
+                awg = AWGService(
+                    server_id=server.id,
+                    port=details.get("port", 51820),
+                    subnet_ip=details.get("subnet_ip", "10.8.0.1"),
+                    subnet_cidr=details.get("subnet_cidr", 24),
+                    obfuscation=details.get("obfuscation", {}),
+                )
                 session.add(awg)
-                discovered_list.append("AmneziaWG")
+                discovered_list.append(
+                    f"AmneziaWG (порт {details.get('port', 51820)})"
+                )
             else:
-                discovered_list.append("AmneziaWG (уже был)")
+                discovered_list.append("AmneziaWG (уже подключён)")
 
             if not any(ib.type == "awg_inbound" for ib in server.inbounds):
-                awg_port = discovered["amnezia-awg"].get("port")
                 awg_inbound = AWGInbound(
                     server_id=server.id,
                     protocol="awg",
                     remark="AmneziaWG",
-                    port=awg_port
+                    port=details.get("port", 51820),
                 )
                 session.add(awg_inbound)
 
         if "mtproxy" in discovered:
+            details = discovered["mtproxy"]
             if not server.mtproxy_service:
-                mtproxy = MTProxyService(server_id=server.id)
+                mtproxy = MTProxyService(
+                    server_id=server.id,
+                    implementation=details.get("implementation", "mtg-multi"),
+                    port=details.get("port", 443),
+                    domain=details.get("domain"),
+                    max_connections=details.get("max_connections"),
+                )
                 session.add(mtproxy)
-                discovered_list.append("MTProxy")
+                discovered_list.append(
+                    f"MTProxy {details.get('implementation', 'mtg')} (порт {details.get('port', 443)})"
+                )
             else:
-                discovered_list.append("MTProxy (уже был)")
+                discovered_list.append("MTProxy (уже подключён)")
 
             if not any(ib.type == "mtproxy_inbound" for ib in server.inbounds):
-                mtproxy_port = discovered["mtproxy"].get("port")
                 mtproxy_inbound = MTProxyInbound(
                     server_id=server.id,
                     protocol="mtproto",
                     remark="MTProxy",
-                    port=mtproxy_port
+                    port=details.get("port", 443),
                 )
                 session.add(mtproxy_inbound)
 
