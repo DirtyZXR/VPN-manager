@@ -2177,7 +2177,8 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
         "Пароль: {password}\n"
         "webBasePath: {web_base_path}\n"
         "subPath: {sub_path}\n"
-        "subJsonPath: {sub_json_path}\n\n"
+        "subJsonPath: {sub_json_path}\n"
+        "SSL проверка: {ssl}\n\n"
         "Выберите, что изменить:",
         name=server.name,
         username=panel.username or "Не задан",
@@ -2185,6 +2186,7 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
         web_base_path=panel.panel_path or "Не задан",
         sub_path=panel.subscription_path or "Не задан",
         sub_json_path=panel.subscription_json_path or "Не задан",
+        ssl="Включена 🔒" if panel.verify_ssl else "Отключена 🔓",
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -2195,6 +2197,10 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
     kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
     kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
     kb.button(text="Изменить subJsonPath", callback_data=f"xui_edit_jsonpath_{server_id}")
+    kb.button(
+        text="🔏 Включить SSL" if not panel.verify_ssl else "🔏 Отключить SSL",
+        callback_data=f"xui_toggle_ssl_{server_id}",
+    )
     kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
     kb.adjust(1)
 
@@ -2222,6 +2228,31 @@ async def edit_mtproxy_service(callback: CallbackQuery, is_admin: bool) -> None:
         )
         return
     await callback.answer("В разработке", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("xui_toggle_ssl_"))
+async def xui_toggle_ssl(callback: CallbackQuery, state: FSMContext) -> None:
+    """Toggle SSL verification for XUI panel."""
+    server_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+
+        from app.database.models.services import XUIPanel
+
+        result = await session.execute(
+            select(XUIPanel).where(XUIPanel.server_id == server_id)
+        )
+        panel = result.scalar_one_or_none()
+
+        if panel:
+            panel.verify_ssl = not panel.verify_ssl
+            await session.commit()
+
+            # Re-render the menu
+            await edit_xui_service(callback, state, is_admin=True)
+        else:
+            await callback.answer("❌ Панель не найдена.", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("edit_xui_username_"))
