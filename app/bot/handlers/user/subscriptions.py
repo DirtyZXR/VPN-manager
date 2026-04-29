@@ -286,7 +286,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
             token_text=token_text,
         )
 
-        config_groups = defaultdict(list)
+        server_groups = defaultdict(list)
         builder = InlineKeyboardBuilder()
 
         for conn in subscription.inbound_connections:
@@ -326,8 +326,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                         config_data = None
                         has_vpn_uri = False
 
-                group_key = (server.id, config_data if config_type == "link" else None)
-                config_groups[group_key].append(
+                server_groups[server.id].append(
                     {
                         "server_name": server.name,
                         "inbound": inbound,
@@ -338,78 +337,80 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                     }
                 )
 
-        if config_groups:
+        if server_groups:
             text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
-            for _group_key, conn_list in config_groups.items():
-                links = [c for c in conn_list if c["config_type"] == "link"]
-                files = [c for c in conn_list if c["config_type"] == "file"]
-                empties = [c for c in conn_list if c["config_type"] == "empty"]
+            for _server_id, conn_list in server_groups.items():
+                server_name = conn_list[0]["server_name"]
+                text += f"🖥️ <b>{server_name}:</b>\n"
 
-                if links:
-                    link_data = links[0]
-                    url = link_data["config_data"]
-                    server_name = link_data.get("server_name", "")
-                    if url and (url.startswith("tg://") or "t.me" in url):
-                        text += t("user.subs.conn_url_clickable", "  • URL: {url}\n", url=url)
+                url_groups = defaultdict(list)
+                files = []
+                empties = []
+
+                for c in conn_list:
+                    if c["config_type"] == "link":
+                        url_groups[c["config_data"]].append(c)
+                    elif c["config_type"] == "file":
+                        files.append(c)
                     else:
-                        text += t("user.subs.conn_url", "  • URL: <code>{url}</code>\n", url=url)
+                        empties.append(c)
 
-                    for c in links:
-                        conn = c["connection"]
-                        inbound = c["inbound"]
-                        display_remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
-                        conn_status = "✅" if conn.is_connection_active else "❌"
-                        traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
-                        from app.utils.date_utils import format_expiry_date
-                        expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
-                        text += t("user.subs.conn_info", "    └ {status} {remark} | {server}\n", status=conn_status, remark=display_remark, server=c.get("server_name", "Unknown"))
-                        text += t("user.subs.conn_traffic", "      Трафик: {traffic}\n", traffic=traffic)
-                        text += t("user.subs.conn_expiry", "      Срок: {expiry}\n", expiry=expiry_info)
+                for url, url_items in url_groups.items():
+                    remarks = []
+                    for c in url_items:
+                        rem = c["inbound"].remark.split(":")[0] if c["inbound"].remark else "Без названия"
+                        if rem not in remarks:
+                            remarks.append(rem)
+                    combined_remark = ", ".join(remarks)
 
-                    if not url.startswith("tg://"):
+                    is_tg_proxy = url.startswith("tg://") or "t.me" in url
+                    if is_tg_proxy:
+                        text += f"  - {combined_remark}: {url}\n"
+                    else:
+                        text += f"  - {combined_remark}: <code>{url}</code>\n"
                         from aiogram.types import CopyTextButton
-
-                        label = f"📋 Скопировать | {server_name}" if server_name else "📋 Скопировать"
+                        label = f"📋 Скопировать | {combined_remark}"
                         builder.row(InlineKeyboardButton(
                             text=label,
                             copy_text=CopyTextButton(text=url),
                         ))
 
-                if files:
-                    for c in files:
-                        conn = c["connection"]
-                        inbound = c["inbound"]
-                        remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
-                        server_name = c.get("server_name", "")
-                        label = f"{remark} | {server_name}" if server_name else remark
-                        text += t("user.subs.conn_file_header", "  • {label}\n", label=label)
+                    conn = url_items[0]["connection"]
+                    traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+                    from app.utils.date_utils import format_expiry_date
+                    expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                    text += t("user.subs.conn_traffic_indented", "    Трафик: {traffic}\n", traffic=traffic)
+                    text += t("user.subs.conn_expiry_indented", "    Срок: {expiry}\n\n", expiry=expiry_info)
 
-                        conn_status = "✅" if conn.is_connection_active else "❌"
-                        traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
-                        from app.utils.date_utils import format_expiry_date
-                        expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
-                        text += t("user.subs.conn_info", "    └ {status} {remark} | {server}\n", status=conn_status, remark=remark, server=server_name)
-                        text += t("user.subs.conn_traffic", "      Трафик: {traffic}\n", traffic=traffic)
-                        text += t("user.subs.conn_expiry", "      Срок: {expiry}\n", expiry=expiry_info)
+                for c in files:
+                    conn = c["connection"]
+                    inbound = c["inbound"]
+                    remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
+                    text += f"  - {remark}\n"
 
-                        has_vpn_uri = c.get("vpn_uri")
-                        if has_vpn_uri:
-                            uri_btn = InlineKeyboardButton(
-                                text=f"🔗 {label}",
-                                callback_data=f"user_uri_conf_{conn.id}",
-                            )
-                        dl_btn = InlineKeyboardButton(
-                            text=f"📥 {label}", callback_data=f"user_dl_conf_{conn.id}"
+                    traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+                    from app.utils.date_utils import format_expiry_date
+                    expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                    text += t("user.subs.conn_traffic_indented", "    Трафик: {traffic}\n", traffic=traffic)
+                    text += t("user.subs.conn_expiry_indented", "    Срок: {expiry}\n\n", expiry=expiry_info)
+
+                    has_vpn_uri = c.get("vpn_uri")
+                    if has_vpn_uri:
+                        uri_btn = InlineKeyboardButton(
+                            text=f"🔗 {remark}",
+                            callback_data=f"user_uri_conf_{conn.id}",
                         )
-                        if has_vpn_uri:
-                            builder.row(uri_btn, dl_btn)
-                        else:
-                            builder.row(dl_btn)
+                        dl_btn = InlineKeyboardButton(
+                            text=f"📥 {remark}", callback_data=f"user_dl_conf_{conn.id}"
+                        )
+                        builder.row(uri_btn, dl_btn)
+                    else:
+                        builder.row(InlineKeyboardButton(
+                            text=f"📥 {remark}", callback_data=f"user_dl_conf_{conn.id}"
+                        ))
 
                 for _c in empties:
-                    text += t("user.subs.conn_empty", "  • Конфиг недоступен (не установлен или ошибка)\n")
-
-                text += "\n"
+                    text += t("user.subs.conn_empty", "  - Конфиг недоступен (не установлен или ошибка)\n\n")
 
     builder.row(InlineKeyboardButton(
         text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
