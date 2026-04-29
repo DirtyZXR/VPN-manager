@@ -13,6 +13,75 @@ from app.database.models import Client, InboundConnection, Subscription
 class NotificationService:
     """Service for sending notifications to clients."""
 
+    @staticmethod
+    def _build_subscription_links(
+        connections: list[InboundConnection], subscription: Subscription
+    ) -> str:
+        """Build subscription URL/config section for notifications.
+
+        Returns text with XUI URLs and/or config download hint for AWG/MTProxy.
+        """
+        if not connections:
+            return ""
+
+        from urllib.parse import urljoin
+
+        xui_servers = {
+            conn.inbound.server
+            for conn in connections
+            if getattr(conn.inbound.server, "xui_panel", None)
+        }
+        awg_protocols = set()
+        mtproxy_links = []
+        for conn in connections:
+            if getattr(conn.inbound.server, "xui_panel", None):
+                continue
+            if conn.inbound.type == "mtproxy_inbound":
+                svc = conn.inbound.server.mtproxy_service
+                secret = getattr(conn, "secret", None) or (svc.default_secret if svc else None)
+                port = svc.port if svc else 443
+                host = conn.inbound.server.ip_address
+                if secret:
+                    mtproxy_links.append(
+                        f"📡 <b>{html.escape(conn.inbound.remark)}</b>:\n"
+                        f"<a href=\"tg://proxy?server={host}&port={port}&secret={secret}\">Подключить MTProxy</a>\n"
+                        f"<code>tg://proxy?server={host}&port={port}&secret={secret}</code>"
+                    )
+            else:
+                awg_protocols.add(conn.inbound.protocol)
+
+        parts = []
+        if xui_servers:
+            urls = []
+            for server in xui_servers:
+                subscription_path = getattr(server.xui_panel, "subscription_json_path", None)
+                if not subscription_path:
+                    subscription_path = getattr(server.xui_panel, "subscription_path", "/sub/")
+                if not subscription_path:
+                    subscription_path = "/sub/"
+
+                server_url = (
+                    server.ip_address
+                    if server.ip_address and server.ip_address.startswith("http")
+                    else f"http://{server.ip_address}"
+                )
+                urls.append(
+                    urljoin(server_url, f"{subscription_path}{subscription.subscription_token}")
+                )
+            parts.append("🔗 <b>URL подписки:</b>\n" + "\n\n".join(f"<code>{u}</code>" for u in urls))
+
+        if awg_protocols:
+            protocols_str = ", ".join(sorted(awg_protocols))
+            parts.append(
+                f"📁 <b>Конфиг:</b> {protocols_str} — "
+                "скачайте конфигурационный файл в разделе подписок"
+            )
+
+        if mtproxy_links:
+            parts.append("🔗 <b>MTProxy:</b>\n" + "\n".join(mtproxy_links))
+
+        return "\n" + "\n".join(parts) if parts else ""
+
     def __init__(self, session: AsyncSession) -> None:
         """Initialize service with database session.
 
@@ -91,26 +160,7 @@ class NotificationService:
                     f"📅 <b>Срок действия:</b> {expiry_text}\n"
                 )
 
-                # Add subscription URLs
-                if connections:
-                    from urllib.parse import urljoin
-
-                    servers = {conn.inbound.server for conn in connections}
-                    urls = []
-                    for server in servers:
-                        # Prioritize JSON URL, fallback to standard URL
-                        subscription_path = getattr(server, "subscription_json_path", None)
-                        if not subscription_path:
-                            subscription_path = getattr(server, "subscription_path", "/sub/")
-
-                        url = urljoin(
-                            server.url, f"{subscription_path}{subscription.subscription_token}"
-                        )
-                        urls.append(url)
-
-                    if urls:
-                        message += "\n🔗 <b>Все URL подписки:</b>\n"
-                        message += "\n\n".join([f"<code>{u}</code>" for u in urls])
+                message += self._build_subscription_links(connections, subscription)
 
                 await bot.send_message(
                     chat_id=client.telegram_id,
@@ -182,27 +232,7 @@ class NotificationService:
                 )
 
                 connections = getattr(subscription, "inbound_connections", [])
-
-                # Add subscription URLs
-                if connections:
-                    from urllib.parse import urljoin
-
-                    servers = {conn.inbound.server for conn in connections}
-                    urls = []
-                    for server in servers:
-                        # Prioritize JSON URL, fallback to standard URL
-                        subscription_path = getattr(server, "subscription_json_path", None)
-                        if not subscription_path:
-                            subscription_path = getattr(server, "subscription_path", "/sub/")
-
-                        url = urljoin(
-                            server.url, f"{subscription_path}{subscription.subscription_token}"
-                        )
-                        urls.append(url)
-
-                    if urls:
-                        message += "\n🔗 <b>Все URL подписки:</b>\n"
-                        message += "\n\n".join([f"<code>{u}</code>" for u in urls])
+                message += self._build_subscription_links(connections, subscription)
 
                 await bot.send_message(
                     chat_id=client.telegram_id,
@@ -385,17 +415,7 @@ class NotificationService:
                     f"📡 <b>Порт:</b> {inbound.port}\n"
                 )
 
-                # Add subscription URL
-                from urllib.parse import urljoin
-
-                # Prioritize JSON URL, fallback to standard URL
-                subscription_path = getattr(server, "subscription_json_path", None)
-                if not subscription_path:
-                    subscription_path = getattr(server, "subscription_path", "/sub/")
-
-                url = urljoin(server.url, f"{subscription_path}{subscription.subscription_token}")
-
-                message += f"\n🔗 <b>URL подписки:</b>\n<code>{url}</code>"
+                message += self._build_subscription_links([connection], subscription)
 
                 await bot.send_message(
                     chat_id=client.telegram_id,

@@ -10,10 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database.models import (
+    AWGInboundConnection,
     Client,
     Inbound,
     InboundConnection,
+    MTProxyInboundConnection,
+    Server,
     Subscription,
+    XUIInboundConnection,
 )
 from app.services.vpn_providers import BaseVPNProvider, get_vpn_provider
 from app.utils import generate_subscription_token
@@ -58,7 +62,16 @@ class NewSubscriptionService:
                 selectinload(Subscription.client),
                 selectinload(Subscription.inbound_connections)
                 .selectinload(InboundConnection.inbound)
-                .selectinload(Inbound.server),
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service)
             )
             .order_by(Subscription.created_at.desc())
         )
@@ -83,7 +96,16 @@ class NewSubscriptionService:
                 selectinload(Subscription.template),
                 selectinload(Subscription.inbound_connections)
                 .selectinload(InboundConnection.inbound)
-                .selectinload(Inbound.server),
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service)
             )
         )
         return result.scalar_one_or_none()
@@ -208,20 +230,12 @@ class NewSubscriptionService:
                 conn.total_gb = new_total_gb
                 conn.expiry_date = expiry_date
 
-                # Update in XUI and reset traffic
                 try:
-                    inbound_result = await self.session.execute(
-                        select(Inbound)
-                        .where(Inbound.id == conn.inbound_id)
-                        .options(selectinload(Inbound.server))
-                    )
-                    inbound = inbound_result.scalar_one()
-                    provider = await self._get_provider(inbound.server)
+                    inbound = conn.inbound
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
 
-                    # First, reset the traffic so it starts from 0 for the new period
                     await provider.reset_client_traffic(inbound, conn)
 
-                    # Update limits
                     conn.is_enabled = True
                     await provider.update_client(inbound, conn, new_total_gb, expiry_date)
                 except Exception as e:
@@ -246,6 +260,7 @@ class NewSubscriptionService:
         subscription_id: int,
         inbound_id: int,
         client_uuid: str | None = None,
+        mtproxy_domain: str | None = None,
     ) -> InboundConnection:
         """Add inbound connection to subscription.
 
@@ -253,14 +268,7 @@ class NewSubscriptionService:
             subscription_id: Subscription ID
             inbound_id: Inbound ID
             client_uuid: Optional UUID to use (for rebuilding subscriptions)
-
-        Returns:
-            Created inbound connection
-
-        Raises:
-            XUIError: If inbound already exists in subscription
-            XUIError: If XUI client creation fails
-            XUIError: If email already exists in this inbound
+            mtproxy_domain: Optional domain for MTProxy mtg-multi secret generation
         """
         # Check if inbound already exists in subscription
         existing = await self.session.execute(
@@ -278,7 +286,11 @@ class NewSubscriptionService:
             raise XUIError("Subscription not found")
 
         inbound_result = await self.session.execute(
-            select(Inbound).where(Inbound.id == inbound_id).options(selectinload(Inbound.server))
+            select(Inbound).where(Inbound.id == inbound_id).options(
+                selectinload(Inbound.server).selectinload(Server.xui_panel),
+                selectinload(Inbound.server).selectinload(Server.awg_service),
+                selectinload(Inbound.server).selectinload(Server.mtproxy_service),
+            )
         )
         inbound = inbound_result.scalar_one_or_none()
         if not inbound:
@@ -291,55 +303,78 @@ class NewSubscriptionService:
         client_email = None
 
         try:
-            provider = await self._get_provider(inbound.server)
+            provider = await self._get_provider(inbound.server, inbound=inbound)
         except Exception as e:
-            await self.session.rollback()
             raise XUIError(f"Failed to get VPN provider: {e}") from e
 
         try:
-            # Create client in provider
-            client_data = await provider.add_client(
-                inbound=inbound,
-                subscription=subscription,
-                client_uuid=client_uuid,
-                email=None,  # Let provider generate/handle unique email
-            )
+            provider_kwargs = {
+                "inbound": inbound,
+                "subscription": subscription,
+                "client_uuid": client_uuid,
+                "email": None,
+            }
+            if mtproxy_domain and inbound.type == "mtproxy_inbound":
+                provider_kwargs["domain"] = mtproxy_domain
+            client_data = await provider.add_client(**provider_kwargs)
             client_uuid = client_data.get("uuid", client_uuid)
             client_email = client_data.get("email")
             provider_payload = client_data
         except Exception as e:
-            await self.session.rollback()
             logger.error(f"Failed to create client in VPN panel: {e}", exc_info=True)
             raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
 
-        try:
-            # Create inbound connection with per-connection traffic and expiry
-            connection = InboundConnection(
-                subscription_id=subscription_id,
-                inbound_id=inbound_id,
-                is_enabled=True,
-                total_gb=subscription.total_gb,  # Store per-connection traffic
-                expiry_date=subscription.expiry_date,  # Store per-connection expiry
-                provider_payload=provider_payload,
-                uuid=provider_payload.get("uuid", client_uuid),
-                email=provider_payload.get("email", client_email),
-                xui_client_id=provider_payload.get("xui_client_id", client_uuid),
-                sync_status="synced",
-                last_sync_at=datetime.now(UTC),
-            )
-            self.session.add(connection)
-            await self.session.flush()
+        async with self.session.begin_nested():
+            try:
+                base_kwargs = {
+                    "subscription_id": subscription_id,
+                    "inbound_id": inbound_id,
+                    "is_enabled": True,
+                    "total_gb": subscription.total_gb,
+                    "expiry_date": subscription.expiry_date,
+                    "sync_status": "synced",
+                    "last_sync_at": datetime.now(UTC),
+                }
 
-            # Update inbound client count
-            inbound.client_count += 1
+                if inbound.type == "xui_inbound":
+                    xui_kwargs = {
+                        "provider_payload": provider_payload,
+                        "uuid": provider_payload.get("uuid", client_uuid),
+                        "email": provider_payload.get("email", client_email),
+                        "xui_client_id": provider_payload.get("xui_client_id", client_uuid),
+                    }
+                    connection = XUIInboundConnection(**base_kwargs, **xui_kwargs)
+                elif inbound.type == "awg_inbound":
+                    connection = AWGInboundConnection(
+                        **base_kwargs,
+                        client_ip=provider_payload.get("client_ip"),
+                        public_key=provider_payload.get("public_key"),
+                        private_key=provider_payload.get("private_key"),
+                        psk=provider_payload.get("psk"),
+                    )
+                elif inbound.type == "mtproxy_inbound":
+                    connection = MTProxyInboundConnection(
+                        **base_kwargs,
+                        secret=provider_payload.get("secret"),
+                        domain=provider_payload.get("domain"),
+                    )
+                else:
+                    connection = InboundConnection(**base_kwargs)
 
-            return connection
+                connection.inbound = inbound
+                connection.subscription = subscription
 
-        except Exception as e:
-            # Rollback on database error
-            await self.session.rollback()
-            logger.error(f"Failed to save inbound connection: {e}", exc_info=True)
-            raise XUIError(f"Failed to save inbound connection: {str(e)}") from e
+                self.session.add(connection)
+                await self.session.flush()
+
+                if hasattr(inbound, "client_count"):
+                    inbound.client_count += 1
+
+                return connection
+
+            except Exception as e:
+                logger.error(f"Failed to save inbound connection: {e}", exc_info=True)
+                raise XUIError(f"Failed to save inbound connection: {str(e)}") from e
 
     async def remove_inbound_from_subscription(
         self,
@@ -367,15 +402,20 @@ class NewSubscriptionService:
 
         # Get inbound info with server relationship
         inbound_result = await self.session.execute(
-            select(Inbound).where(Inbound.id == inbound_id).options(selectinload(Inbound.server))
+            select(Inbound).where(Inbound.id == inbound_id).options(
+                selectinload(Inbound.server).selectinload(Server.xui_panel),
+                selectinload(Inbound.server).selectinload(Server.awg_service),
+                selectinload(Inbound.server).selectinload(Server.mtproxy_service),
+            )
         )
         inbound = inbound_result.scalar_one_or_none()
 
         # Delete from provider
         if inbound and inbound.server:
-            provider = await self._get_provider(inbound.server)
+            provider = await self._get_provider(inbound.server, inbound=inbound)
             await provider.remove_client(inbound, connection)
-            inbound.client_count -= 1
+            if hasattr(inbound, "client_count"):
+                inbound.client_count -= 1
 
         # Delete from database
         await self.session.delete(connection)
@@ -399,21 +439,37 @@ class NewSubscriptionService:
         conn_result = await self.session.execute(
             select(InboundConnection)
             .where(InboundConnection.id == connection_id)
-            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
+                selectinload(InboundConnection.subscription).selectinload(Subscription.client)
+            )
         )
         connection = conn_result.scalar_one_or_none()
         if not connection:
             return None
 
-        # Update in provider
         inbound = connection.inbound
-        connection.is_enabled = enable  # Update flag before calling provider
-        provider = await self._get_provider(inbound.server)
-        await provider.update_client(
-            inbound, connection, connection.total_gb, connection.expiry_date
-        )
+        provider = await self._get_provider(inbound.server, inbound=inbound)
 
-        # Update in database
+        if inbound.type in ("awg_inbound", "mtproxy_inbound"):
+            if enable:
+                await provider.enable_client(inbound, connection)
+            else:
+                await provider.disable_client(inbound, connection)
+        else:
+            connection.is_enabled = enable
+            await provider.update_client(
+                inbound, connection, connection.total_gb, connection.expiry_date
+            )
+
         connection.is_enabled = enable
         await self.session.flush()
 
@@ -438,9 +494,19 @@ class NewSubscriptionService:
             select(Subscription)
             .where(Subscription.client_id == client_id)
             .options(
+                selectinload(Subscription.client),
                 selectinload(Subscription.inbound_connections)
                 .selectinload(InboundConnection.inbound)
                 .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service)
             )
         )
         subscriptions = result.scalars().all()
@@ -448,15 +514,19 @@ class NewSubscriptionService:
         toggled_count = 0
         for subscription in subscriptions:
             for connection in subscription.inbound_connections:
-                # Update in provider
                 inbound = connection.inbound
-                connection.is_enabled = enable
-                provider = await self._get_provider(inbound.server)
-                await provider.update_client(
-                    inbound, connection, connection.total_gb, connection.expiry_date
-                )
+                provider = await self._get_provider(inbound.server, inbound=inbound)
 
-                # Update in database
+                if inbound.type in ("awg_inbound", "mtproxy_inbound"):
+                    if enable:
+                        await provider.enable_client(inbound, connection)
+                    else:
+                        await provider.disable_client(inbound, connection)
+                else:
+                    await provider.update_client(
+                        inbound, connection, connection.total_gb, connection.expiry_date
+                    )
+
                 connection.is_enabled = enable
                 toggled_count += 1
 
@@ -477,9 +547,19 @@ class NewSubscriptionService:
             select(Subscription)
             .where(Subscription.client_id == client_id)
             .options(
+                selectinload(Subscription.client),
                 selectinload(Subscription.inbound_connections)
                 .selectinload(InboundConnection.inbound)
                 .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service)
             )
         )
         subscriptions = result.scalars().all()
@@ -490,7 +570,7 @@ class NewSubscriptionService:
                 # Delete from provider
                 inbound = connection.inbound
                 try:
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
                     await provider.remove_client(inbound, connection)
                     deleted_count += 1
                 except Exception as e:
@@ -518,9 +598,19 @@ class NewSubscriptionService:
             select(Subscription)
             .where(Subscription.client_id == client_id)
             .options(
+                selectinload(Subscription.client),
                 selectinload(Subscription.inbound_connections)
                 .selectinload(InboundConnection.inbound)
                 .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service)
             )
         )
         subscriptions = result.scalars().all()
@@ -532,7 +622,7 @@ class NewSubscriptionService:
                 # Update tg_id in provider
                 inbound = connection.inbound
                 try:
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
                     # For XUI this works because it pulls latest from subscription.client.telegram_id
                     await provider.update_client(
                         inbound, connection, connection.total_gb, connection.expiry_date
@@ -549,18 +639,25 @@ class NewSubscriptionService:
 
     # Helper methods
 
-    async def _get_provider(self, server: Any) -> BaseVPNProvider:
+    async def _get_provider(self, server: Any, inbound: Any = None) -> BaseVPNProvider:
         """Get or create VPN provider for server.
 
         Args:
             server: Server model
+            inbound: Optional Inbound model (used to select correct provider
+                     when server has multiple services)
 
         Returns:
             VPN provider instance
         """
-        if server.id not in self._providers:
-            self._providers[server.id] = get_vpn_provider(server)
-        return self._providers[server.id]
+        inbound_type = inbound.type if inbound else None
+        cache_key = (server.id, inbound_type)
+        if cache_key not in self._providers:
+            provider = get_vpn_provider(server, inbound_type=inbound_type)
+            if hasattr(provider, "_session"):
+                provider._session = self.session
+            self._providers[cache_key] = provider
+        return self._providers[cache_key]
 
     async def close_all_clients(self) -> None:
         """Close all VPN providers properly."""
@@ -594,7 +691,7 @@ class NewSubscriptionService:
                     if not conn.is_enabled:
                         continue
                     try:
-                        provider = await self._get_provider(conn.inbound.server)
+                        provider = await self._get_provider(conn.inbound.server, inbound=conn.inbound)
                         config = await provider.get_client_config(conn.inbound, conn)
                         config_data = config.get("config_data")
                         config_type = config.get("config_type")
@@ -635,7 +732,7 @@ class NewSubscriptionService:
                     if not conn.is_enabled:
                         continue
                     try:
-                        provider = await self._get_provider(conn.inbound.server)
+                        provider = await self._get_provider(conn.inbound.server, inbound=conn.inbound)
                         config = await provider.get_client_config(
                             conn.inbound, conn, prefer_json=True
                         )
@@ -677,7 +774,18 @@ class NewSubscriptionService:
             select(Subscription)
             .options(
                 selectinload(Subscription.client),
-                selectinload(Subscription.inbound_connections),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(Subscription.inbound_connections)
+                .selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service)
             )
             .order_by(Subscription.created_at.desc())
         )
@@ -738,23 +846,33 @@ class NewSubscriptionService:
 
         await self.session.flush()
 
-        # Update XUI clients if parameters changed
+        # Update XUI clients if traffic/expiry parameters changed
         if (
             total_gb is not None
             or expiry_days is not None
-            or is_active is not None
             or exact_expiry_date is not None
         ):
             result = await self.session.execute(
                 select(InboundConnection)
                 .where(InboundConnection.subscription_id == subscription_id)
-                .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
+                .options(
+                    selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
+                    selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.awg_service),
+                    selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.mtproxy_service),
+                    selectinload(InboundConnection.subscription).selectinload(Subscription.client)
+                )
             )
             connections = result.scalars().all()
 
             for connection in connections:
                 try:
-                    provider = await self._get_provider(connection.inbound.server)
+                    provider = await self._get_provider(connection.inbound.server, inbound=connection.inbound)
 
                     connection.is_enabled = subscription.is_active
                     await provider.update_client(
@@ -821,19 +939,34 @@ class NewSubscriptionService:
         result = await self.session.execute(
             select(InboundConnection)
             .where(InboundConnection.subscription_id == subscription_id)
-            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
+                selectinload(InboundConnection.subscription).selectinload(Subscription.client)
+            )
         )
         connections = result.scalars().all()
 
         for connection in connections:
             try:
-                provider = await self._get_provider(connection.inbound.server)
+                provider = await self._get_provider(connection.inbound.server, inbound=connection.inbound)
                 await provider.update_client(
                     connection.inbound, connection, subscription.total_gb, subscription.expiry_date
                 )
                 connection.expiry_date = subscription.expiry_date
                 connection.sync_status = "synced"
                 connection.last_sync_at = now
+
+                if connection.inbound.type in ("awg_inbound", "mtproxy_inbound") and not connection.is_enabled and subscription.is_active:
+                    await provider.enable_client(connection.inbound, connection)
+                    connection.is_enabled = True
             except Exception as e:
                 logger.warning(f"Failed to update VPN client for connection {connection.id}: {e}")
                 connection.sync_status = "error"
@@ -858,10 +991,11 @@ class NewSubscriptionService:
         Raises:
             XUIError: If subscription not found
         """
+        self.session.expire_all()
         sub_result = await self.session.execute(
             select(Subscription)
             .where(Subscription.id == subscription_id)
-            .options(selectinload(Subscription.client), selectinload(Subscription.template))
+            .options(selectinload(Subscription.client))
         )
         subscription = sub_result.scalar_one_or_none()
         if not subscription:
@@ -894,13 +1028,24 @@ class NewSubscriptionService:
         result = await self.session.execute(
             select(InboundConnection)
             .where(InboundConnection.subscription_id == subscription_id)
-            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
+                selectinload(InboundConnection.subscription).selectinload(Subscription.client)
+            )
         )
         connections = result.scalars().all()
 
         for connection in connections:
             try:
-                provider = await self._get_provider(connection.inbound.server)
+                provider = await self._get_provider(connection.inbound.server, inbound=connection.inbound)
 
                 if base_days > 0:
                     await provider.update_client(
@@ -910,12 +1055,14 @@ class NewSubscriptionService:
                         subscription.expiry_date,
                     )
 
-                    # Update local connection expiry
                     connection.expiry_date = subscription.expiry_date
                     connection.sync_status = "synced"
                     connection.last_sync_at = now
 
-                # Reset traffic
+                    if connection.inbound.type in ("awg_inbound", "mtproxy_inbound") and not connection.is_enabled:
+                        await provider.enable_client(connection.inbound, connection)
+                        connection.is_enabled = True
+
                 await provider.reset_client_traffic(connection.inbound, connection)
             except Exception as e:
                 logger.warning(
@@ -929,37 +1076,48 @@ class NewSubscriptionService:
 
         return True
 
-    async def delete_subscription(self, subscription_id: int) -> bool:
+    async def delete_subscription(self, subscription: Subscription | int) -> bool:
         """Delete subscription and all its inbound connections.
 
         Args:
-            subscription_id: Subscription ID
+            subscription: Subscription object (with loaded inbound_connections
+                and inbound.server relations) or subscription ID
 
         Returns:
             True if deleted
         """
-        sub_result = await self.session.execute(
-            select(Subscription)
-            .where(Subscription.id == subscription_id)
-            .options(selectinload(Subscription.inbound_connections))
-        )
-        subscription = sub_result.scalar_one_or_none()
-        if not subscription:
-            return False
+        if isinstance(subscription, int):
+            self.session.expire_all()
+            sub_result = await self.session.execute(
+                select(Subscription)
+                .where(Subscription.id == subscription)
+                .options(
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.awg_service),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.mtproxy_service),
+                )
+            )
+            subscription = sub_result.scalar_one_or_none()
+            if not subscription:
+                return False
 
-        # Delete all XUI clients
         for connection in subscription.inbound_connections:
             try:
-                inbound_result = await self.session.execute(
-                    select(Inbound)
-                    .where(Inbound.id == connection.inbound_id)
-                    .options(selectinload(Inbound.server))
-                )
-                inbound = inbound_result.scalar_one_or_none()
+                inbound = connection.inbound
                 if inbound and inbound.server:
-                    provider = await self._get_provider(inbound.server)
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
                     await provider.remove_client(inbound, connection)
-                    inbound.client_count -= 1
+                    if hasattr(inbound, "client_count"):
+                        inbound.client_count -= 1
             except Exception as e:
                 logger.warning(f"Failed to delete VPN client for connection {connection.id}: {e}")
 
@@ -980,7 +1138,11 @@ class NewSubscriptionService:
         result = await self.session.execute(
             select(InboundConnection)
             .where(InboundConnection.subscription_id == subscription_id)
-            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
+            .options(
+                selectinload(InboundConnection.inbound).selectinload(Inbound.server).selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound).selectinload(Inbound.server).selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound).selectinload(Inbound.server).selectinload(Server.mtproxy_service),
+            )
             .order_by(InboundConnection.created_at.desc())
         )
         return result.scalars().all()
@@ -988,10 +1150,14 @@ class NewSubscriptionService:
     async def get_subscription_by_id(self, subscription_id: int) -> Subscription | None:
         """Get subscription by ID with full relations.
 
+        Expires cached state first to ensure fresh data from DB,
+        including all eagerly loaded relationships.
+
         Args:
             subscription_id: Subscription ID
 
         Returns:
             Subscription or None
         """
+        self.session.expire_all()
         return await self.get_subscription(subscription_id)

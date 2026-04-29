@@ -683,9 +683,7 @@ admin:
 
       \   Порт: {port}
 
-      \   Email: {email}
-
-      \   UUID: {uuid}
+      {conn_detail}
 
       \   ID подключения: {conn_id}
 
@@ -991,7 +989,7 @@ user:
     btn_sub: 📝 {name}
     btn_urls: 🔗 Subscription URLs
     conn_expiry: "      Срок: {expiry}\n"
-    conn_info: "    └ {status} {remark} ({protocol}) | {server}\n"
+    conn_info: "    └ {status} {remark} | {server}\n"
     conn_traffic: "      Трафик: {traffic}\n"
     conn_url: "  • URL: <code>{url}</code>\n"
     details_header: "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n"

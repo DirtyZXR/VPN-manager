@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.database.models import Inbound, Server
+from app.database.models import Inbound, Server, XUIInbound
+from app.database.models.services import XUIPanel
 from app.xui_client import XUIClient, XUIError
 
 
@@ -49,8 +50,18 @@ class XUIService:
 
         Returns:
             Plain text password
+
+        Raises:
+            ValueError: If decryption fails (e.g., plain text stored as encrypted).
         """
-        return self._cipher.decrypt(encrypted.encode()).decode()
+        try:
+            return self._cipher.decrypt(encrypted.encode()).decode()
+        except Exception as e:
+            logger.error(f"Failed to decrypt password: {e}")
+            raise ValueError(
+                f"Password decryption failed — password may be stored as plain text. "
+                f"Re-save the panel credentials to fix. Error: {e}"
+            ) from e
 
     async def _get_client(self, server: Server) -> XUIClient:
         """Get or create XUI client for server.
@@ -64,28 +75,48 @@ class XUIService:
         if server.id in self._clients:
             return self._clients[server.id]
 
-        password = self._decrypt_password(server.password_encrypted)
+        if (
+            not server.xui_panel
+            or not getattr(server, "ip_address", None)
+            or not server.xui_panel.username
+            or not server.xui_panel.password_encrypted
+        ):
+            raise XUIError(
+                "Server credentials not configured or missing XUI panel. Please setup services first."
+            )
+
+        password = self._decrypt_password(server.xui_panel.password_encrypted)
         # Use verify_ssl from server model, default to True for existing servers
-        verify_ssl = getattr(server, "verify_ssl", True)
+        verify_ssl = getattr(server.xui_panel, "verify_ssl", True)
 
         # Build full URL for API requests using server URL + panel path
-        panel_path = getattr(server, "panel_path", "/")
+        panel_path = getattr(server.xui_panel, "panel_path", "/")
         from urllib.parse import urljoin
 
-        base_url = urljoin(server.url, panel_path)
+        # Build base url
+        if getattr(server.xui_panel, "url", None):
+            base_url = server.xui_panel.url
+            if not base_url.endswith(panel_path) and panel_path != "/":
+                base_url = urljoin(base_url, panel_path)
+        else:
+            ip = server.ip_address
+            url = ip if ip.startswith("http") else f"https://{ip}" if verify_ssl else f"http://{ip}"
+            base_url = urljoin(url, panel_path)
 
         # Try to load saved cookies
         saved_cookies = None
-        if server.session_cookies_encrypted:
+        if getattr(server.xui_panel, "session_cookies_encrypted", None):
             try:
-                saved_cookies = json.loads(self._decrypt_password(server.session_cookies_encrypted))
+                saved_cookies = json.loads(
+                    self._decrypt_password(server.xui_panel.session_cookies_encrypted)
+                )
                 logger.debug("Loaded saved cookies for server {}", server.id)
             except Exception as e:
                 logger.warning("Failed to load saved cookies for server {}: {}", server.id, e)
 
         client = XUIClient(
             base_url=base_url,
-            username=server.username,
+            username=server.xui_panel.username,
             password=password,
             timeout=self._timeout,
             verify_ssl=verify_ssl,
@@ -108,12 +139,12 @@ class XUIService:
         """
         try:
             cookies = client.get_session_cookies()
-            if cookies:
+            if cookies and getattr(server, "xui_panel", None):
                 from datetime import datetime
 
                 cookies_json = json.dumps(cookies)
-                server.session_cookies_encrypted = self._encrypt_password(cookies_json)
-                server.session_created_at = datetime.now(UTC)
+                server.xui_panel.session_cookies_encrypted = self._encrypt_password(cookies_json)
+                server.xui_panel.session_created_at = datetime.now(UTC)
                 logger.debug("Saved session cookies for server {}", server.id)
         except Exception as e:
             logger.warning("Failed to save session cookies for server {}: {}", server.id, e)
@@ -150,7 +181,9 @@ class XUIService:
         Returns:
             List of all servers
         """
-        result = await self.session.execute(select(Server).order_by(Server.name))
+        result = await self.session.execute(
+            select(Server).options(selectinload(Server.xui_panel)).order_by(Server.name)
+        )
         return result.scalars().all()
 
     async def get_active_servers(self) -> Sequence[Server]:
@@ -160,7 +193,10 @@ class XUIService:
             List of active servers
         """
         result = await self.session.execute(
-            select(Server).where(Server.is_active).order_by(Server.name)
+            select(Server)
+            .options(selectinload(Server.xui_panel))
+            .where(Server.is_active)
+            .order_by(Server.name)
         )
         return result.scalars().all()
 
@@ -173,15 +209,18 @@ class XUIService:
         Returns:
             Server or None if not found
         """
-        result = await self.session.execute(select(Server).where(Server.id == server_id))
+        result = await self.session.execute(
+            select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id)
+        )
         return result.scalar_one_or_none()
 
     async def create_server(
         self,
         name: str,
-        url: str,
-        username: str,
-        password: str,
+        ip_address: str | None = None,
+        url: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         verify_ssl: bool = True,
         panel_path: str = "/",
         subscription_path: str = "/sub/",
@@ -191,6 +230,7 @@ class XUIService:
 
         Args:
             name: Server name
+            ip_address: IP Address of the server
             url: Server base URL (e.g., https://example.com)
             username: Panel username
             password: Panel password
@@ -202,48 +242,69 @@ class XUIService:
         Returns:
             Created server
         """
-        encrypted_password = self._encrypt_password(password)
+        encrypted_password = self._encrypt_password(password) if password else None
+
+        ip = ip_address or url
         server = Server(
             name=name,
-            url=url,
-            username=username,
-            password_encrypted=encrypted_password,
-            is_active=True,
-            verify_ssl=verify_ssl,
-            panel_path=panel_path,
-            subscription_path=subscription_path,
-            subscription_json_path=subscription_json_path,
+            ip_address=ip,
+            is_online=False,  # Wait for monitor to ping it
         )
         self.session.add(server)
         await self.session.flush()
+
+        if username and password:
+            xui_panel = XUIPanel(
+                server_id=server.id,
+                username=username,
+                password_encrypted=encrypted_password,
+                verify_ssl=verify_ssl,
+                panel_path=panel_path,
+                subscription_path=subscription_path,
+                subscription_json_path=subscription_json_path,
+            )
+            self.session.add(xui_panel)
+            await self.session.flush()
+            server.xui_panel = xui_panel
+
         return server
 
     async def update_server(
         self,
         server_id: int,
         name: str | None = None,
+        ip_address: str | None = None,
         url: str | None = None,
         username: str | None = None,
         password: str | None = None,
-        is_active: bool | None = None,
+        is_online: bool | None = None,
         verify_ssl: bool | None = None,
         panel_path: str | None = None,
         subscription_path: str | None = None,
         subscription_json_path: str | None = None,
+        ssh_user: str | None = None,
+        ssh_port: int | None = None,
+        ssh_password: str | None = None,
+        ssh_key: str | None = None,
     ) -> Server | None:
         """Update server.
 
         Args:
             server_id: Server ID
             name: New name (optional)
+            ip_address: New IP address (optional)
             url: New URL (optional)
             username: New username (optional)
             password: New password (optional)
-            is_active: New active status (optional)
+            is_online: New online status (optional)
             verify_ssl: New SSL verification status (optional)
             panel_path: New panel path (optional)
             subscription_path: New subscription path (optional)
             subscription_json_path: New JSON subscription path (optional)
+            ssh_user: New SSH user (optional)
+            ssh_port: New SSH port (optional)
+            ssh_password: New SSH password (optional)
+            ssh_key: New SSH key (optional)
 
         Returns:
             Updated server or None if not found
@@ -254,25 +315,53 @@ class XUIService:
 
         if name is not None:
             server.name = name
-        if url is not None:
-            server.url = url
-        if username is not None:
-            server.username = username
-        if password is not None:
-            server.password_encrypted = self._encrypt_password(password)
-            # Clear saved cookies when password changes
-            server.session_cookies_encrypted = None
-            server.session_created_at = None
-        if is_active is not None:
-            server.is_active = is_active
-        if verify_ssl is not None:
-            server.verify_ssl = verify_ssl
-        if panel_path is not None:
-            server.panel_path = panel_path
-        if subscription_path is not None:
-            server.subscription_path = subscription_path
-        if subscription_json_path is not None:
-            server.subscription_json_path = subscription_json_path
+
+        new_ip = ip_address if ip_address is not None else url
+        if new_ip is not None:
+            server.ip_address = new_ip
+
+        if is_online is not None:
+            server.is_online = is_online
+
+        if ssh_user is not None:
+            server.ssh_user = ssh_user
+        if ssh_port is not None:
+            server.ssh_port = ssh_port
+        if ssh_password is not None:
+            server.ssh_password_encrypted = self._encrypt_password(ssh_password)
+        if ssh_key is not None:
+            server.ssh_key_encrypted = self._encrypt_password(ssh_key)
+
+        # Handle XUI Panel
+        if any(
+            v is not None
+            for v in [
+                username,
+                password,
+                verify_ssl,
+                panel_path,
+                subscription_path,
+                subscription_json_path,
+            ]
+        ):
+            if not getattr(server, "xui_panel", None):
+                server.xui_panel = XUIPanel(server_id=server.id)
+                self.session.add(server.xui_panel)
+
+            if username is not None:
+                server.xui_panel.username = username
+            if password is not None:
+                server.xui_panel.password_encrypted = self._encrypt_password(password)
+                server.xui_panel.session_cookies_encrypted = None
+                server.xui_panel.session_created_at = None
+            if verify_ssl is not None:
+                server.xui_panel.verify_ssl = verify_ssl
+            if panel_path is not None:
+                server.xui_panel.panel_path = panel_path
+            if subscription_path is not None:
+                server.xui_panel.subscription_path = subscription_path
+            if subscription_json_path is not None:
+                server.xui_panel.subscription_json_path = subscription_json_path
 
         # Close existing client to force reconnection
         await self.close_client(server_id)
@@ -342,7 +431,7 @@ class XUIService:
         xui_inbounds = await client.get_inbounds()
 
         # Get existing inbounds
-        result = await self.session.execute(select(Inbound).where(Inbound.server_id == server_id))
+        result = await self.session.execute(select(XUIInbound).where(XUIInbound.server_id == server_id))
         existing = {i.xui_id: i for i in result.scalars().all()}
 
         synced = 0
@@ -357,7 +446,7 @@ class XUIService:
                 inbound.is_active = xui_inbound.enable
             else:
                 # Create new
-                inbound = Inbound(
+                inbound = XUIInbound(
                     server_id=server_id,
                     xui_id=xui_inbound.id,
                     remark=xui_inbound.remark,
@@ -393,6 +482,7 @@ class XUIService:
         """
         result = await self.session.execute(
             select(Inbound)
+            .options(selectinload(Inbound.server))
             .where(Inbound.server_id == server_id, Inbound.is_active)
             .order_by(Inbound.remark)
         )
@@ -408,7 +498,10 @@ class XUIService:
             List of inbounds
         """
         result = await self.session.execute(
-            select(Inbound).where(Inbound.server_id == server_id).order_by(Inbound.remark)
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id == server_id)
+            .order_by(Inbound.remark)
         )
         return result.scalars().all()
 

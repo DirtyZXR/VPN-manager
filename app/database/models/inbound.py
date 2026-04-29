@@ -1,4 +1,4 @@
-"""Inbound model for 3x-ui inbounds."""
+"""Inbound model for VPN inbounds."""
 
 from typing import TYPE_CHECKING
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class Inbound(Base, TimestampMixin, SyncMixin):
-    """Cached inbound configuration from 3x-ui."""
+    """Base inbound configuration."""
 
     __tablename__ = "inbounds"
 
@@ -24,16 +24,17 @@ class Inbound(Base, TimestampMixin, SyncMixin):
         ForeignKey("servers.id", ondelete="CASCADE"),
         nullable=False,
     )
-    xui_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
     remark: Mapped[str] = mapped_column(String(200), nullable=False)
     protocol: Mapped[str] = mapped_column(String(50), nullable=False)
     port: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    client_count: Mapped[int] = mapped_column(
-        Integer, default=0, nullable=False
-    )  # Number of XUI clients
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    __mapper_args__ = {
+        "polymorphic_on": "type",
+        "polymorphic_identity": "inbound",
+        "with_polymorphic": "*",
+    }
 
     # Relationships
     server: Mapped["Server"] = relationship("Server", back_populates="inbounds")
@@ -49,4 +50,53 @@ class Inbound(Base, TimestampMixin, SyncMixin):
     )
 
     def __repr__(self) -> str:
-        return f"<Inbound(id={self.id}, remark='{self.remark}', protocol='{self.protocol}', clients={self.client_count})>"
+        return f"<{self.__class__.__name__}(id={self.id}, remark='{self.remark}', protocol='{self.protocol}')>"
+
+
+class XUIInbound(Inbound):
+    """Cached inbound configuration from 3x-ui."""
+
+    __tablename__ = "xui_inbounds"
+
+    id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("inbounds.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "xui_inbound",
+    }
+
+    xui_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    client_count: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )  # Number of XUI clients
+
+
+class AWGInbound(Inbound):
+    """AmneziaWG inbound configuration."""
+
+    __tablename__ = "awg_inbounds"
+
+    id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("inbounds.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "awg_inbound",
+    }
+
+
+class MTProxyInbound(Inbound):
+    """MTProxy inbound configuration."""
+
+    __tablename__ = "mtproxy_inbounds"
+
+    id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("inbounds.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    __mapper_args__ = {
+        "polymorphic_identity": "mtproxy_inbound",
+    }

@@ -3,7 +3,8 @@
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import Message as TgMessage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 from sqlalchemy import select
@@ -54,7 +55,7 @@ async def select_server_for_subscription(callback: CallbackQuery, state: FSMCont
 
         builder = InlineKeyboardBuilder()
         for server in servers:
-            status = "✅" if server.is_active else "❌"
+            status = "✅" if server.is_online else "❌"
             sel_icon = "🔘" if server.id in selected_servers else "⚪"
             builder.button(
                 text=f"{sel_icon} {status} {server.name}",
@@ -97,13 +98,13 @@ async def confirm_server_selection(callback: CallbackQuery, state: FSMContext) -
         return
 
     async with async_session_factory() as session:
-        service = XUIService(session)
-
-        all_inbounds = []
-        for server_id in selected_servers:
-            inbounds = await service.get_server_inbounds(server_id)
-            if inbounds:
-                all_inbounds.extend(inbounds)
+        result = await session.execute(
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id.in_(selected_servers), Inbound.is_active)
+            .order_by(Inbound.server_id, Inbound.remark)
+        )
+        all_inbounds = list(result.scalars().all())
 
     if not all_inbounds:
         await callback.answer(
@@ -151,12 +152,13 @@ async def toggle_inbound_selection(callback: CallbackQuery, state: FSMContext) -
         selected_servers = {data["server_id"]}
 
     async with async_session_factory() as session:
-        service = XUIService(session)
-        all_inbounds = []
-        for s_id in selected_servers:
-            inbounds = await service.get_server_inbounds(s_id)
-            if inbounds:
-                all_inbounds.extend(inbounds)
+        result = await session.execute(
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id.in_(selected_servers), Inbound.is_active)
+            .order_by(Inbound.server_id, Inbound.remark)
+        )
+        all_inbounds = list(result.scalars().all())
 
     # Determine mode: "add" if subscription_id exists, otherwise "create"
     mode = "add" if data.get("subscription_id") else "create"
@@ -200,7 +202,7 @@ async def confirm_inbound_selection(callback: CallbackQuery, state: FSMContext) 
 
 
 @router.message(SubscriptionManagement.waiting_for_subscription_name)
-async def process_subscription_name(message: Message, state: FSMContext) -> None:
+async def process_subscription_name(message: TgMessage, state: FSMContext) -> None:
     """Process subscription name input."""
     data = await state.get_data()
 
@@ -264,7 +266,7 @@ async def process_subscription_name(message: Message, state: FSMContext) -> None
 
 
 @router.message(SubscriptionManagement.waiting_for_traffic_limit)
-async def process_traffic_limit(message: Message, state: FSMContext) -> None:
+async def process_traffic_limit(message: TgMessage, state: FSMContext) -> None:
     """Process traffic limit."""
     data = await state.get_data()
 
@@ -325,7 +327,7 @@ async def process_traffic_limit(message: Message, state: FSMContext) -> None:
 
 
 @router.message(SubscriptionManagement.waiting_for_expiry_days)
-async def process_expiry_days(message: Message, state: FSMContext) -> None:
+async def process_expiry_days(message: TgMessage, state: FSMContext) -> None:
     """Process expiry days and show confirmation."""
     data = await state.get_data()
 
@@ -396,7 +398,6 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
         await message.answer("❌ Введите неотрицательное число.")
         return
 
-    data = await state.get_data()
     expiry_days = expiry_days if expiry_days > 0 else None
     await state.update_data(expiry_days=expiry_days)
 
@@ -404,6 +405,7 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
     async with async_session_factory() as session:
         client_service = ClientService(session)
         xui_service = XUIService(session)
+        data = await state.get_data()
         client = await client_service.get_client_by_id(data["client_id"])
 
         # Determine server name
@@ -430,8 +432,8 @@ async def process_expiry_days(message: Message, state: FSMContext) -> None:
         else t("admin.subscriptions.unlimited", "Безлимит")
     )
     expiry_str = (
-        t("admin.subscriptions.days_count", "{count} дней", count=data["expiry_days"])
-        if data["expiry_days"]
+        t("admin.subscriptions.days_count", "{count} дней", count=expiry_days)
+        if expiry_days
         else t("admin.subscriptions.unlimited_time", "Бессрочно")
     )
 
@@ -484,7 +486,7 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                     client_id=data["client_id"],
                     name=data["subscription_name"],
                     total_gb=data["total_gb"],
-                    expiry_days=data["expiry_days"],
+                    expiry_days=data.get("expiry_days"),
                 )
 
                 # Get server and inbounds
@@ -499,10 +501,9 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                         all_inbounds.extend(inbounds)
 
                 selected_inbounds = [
-                    ib for ib in all_inbounds if ib.id in data["selected_inbounds"]
+                    ib for ib in all_inbounds if ib.id in data.get("selected_inbounds", set())
                 ]
 
-                # Create clients in XUI for each selected inbound
                 created_connections = []
                 for inbound in selected_inbounds:
                     connection = await sub_service.add_inbound_to_subscription(
@@ -531,9 +532,10 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                     if data["total_gb"] > 0
                     else t("admin.subscriptions.unlimited", "Безлимит")
                 )
+                _expiry_days = data.get("expiry_days")
                 expiry_str = (
-                    t("admin.subscriptions.days_count", "{count} дней", count=data["expiry_days"])
-                    if data["expiry_days"]
+                    t("admin.subscriptions.days_count", "{count} дней", count=_expiry_days)
+                    if _expiry_days
                     else t("admin.subscriptions.unlimited_time", "Бессрочно")
                 )
 
@@ -795,25 +797,45 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
         inbound = conn.inbound
         server = inbound.server
 
+        if conn.type == "xui_inbound_connection":
+            conn_detail = t(
+                "admin.subscriptions.inbound_item_xui",
+                "   Email: {email}\n   UUID: {uuid}\n",
+                email=conn.email or "N/A",
+                uuid=conn.uuid or "N/A",
+            )
+        elif conn.type == "awg_inbound_connection":
+            conn_detail = t(
+                "admin.subscriptions.inbound_item_awg",
+                "   IP: {ip}\n   Public Key: {pub_key}\n",
+                ip=conn.client_ip or "N/A",
+                pub_key=(conn.public_key or "N/A")[:20] + "...",
+            )
+        elif conn.type == "mtproxy_inbound_connection":
+            conn_detail = t(
+                "admin.subscriptions.inbound_item_mtproxy",
+                "   Secret: {secret}\n",
+                secret=(conn.secret or "N/A")[:20] + "...",
+            )
+        else:
+            conn_detail = ""
+
         text += t(
             "admin.subscriptions.inbound_item",
             "{status} {remark} ({protocol})\n"
             "   Сервер: {server_name}\n"
             "   Порт: {port}\n"
-            "   Email: {email}\n"
-            "   UUID: {uuid}\n"
+            "{conn_detail}"
             "   ID подключения: {conn_id}\n\n",
             status=status,
             remark=inbound.remark,
             protocol=inbound.protocol,
             server_name=server.name,
             port=inbound.port,
-            email=conn.email,
-            uuid=conn.uuid,
+            conn_detail=conn_detail,
             conn_id=conn.id,
         )
 
-        # Add buttons for each inbound
         if conn.is_enabled:
             builder.button(
                 text=f"✅ {inbound.remark} ({inbound.protocol})",
@@ -825,7 +847,14 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
                 callback_data=f"toggle_conn_{conn.id}",
             )
         builder.button(text="🗑️", callback_data=f"delete_conn_{conn.id}")
-        builder.adjust(2)
+        if conn.type in ("awg_inbound_connection", "mtproxy_inbound_connection"):
+            builder.button(
+                text="📥 Конфиг",
+                callback_data=f"get_conn_config_{conn.id}",
+            )
+            builder.adjust(3)
+        else:
+            builder.adjust(2)
 
     # Add action buttons once at the bottom
     builder.button(
@@ -867,6 +896,103 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
         except Exception as e2:
             logger.error(f"Failed to edit reply_markup: {e2}")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("get_conn_config_"))
+async def get_connection_config(callback: CallbackQuery, is_admin: bool) -> None:
+    """Send VPN client config file for AWG/MTProxy connections."""
+    if not is_admin:
+        await callback.answer(
+            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+    connection_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import InboundConnection, Subscription
+        from app.database.models.inbound import Inbound
+        from app.database.models.server import Server
+
+        result = await session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.id == connection_id)
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
+                selectinload(InboundConnection.subscription)
+                .selectinload(Subscription.client),
+            )
+        )
+        connection = result.scalar_one_or_none()
+
+        if not connection:
+            await callback.message.answer(
+                t("admin.subscriptions.connection_not_found", "❌ Подключение не найдено.")
+            )
+            return
+
+        inbound = connection.inbound
+        server = inbound.server
+
+        from app.services.vpn_providers import get_vpn_provider
+
+        provider = get_vpn_provider(server, inbound_type=inbound.type)
+        try:
+            config = await provider.get_client_config(inbound, connection)
+
+            if config["config_type"] == "file":
+                import io
+
+                from aiogram.types import BufferedInputFile
+
+                buf = io.BytesIO(config["config_data"].encode("utf-8"))
+                file = BufferedInputFile(
+                    buf.read(),
+                    filename=config.get("filename", "vpn_config.conf"),
+                )
+                caption = t(
+                    "admin.subscriptions.config_file_caption",
+                    "📄 Конфиг для {remark}",
+                    remark=inbound.remark,
+                )
+                await callback.message.answer_document(file, caption=caption)
+
+                if config.get("vpn_uri"):
+                    await callback.message.answer(
+                        f"📱 Ссылка AmneziaVPN — нажмите чтобы открыть:\n\n{config['vpn_uri']}"
+                    )
+            elif config["config_type"] == "link":
+                await callback.message.answer(
+                    t(
+                        "admin.subscriptions.config_link",
+                        "🔗 Ссылка для подключения:\n\n<code>{link}</code>",
+                        link=config["config_data"],
+                    ),
+                    parse_mode="HTML",
+                )
+        except Exception as e:
+            logger.error(f"Failed to get config for connection {connection_id}: {e}", exc_info=True)
+            await callback.message.answer(
+                t(
+                    "admin.subscriptions.config_error",
+                    "❌ Ошибка получения конфига: {error}",
+                    error=str(e)[:200],
+                )
+            )
+        finally:
+            await provider.close()
 
 
 @router.callback_query(F.data.startswith("admin_sub_add_inbound_"))
@@ -913,8 +1039,14 @@ async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMConte
     await state.update_data(server_id=server_id)
 
     async with async_session_factory() as session:
-        service = XUIService(session)
-        inbounds = await service.get_server_inbounds(server_id)
+        # We need Inbound.server loaded for get_inbounds_selection_keyboard
+        result = await session.execute(
+            select(Inbound)
+            .options(selectinload(Inbound.server))
+            .where(Inbound.server_id == server_id, Inbound.is_active)
+            .order_by(Inbound.remark)
+        )
+        inbounds = result.scalars().all()
 
     if not inbounds:
         await callback.answer("❌ У сервера нет активных inbounds.", show_alert=True)
@@ -936,7 +1068,6 @@ async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data == "confirm_add_inbounds")
 async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> None:
-    """Confirm and add inbounds to subscription."""
     data = await state.get_data()
     selected_inbounds = data.get("selected_inbounds", set())
 
@@ -950,12 +1081,178 @@ async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> No
         )
         return
 
-    await callback.answer()
+    async with async_session_factory() as session:
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Inbound)
+            .where(Inbound.id.in_(selected_inbounds))
+            .options(
+                selectinload(Inbound.server).selectinload(Server.mtproxy_service),
+            )
+        )
+        inbounds = result.scalars().all()
+
+    has_mtproxy_multi = any(
+        ib.type == "mtproxy_inbound"
+        and ib.server.mtproxy_service
+        and ib.server.mtproxy_service.implementation == "mtg-multi"
+        for ib in inbounds
+    )
+
+    if has_mtproxy_multi:
+        default_domain = next(
+            (
+                ib.server.mtproxy_service.domain or "google.com"
+                for ib in inbounds
+                if ib.type == "mtproxy_inbound" and ib.server.mtproxy_service
+            ),
+            "google.com",
+        )
+        await state.update_data(mtproxy_default_domain=default_domain)
+        await state.set_state(SubscriptionManagement.waiting_for_mtproxy_domain)
+
+        builder = InlineKeyboardBuilder()
+        for d in ["google.com", "microsoft.com", "apple.com", "facebook.com"]:
+            label = f"✅ {d}" if d == default_domain else d
+            builder.button(text=label, callback_data=f"mtp_domain_{d}")
+        builder.button(
+            text="✏️ Свой домен", callback_data="mtp_domain_custom"
+        )
+        builder.button(
+            text="🔙 Пропустить (default)", callback_data=f"mtp_domain_{default_domain}"
+        )
+        builder.adjust(2)
+
+        await callback.message.edit_text(
+            "📡 <b>MTProxy: выберите Fake-TLS домен</b>\n\n"
+            "Домен определяет под какой сайт маскируется трафик.\n"
+            f"По умолчанию: <code>{default_domain}</code>",
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    await _execute_add_inbounds(callback, state, mtproxy_domain=None)
+
+
+@router.callback_query(
+    SubscriptionManagement.waiting_for_mtproxy_domain,
+    F.data.startswith("mtp_domain_"),
+)
+async def select_mtproxy_domain(callback: CallbackQuery, state: FSMContext) -> None:
+    domain_part = callback.data[len("mtp_domain_"):]
+
+    if domain_part == "custom":
+        await callback.message.edit_text(
+            "📡 Введите Fake-TLS домен (например: <code>google.com</code>):",
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    await _execute_add_inbounds(callback, state, mtproxy_domain=domain_part)
+
+
+@router.message(SubscriptionManagement.waiting_for_mtproxy_domain)
+async def input_mtproxy_domain(message: TgMessage, state: FSMContext) -> None:
+    domain = message.text.strip().lower()
+    if not domain or "." not in domain:
+        await message.answer("❌ Введите корректный домен (например: google.com)")
+        return
+
+    data = await state.get_data()
+    subscription_id = data.get("subscription_id")
+    selected_inbounds = data.get("selected_inbounds", set())
+
+    if not selected_inbounds:
+        await state.clear()
+        return
+
+    await state.set_state(None)
+    await _execute_add_inbounds_by_message(message, state, subscription_id, selected_inbounds, domain)
+
+
+async def _execute_add_inbounds(
+    callback: CallbackQuery, state: FSMContext, mtproxy_domain: str | None
+) -> None:
+    data = await state.get_data()
+    subscription_id = data.get("subscription_id")
+    selected_inbounds = data.get("selected_inbounds", set())
+
+    await state.clear()
+
+    if not selected_inbounds:
+        await callback.message.edit_text("❌ Нет выбранных inbounds.")
+        return
+
     await callback.message.edit_text(
         "⏳ Добавление подключений, пожалуйста подождите...", reply_markup=None
     )
 
-    await state.clear()
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(session)
+        try:
+            for inbound_id in selected_inbounds:
+                await sub_service.add_inbound_to_subscription(
+                    subscription_id,
+                    inbound_id,
+                    mtproxy_domain=mtproxy_domain,
+                )
+            await session.commit()
+
+            await callback.message.edit_text(
+                f"✅ <b>Подключения добавлены!</b>\n\n"
+                f"Добавлено inbounds: {len(selected_inbounds)}"
+                + (f"\nMTProxy домен: <code>{mtproxy_domain}</code>" if mtproxy_domain else ""),
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to add inbounds: {e}", exc_info=True)
+            await callback.message.edit_text(
+                f"❌ Ошибка добавления подключений:\n\n<code>{str(e)[:300]}</code>",
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
+
+
+async def _execute_add_inbounds_by_message(
+    message: TgMessage, state: FSMContext,
+    subscription_id: int, selected_inbounds: set, mtproxy_domain: str,
+) -> None:
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(session)
+        try:
+            for inbound_id in selected_inbounds:
+                await sub_service.add_inbound_to_subscription(
+                    subscription_id,
+                    inbound_id,
+                    mtproxy_domain=mtproxy_domain,
+                )
+            await session.commit()
+
+            await message.answer(
+                f"✅ <b>Подключения добавлены!</b>\n\n"
+                f"Добавлено inbounds: {len(selected_inbounds)}\n"
+                f"MTProxy домен: <code>{mtproxy_domain}</code>",
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to add inbounds: {e}", exc_info=True)
+            await message.answer(
+                f"❌ Ошибка добавления подключений:\n\n<code>{str(e)[:300]}</code>",
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
 
 
 async def get_inbounds_selection_keyboard(
@@ -979,9 +1276,13 @@ async def get_inbounds_selection_keyboard(
     for inbound in inbounds:
         status = "✅" if inbound.is_active else "❌"
         selected = "🔘" if inbound.id in selected_inbounds else "⚪"
-        server_name = getattr(
-            getattr(inbound, "server", None), "name", f"Server {inbound.server_id}"
-        )
+
+        try:
+            server_name = inbound.server.name if inbound.server else f"Server {inbound.server_id}"
+        except Exception:
+            # Fallback if server relationship is not loaded and raises MissingGreenlet
+            server_name = f"Server {inbound.server_id}"
+
         builder.button(
             text=f"{selected} {status} {inbound.remark} ({inbound.protocol}) | {server_name}",
             callback_data=f"toggle_inbound_{inbound.id}",
@@ -1080,21 +1381,42 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
                     inbound = conn.inbound
                     server = inbound.server
 
+                    if conn.type == "xui_inbound_connection":
+                        conn_detail = t(
+                            "admin.subscriptions.inbound_item_xui",
+                            "   Email: {email}\n   UUID: {uuid}\n",
+                            email=conn.email or "N/A",
+                            uuid=conn.uuid or "N/A",
+                        )
+                    elif conn.type == "awg_inbound_connection":
+                        conn_detail = t(
+                            "admin.subscriptions.inbound_item_awg",
+                            "   IP: {ip}\n   Public Key: {pub_key}\n",
+                            ip=conn.client_ip or "N/A",
+                            pub_key=(conn.public_key or "N/A")[:20] + "...",
+                        )
+                    elif conn.type == "mtproxy_inbound_connection":
+                        conn_detail = t(
+                            "admin.subscriptions.inbound_item_mtproxy",
+                            "   Secret: {secret}\n",
+                            secret=(conn.secret or "N/A")[:20] + "...",
+                        )
+                    else:
+                        conn_detail = ""
+
                     text += t(
                         "admin.subscriptions.inbound_item",
                         "{status} {remark} ({protocol})\n"
                         "   Сервер: {server_name}\n"
                         "   Порт: {port}\n"
-                        "   Email: {email}\n"
-                        "   UUID: {uuid}\n"
+                        "{conn_detail}"
                         "   ID подключения: {conn_id}\n\n",
                         status=conn_status,
                         remark=inbound.remark,
                         protocol=inbound.protocol,
                         server_name=server.name,
                         port=inbound.port,
-                        email=conn.email,
-                        uuid=conn.uuid,
+                        conn_detail=conn_detail,
                         conn_id=conn.id,
                     )
 
@@ -1311,14 +1633,25 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
         from sqlalchemy.orm import selectinload
 
         from app.database.models import InboundConnection
+        from app.database.models.server import Server as ServerModel
         from app.services.new_subscription_service import NewSubscriptionService
-        from app.services.xui_service import XUIService
+        from app.services.vpn_providers.base import BaseVPNProvider
+        from app.services.vpn_providers.factory import get_vpn_provider
 
-        # Get all connections with their inbound and server info in THIS session
         result = await session.execute(
             select(InboundConnection)
             .where(InboundConnection.id.in_(list(selected_connections)))
-            .options(selectinload(InboundConnection.inbound).selectinload(Inbound.server))
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(ServerModel.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(ServerModel.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(ServerModel.mtproxy_service),
+            )
         )
         connections = result.scalars().all()
 
@@ -1334,27 +1667,32 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
         try:
             try:
                 success_count = 0
-                xui_service = XUIService(session)
+                providers: dict[tuple, BaseVPNProvider] = {}
 
-                # Process each connection
                 for conn in connections:
                     try:
                         new_state = action == "enable"
                         inbound = conn.inbound
                         server = inbound.server
 
-                        # Get XUI client
-                        xui_client = await xui_service._get_client(server)
+                        cache_key = (server.id, inbound.type)
+                        if cache_key not in providers:
+                            providers[cache_key] = get_vpn_provider(server, inbound_type=inbound.type)
+                        provider = providers[cache_key]
 
-                        # Update in XUI
-                        await xui_client.enable_client(inbound.xui_id, conn.uuid, new_state)
+                        if new_state:
+                            await provider.enable_client(inbound, conn)
+                        else:
+                            await provider.disable_client(inbound, conn)
 
-                        # Update in database
                         conn.is_enabled = new_state
                         success_count += 1
 
                     except Exception as e:
                         logger.warning(f"Failed to {action} connection {conn.id}: {e}")
+
+                for provider in providers.values():
+                    await provider.close()
 
                 await session.commit()
 
@@ -1382,12 +1720,22 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
                     inbound = conn.inbound
                     server = inbound.server
 
+                    if conn.type == "xui_inbound_connection":
+                        conn_detail = f"   Email: {conn.email or 'N/A'}\n   UUID: {conn.uuid or 'N/A'}\n"
+                    elif conn.type == "awg_inbound_connection":
+                        pub_key = (conn.public_key or "N/A")
+                        conn_detail = f"   IP: {conn.client_ip or 'N/A'}\n   Public Key: {pub_key[:20]}...\n"
+                    elif conn.type == "mtproxy_inbound_connection":
+                        secret = conn.secret or "N/A"
+                        conn_detail = f"   Secret: {secret[:20]}...\n"
+                    else:
+                        conn_detail = ""
+
                     text += (
                         f"{status} {inbound.remark} ({inbound.protocol})\n"
                         f"   Сервер: {server.name}\n"
                         f"   Порт: {inbound.port}\n"
-                        f"   Email: {conn.email}\n"
-                        f"   UUID: {conn.uuid}\n"
+                        f"{conn_detail}"
                         f"   ID подключения: {conn.id}\n\n"
                     )
 
@@ -1518,12 +1866,22 @@ async def exit_multi_select_mode(callback: CallbackQuery, state: FSMContext) -> 
         inbound = conn.inbound
         server = inbound.server
 
+        if conn.type == "xui_inbound_connection":
+            conn_detail = f"   Email: {conn.email or 'N/A'}\n   UUID: {conn.uuid or 'N/A'}\n"
+        elif conn.type == "awg_inbound_connection":
+            pub_key = conn.public_key or "N/A"
+            conn_detail = f"   IP: {conn.client_ip or 'N/A'}\n   Public Key: {pub_key[:20]}...\n"
+        elif conn.type == "mtproxy_inbound_connection":
+            secret = conn.secret or "N/A"
+            conn_detail = f"   Secret: {secret[:20]}...\n"
+        else:
+            conn_detail = ""
+
         text += (
             f"{status} {inbound.remark} ({inbound.protocol})\n"
             f"   Сервер: {server.name}\n"
             f"   Порт: {inbound.port}\n"
-            f"   Email: {conn.email}\n"
-            f"   UUID: {conn.uuid}\n"
+            f"{conn_detail}"
             f"   ID подключения: {conn.id}\n\n"
         )
 
@@ -2382,7 +2740,7 @@ async def add_time_to_subscription_handler(
 
 
 @router.message(SubscriptionManagement.waiting_for_add_days)
-async def process_add_time_days(message: Message, state: FSMContext) -> None:
+async def process_add_time_days(message: TgMessage, state: FSMContext) -> None:
     """Process days to add to subscription."""
     try:
         days = int(message.text.strip())
@@ -2737,7 +3095,7 @@ async def rebuild_mode_manual(callback: CallbackQuery, state: FSMContext, is_adm
 
 
 @router.message(SubscriptionRebuild.waiting_for_traffic_limit)
-async def rebuild_process_traffic(message: Message, state: FSMContext) -> None:
+async def rebuild_process_traffic(message: TgMessage, state: FSMContext) -> None:
     try:
         traffic = int(message.text.strip())
         if traffic < 0:
@@ -2762,7 +3120,7 @@ async def rebuild_process_traffic(message: Message, state: FSMContext) -> None:
 
 
 @router.message(SubscriptionRebuild.waiting_for_expiry_days)
-async def rebuild_process_expiry(message: Message, state: FSMContext) -> None:
+async def rebuild_process_expiry(message: TgMessage, state: FSMContext) -> None:
     try:
         expiry = int(message.text.strip())
         if expiry < 0:

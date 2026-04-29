@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
@@ -245,170 +245,179 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
         )
         return
 
-    # Answer immediately with a loading text
-    await callback.answer(t("user.subs.loading_details", "⏳ Загрузка деталей подписки..."))
-
     subscription_id = int(callback.data.split("_")[-1])
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
 
     async with async_session_factory() as session:
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription(subscription_id)
 
-    if not subscription or subscription.client_id != client.id:
-        await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
-        return
+        if not subscription or subscription.client_id != client.id:
+            await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
+            return
 
-    # Use new subscription status property
-    status = subscription.subscription_status
+        status = subscription.subscription_status
 
-    has_xui = any(
-        getattr(conn.inbound.server, "panel_type", "xui") == "xui"
-        for conn in subscription.inbound_connections
-    )
-    token_text = (
-        t(
-            "user.subs.details_token",
-            "\nТокен: <code>{token}</code>",
-            token=subscription.subscription_token,
+        has_xui = any(
+            conn.inbound.server.xui_panel is not None
+            for conn in subscription.inbound_connections
+            if conn.is_enabled
         )
-        if has_xui
-        else ""
-    )
+        token_text = (
+            t(
+                "user.subs.details_token",
+                "\nТокен: <code>{token}</code>",
+                token=subscription.subscription_token,
+            )
+            if has_xui
+            else ""
+        )
 
-    text = t(
-        "user.subs.details_header",
-        "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n",
-        name=subscription.name,
-        status=status,
-        created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
-        active=subscription.active_connections_count,
-        total=len(subscription.inbound_connections),
-        token_text=token_text,
-    )
+        text = t(
+            "user.subs.details_header",
+            "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n",
+            name=subscription.name,
+            status=status,
+            created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
+            active=subscription.active_connections_count,
+            total=len(subscription.inbound_connections),
+            token_text=token_text,
+        )
 
-    # Group configs by URL or connection ID
-    config_groups = defaultdict(list)
-    builder = InlineKeyboardBuilder()
+        server_groups = defaultdict(list)
+        builder = InlineKeyboardBuilder()
 
-    from app.services.vpn_providers import get_vpn_provider
-
-    providers = {}
-    try:
         for conn in subscription.inbound_connections:
             if conn.is_enabled:
                 server = conn.inbound.server
-                try:
-                    if server.id not in providers:
-                        providers[server.id] = get_vpn_provider(server)
-                    provider = providers[server.id]
+                inbound = conn.inbound
 
-                    config_dict = await provider.get_client_config(conn.inbound, conn)
-                    config_type = config_dict.get("config_type")
-                    config_data = config_dict.get("config_data")
-
-                    if config_type == "empty":
-                        group_key = f"empty_{conn.id}"
-                    elif config_type == "link":
-                        group_key = config_data or f"link_{conn.id}"
+                if inbound.type in ("awg_inbound",):
+                    config_type = "file"
+                    has_vpn_uri = bool(server.awg_service)
+                    config_data = None
+                elif inbound.type in ("mtproxy_inbound",):
+                    config_type = "link"
+                    if conn.secret:
+                        port = server.mtproxy_service.port if server.mtproxy_service else 443
+                        config_data = f"tg://proxy?server={server.ip_address}&port={port}&secret={conn.secret}"
                     else:
-                        group_key = f"file_{conn.id}"
-
-                    config_groups[group_key].append(
-                        {
-                            "server_name": server.name,
-                            "inbound": conn.inbound,
-                            "connection": conn,
-                            "config_type": config_type,
-                        }
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to get config for conn {conn.id}: {e}", exc_info=True)
-
-        if config_groups:
-            logger.info(
-                f"Rendering config_groups for subscription {subscription.id}: {list(config_groups.keys())}"
-            )
-            text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
-            for group_key, conn_list in config_groups.items():
-                config_type = conn_list[0]["config_type"]
-
-                if config_type == "empty":
-                    text += t(
-                        "user.subs.conn_empty", "  • Конфиг недоступен (не установлен или ошибка)\n"
-                    )
-                elif config_type == "link":
-                    # Show URL once per group
-                    if group_key and (group_key.startswith("tg://") or "t.me" in group_key):
-                        text += t("user.subs.conn_url_clickable", "  • URL: {url}\n", url=group_key)
-                    else:
-                        text += t(
-                            "user.subs.conn_url", "  • URL: <code>{url}</code>\n", url=group_key
-                        )
-
-                    # Add QR code button
-                    conn_id = conn_list[0]["connection"].id
-                    inbound_remark = conn_list[0]["inbound"].remark
-                    builder.button(
-                        text=f"📱 QR {inbound_remark}", callback_data=f"user_dl_conf_{conn_id}"
-                    )
+                        config_type = "empty"
+                        config_data = None
+                    has_vpn_uri = False
                 else:
-                    # Indicate that it's a file configuration
-                    text += t("user.subs.conn_file", "  • Конфиг: (см. кнопку ниже)\n")
-                    # Add a download button for this specific file
-                    conn_id = conn_list[0]["connection"].id
-                    inbound_remark = conn_list[0]["inbound"].remark
-                    builder.button(
-                        text=f"📥 Скачать {inbound_remark}", callback_data=f"user_dl_conf_{conn_id}"
-                    )
+                    try:
+                        from app.services.vpn_providers import get_vpn_provider
 
-                # Show per-inbound traffic and expiry
-                for _i, conn_data in enumerate(conn_list):
-                    conn = conn_data["connection"]
-                    inbound = conn_data["inbound"]
+                        provider = get_vpn_provider(server, inbound_type=inbound.type)
+                        config_dict = await provider.get_client_config(inbound, conn)
+                        config_type = config_dict.get("config_type")
+                        config_data = config_dict.get("config_data")
+                        has_vpn_uri = bool(config_dict.get("vpn_uri"))
+                        import contextlib
 
-                    # Per-inbound traffic
-                    traffic = (
-                        t("user.subs.unlimited", "Безлимит")
-                        if conn.is_unlimited
-                        else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
-                    )
+                        with contextlib.suppress(Exception):
+                            await provider.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to get config for conn {conn.id}: {e}")
+                        config_type = "empty"
+                        config_data = None
+                        has_vpn_uri = False
 
-                    # Per-inbound expiry
+                server_groups[server.id].append(
+                    {
+                        "server_name": server.name,
+                        "inbound": inbound,
+                        "connection": conn,
+                        "config_type": config_type,
+                        "config_data": config_data,
+                        "vpn_uri": has_vpn_uri,
+                    }
+                )
+
+        if server_groups:
+            text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
+            for _server_id, conn_list in server_groups.items():
+                server_name = conn_list[0]["server_name"]
+                text += f"🖥️ <b>{server_name}:</b>\n"
+
+                url_groups = defaultdict(list)
+                files = []
+                empties = []
+
+                for c in conn_list:
+                    if c["config_type"] == "link":
+                        url_groups[c["config_data"]].append(c)
+                    elif c["config_type"] == "file":
+                        files.append(c)
+                    else:
+                        empties.append(c)
+
+                for url, url_items in url_groups.items():
+                    remarks = []
+                    for c in url_items:
+                        rem = c["inbound"].remark.split(":")[0] if c["inbound"].remark else "Без названия"
+                        if rem not in remarks:
+                            remarks.append(rem)
+                    combined_remark = ", ".join(remarks)
+
+                    is_tg_proxy = url.startswith("tg://") or "t.me" in url
+                    if is_tg_proxy:
+                        text += f"  - {combined_remark}: {url}\n"
+                    else:
+                        text += f"  - {combined_remark}: <code>{url}</code>\n"
+                        from aiogram.types import CopyTextButton
+                        label = f"📋 Скопировать | {combined_remark}"
+                        builder.row(InlineKeyboardButton(
+                            text=label,
+                            copy_text=CopyTextButton(text=url),
+                        ))
+
+                    conn = url_items[0]["connection"]
+                    traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
                     from app.utils.date_utils import format_expiry_date
-
                     expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                    text += t("user.subs.conn_traffic_indented", "    Трафик: {traffic}\n", traffic=traffic)
+                    text += t("user.subs.conn_expiry_indented", "    Срок: {expiry}\n\n", expiry=expiry_info)
 
-                    # Add connection status indicator with server name
-                    conn_status = "✅" if conn.is_connection_active else "❌"
-                    server_name = conn_data.get("server_name", "Unknown")
-                    text += t(
-                        "user.subs.conn_info",
-                        "    └ {status} {remark} ({protocol}) | {server}\n",
-                        status=conn_status,
-                        remark=inbound.remark,
-                        protocol=inbound.protocol,
-                        server=server_name,
-                    )
-                    text += t(
-                        "user.subs.conn_traffic", "      Трафик: {traffic}\n", traffic=traffic
-                    )
-                    text += t("user.subs.conn_expiry", "      Срок: {expiry}\n", expiry=expiry_info)
+                for c in files:
+                    conn = c["connection"]
+                    inbound = c["inbound"]
+                    remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
+                    text += f"  - {remark}\n"
 
-                text += "\n"
+                    traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+                    from app.utils.date_utils import format_expiry_date
+                    expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                    text += t("user.subs.conn_traffic_indented", "    Трафик: {traffic}\n", traffic=traffic)
+                    text += t("user.subs.conn_expiry_indented", "    Срок: {expiry}\n\n", expiry=expiry_info)
 
-        builder.button(
-            text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
-            callback_data="my_subscriptions",
-        )
-        builder.adjust(1)
+                    has_vpn_uri = c.get("vpn_uri")
+                    if has_vpn_uri:
+                        uri_btn = InlineKeyboardButton(
+                            text=f"🔗 {remark}",
+                            callback_data=f"user_uri_conf_{conn.id}",
+                        )
+                        dl_btn = InlineKeyboardButton(
+                            text=f"📥 {remark}", callback_data=f"user_dl_conf_{conn.id}"
+                        )
+                        builder.row(uri_btn, dl_btn)
+                    else:
+                        builder.row(InlineKeyboardButton(
+                            text=f"📥 {remark}", callback_data=f"user_dl_conf_{conn.id}"
+                        ))
 
-        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    finally:
-        for p in providers.values():
-            try:
-                await p.close()
-            except Exception as e:
-                logger.warning(f"Failed to close provider: {e}")
+                for _c in empties:
+                    text += t("user.subs.conn_empty", "  - Конфиг недоступен (не установлен или ошибка)\n\n")
+
+    builder.row(InlineKeyboardButton(
+        text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+        callback_data="my_subscriptions",
+    ))
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_export")
@@ -573,46 +582,48 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                 traffic_text = t("user.status.traffic_gb", "{gb} ГБ", gb=conn.total_gb)
 
                 # Get actual traffic from XUI
-                try:
-                    async with async_session_factory() as traffic_session:
-                        xui_service = XUIService(traffic_session)
-                        if server.id not in xui_clients:
-                            xui_clients[server.id] = await xui_service._get_client(server)
+                if conn.type == "xui_inbound_connection":
+                    try:
+                        async with async_session_factory() as traffic_session:
+                            xui_service = XUIService(traffic_session)
+                            if server.id not in xui_clients:
+                                xui_clients[server.id] = await xui_service._get_client(server)
 
-                        xui_client = xui_clients[server.id]
-                        clients = await xui_client.get_clients(inbound.xui_id)
+                            xui_client = xui_clients[server.id]
+                            clients = await xui_client.get_clients(inbound.xui_id)
 
-                        for xui_conn in clients:
-                            if xui_conn.get("id") == conn.uuid:
-                                used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
-                                    1024**3
-                                )
-                                remaining_gb = conn.total_gb - used_gb
-
-                                if remaining_gb <= 5:
-                                    traffic_text += t(
-                                        "user.status.traffic_low",
-                                        " (⚠️ осталось {gb:.2f} ГБ)",
-                                        gb=remaining_gb,
+                            for xui_conn in clients:
+                                if xui_conn.get("id") == conn.uuid:
+                                    used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
+                                        1024**3
                                     )
-                                else:
-                                    traffic_text += t(
-                                        "user.status.traffic_remaining",
-                                        " (осталось {gb:.2f} ГБ)",
-                                        gb=remaining_gb,
-                                    )
-                                break
-                except Exception as e:
-                    logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
-                    traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
+                                    remaining_gb = conn.total_gb - used_gb
+
+                                    if remaining_gb <= 5:
+                                        traffic_text += t(
+                                            "user.status.traffic_low",
+                                            " (⚠️ осталось {gb:.2f} ГБ)",
+                                            gb=remaining_gb,
+                                        )
+                                    else:
+                                        traffic_text += t(
+                                            "user.status.traffic_remaining",
+                                            " (осталось {gb:.2f} ГБ)",
+                                            gb=remaining_gb,
+                                        )
+                                    break
+                    except Exception as e:
+                        logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
+                        traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
 
             # Add connection status indicator
             conn_status = "✅" if conn.is_connection_active else "❌"
+            display_remark = inbound.remark.split(":")[0]
             text += t(
                 "user.status.conn_info",
-                "      {status} {remark} ({server})\n",
+                "      {status} {remark} | {server}\n",
                 status=conn_status,
-                remark=inbound.remark,
+                remark=display_remark,
                 server=server.name,
             )
             text += t("user.status.conn_expiry", "        📅 Срок: {expiry}\n", expiry=conn_expiry)
@@ -745,6 +756,86 @@ async def process_subscription_request_name(message: Message, state: FSMContext,
     await state.clear()
 
 
+@router.callback_query(F.data.startswith("user_uri_conf_"))
+async def send_vpn_uri(callback: CallbackQuery, client) -> None:
+    if not client:
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
+        return
+
+    conn_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Inbound, InboundConnection
+        from app.database.models.server import Server
+
+        conn_result = await session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.id == conn_id)
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.subscription),
+            )
+        )
+        conn = conn_result.scalar_one_or_none()
+
+        if not conn or conn.subscription.client_id != client.id:
+            await callback.answer(
+                t("user.subs.not_found", "❌ Подключение не найдено."), show_alert=True
+            )
+            return
+
+        from app.services.vpn_providers import get_vpn_provider
+
+        provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
+
+        await callback.answer()
+
+        try:
+            config = await provider.get_client_config(conn.inbound, conn)
+            vpn_uri = config.get("vpn_uri")
+
+            if not vpn_uri:
+                await callback.message.answer("❌ Ссылка недоступна для этого подключения.")
+                return
+
+            await callback.message.answer(
+                f"<code>{vpn_uri}</code>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get vpn_uri for connection {conn_id}: {e}", exc_info=True)
+            await callback.message.answer(
+                t("user.subs.download_error", "❌ Ошибка при получении ссылки.")
+            )
+        finally:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await provider.close()
+
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text=t("user.subs.btn_back_to_sub", "🔙 Назад к подписке"),
+                callback_data=f"user_sub_select_{conn.subscription.id}",
+            )
+            builder.button(
+                text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+                callback_data="my_subscriptions",
+            )
+            builder.adjust(1)
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+
+
 @router.callback_query(F.data.startswith("user_dl_conf_"))
 async def download_file_config(callback: CallbackQuery, client) -> None:
     """Download file config (like Wireguard .conf) and QR code."""
@@ -761,12 +852,21 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
         from sqlalchemy.orm import selectinload
 
         from app.database.models import Inbound, InboundConnection
+        from app.database.models.server import Server
 
         conn_result = await session.execute(
             select(InboundConnection)
             .where(InboundConnection.id == conn_id)
             .options(
-                selectinload(InboundConnection.inbound).selectinload(Inbound.server),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
                 selectinload(InboundConnection.subscription),
             )
         )
@@ -780,9 +880,8 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
 
         from app.services.vpn_providers import get_vpn_provider
 
-        provider = get_vpn_provider(conn.inbound.server)
+        provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
 
-        await callback.message.edit_reply_markup(reply_markup=None)  # temporary disable buttons
         await callback.answer(t("user.subs.downloading", "⏳ Загрузка конфига..."))
 
         try:
@@ -795,9 +894,9 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
                 config_type = config.get("config_type", "file")
 
                 if config_type == "file":
-                    # Send as .conf document
                     file_content = config_data.encode("utf-8")
-                    filename = f"{conn.subscription.name}_{conn.inbound.remark}.conf".replace(
+                    display_remark = conn.inbound.remark.split(":")[0]
+                    filename = f"{conn.subscription.name}_{display_remark}.conf".replace(
                         " ", "_"
                     )
                     doc = BufferedInputFile(file_content, filename=filename)
@@ -806,9 +905,10 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
                         caption=t(
                             "user.subs.config_caption",
                             "📁 Ваш конфигурационный файл для {remark}",
-                            remark=conn.inbound.remark,
+                            remark=display_remark,
                         ),
                     )
+
                 else:
                     # Send as link message
                     if config_data.startswith("tg://") or "t.me" in config_data:
@@ -867,16 +967,13 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
 
                 logger.warning(f"Failed to close provider: {e}")
 
-            # Restore keyboard
             builder = InlineKeyboardBuilder()
-            # Add back button to return to the subscription details
             builder.button(
                 text=t("user.subs.btn_back_to_sub", "🔙 Назад к подписке"),
                 callback_data=f"user_sub_select_{conn.subscription.id}",
             )
-            # Add back button to return to all subscriptions
             builder.button(
-                text=t("user.subs.btn_back_to_subs", "🔙 Назад ко всем подпискам"),
+                text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
                 callback_data="my_subscriptions",
             )
             builder.adjust(1)

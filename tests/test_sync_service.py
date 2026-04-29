@@ -4,7 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.database.models import Client, Inbound, InboundConnection, Server, Subscription
+from app.database.models import Client, InboundConnection, Server, Subscription
+from app.database.models.services import XUIPanel
+from app.database.models.inbound_connection import XUIInboundConnection
+from app.database.models.inbound import XUIInbound
 from app.services.sync_service import SyncService
 
 
@@ -24,12 +27,19 @@ async def test_needs_sync_new_model(test_session, mock_settings):
     # Create server without sync fields
     server = Server(
         name="TestServer",
-        url="https://test.com",
-        username="admin",
-        password_encrypted="encrypted",
+        ip_address="test.com",
         is_active=True,
     )
     test_session.add(server)
+    await test_session.flush()
+
+    panel = XUIPanel(
+        server_id=server.id,
+        username="admin",
+        password_encrypted="encrypted",
+        panel_path="/",
+    )
+    test_session.add(panel)
     await test_session.flush()
 
     # Should need sync (last_sync_at is None)
@@ -44,14 +54,20 @@ async def test_needs_sync_recent_sync(test_session, mock_settings):
     # Create server with recent sync
     server = Server(
         name="TestServer",
-        url="https://test.com",
-        username="admin",
-        password_encrypted="encrypted",
+        ip_address="test.com",
         is_active=True,
         last_sync_at=datetime.now(UTC),
         sync_status="synced",
     )
     test_session.add(server)
+    await test_session.flush()
+
+    panel = XUIPanel(
+        server_id=server.id,
+        username="admin",
+        password_encrypted="encrypted",
+    )
+    test_session.add(panel)
     await test_session.flush()
 
     # Should not need sync (sync was recent)
@@ -67,14 +83,20 @@ async def test_needs_sync_stale_sync(test_session, mock_settings):
     old_sync_time = datetime.now(UTC) - timedelta(minutes=10)
     server = Server(
         name="TestServer",
-        url="https://test.com",
-        username="admin",
-        password_encrypted="encrypted",
+        ip_address="test.com",
         is_active=True,
         last_sync_at=old_sync_time,
         sync_status="synced",
     )
     test_session.add(server)
+    await test_session.flush()
+
+    panel = XUIPanel(
+        server_id=server.id,
+        username="admin",
+        password_encrypted="encrypted",
+    )
+    test_session.add(panel)
     await test_session.flush()
 
     # Should need sync (sync was more than 5 minutes ago)
@@ -89,15 +111,21 @@ async def test_needs_sync_error_status(test_session, mock_settings):
     # Create server with error status
     server = Server(
         name="TestServer",
-        url="https://test.com",
-        username="admin",
-        password_encrypted="encrypted",
+        ip_address="test.com",
         is_active=True,
         last_sync_at=datetime.now(UTC),
         sync_status="error",
         sync_error="Previous error",
     )
     test_session.add(server)
+    await test_session.flush()
+
+    panel = XUIPanel(
+        server_id=server.id,
+        username="admin",
+        password_encrypted="encrypted",
+    )
+    test_session.add(panel)
     await test_session.flush()
 
     # Should need sync (status is error)
@@ -112,15 +140,21 @@ async def test_needs_sync_offline_status(test_session, mock_settings):
     # Create server with offline status
     server = Server(
         name="TestServer",
-        url="https://test.com",
-        username="admin",
-        password_encrypted="encrypted",
+        ip_address="test.com",
         is_active=True,
         last_sync_at=datetime.now(UTC),
         sync_status="offline",
         sync_error="Connection failed",
     )
     test_session.add(server)
+    await test_session.flush()
+
+    panel = XUIPanel(
+        server_id=server.id,
+        username="admin",
+        password_encrypted="encrypted",
+    )
+    test_session.add(panel)
     await test_session.flush()
 
     # Should need sync (status is offline)
@@ -133,7 +167,7 @@ async def test_manual_sync_connection(test_session, mock_settings):
     service = SyncService(test_session)
 
     # Create inbound connection
-    inbound = Inbound(
+    inbound = XUIInbound(
         id=1,
         server_id=1,
         xui_id=1,
@@ -167,7 +201,7 @@ async def test_manual_sync_connection(test_session, mock_settings):
     )
     test_session.add(subscription)
 
-    connection = InboundConnection(
+    connection = XUIInboundConnection(
         id=1,
         subscription_id=1,
         inbound_id=1,
@@ -193,12 +227,18 @@ async def test_manual_sync_all(test_session, mock_settings):
     # Create test server
     server = Server(
         name="TestServer",
-        url="https://test.com",
-        username="admin",
-        password_encrypted="encrypted",
+        ip_address="test.com",
         is_active=True,
     )
     test_session.add(server)
+    await test_session.flush()
+
+    panel = XUIPanel(
+        server_id=server.id,
+        username="admin",
+        password_encrypted="encrypted",
+    )
+    test_session.add(panel)
     await test_session.flush()
 
     # Manual sync should work (though may not actually sync anything)
