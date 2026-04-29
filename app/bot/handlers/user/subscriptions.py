@@ -326,7 +326,8 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                         config_data = None
                         has_vpn_uri = False
 
-                config_groups[server.id].append(
+                group_key = (server.id, config_data if config_type == "link" else None)
+                config_groups[group_key].append(
                     {
                         "server_name": server.name,
                         "inbound": inbound,
@@ -339,7 +340,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
         if config_groups:
             text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
-            for _server_id, conn_list in config_groups.items():
+            for _group_key, conn_list in config_groups.items():
                 links = [c for c in conn_list if c["config_type"] == "link"]
                 files = [c for c in conn_list if c["config_type"] == "file"]
                 empties = [c for c in conn_list if c["config_type"] == "empty"]
@@ -356,7 +357,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                     for c in links:
                         conn = c["connection"]
                         inbound = c["inbound"]
-                        display_remark = inbound.remark.split(":")[0]
+                        display_remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
                         conn_status = "✅" if conn.is_connection_active else "❌"
                         traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
                         from app.utils.date_utils import format_expiry_date
@@ -378,7 +379,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                     for c in files:
                         conn = c["connection"]
                         inbound = c["inbound"]
-                        remark = inbound.remark.split(":")[0]
+                        remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
                         server_name = c.get("server_name", "")
                         label = f"{remark} | {server_name}" if server_name else remark
                         text += t("user.subs.conn_file_header", "  • {label}\n", label=label)
