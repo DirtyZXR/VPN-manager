@@ -58,7 +58,7 @@ class MTProxyProvider(BaseVPNProvider):
         return self.implementation == "mtg"
 
     async def _restart_container(self) -> None:
-        await self.ssh.run_command(f"docker restart {self.container_name}")
+        await self.ssh.run_command(f"docker restart -t 1 {self.container_name}")
 
     # ── CRUD ──────────────────────────────────────────────────────────
 

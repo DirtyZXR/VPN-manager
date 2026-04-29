@@ -44,6 +44,7 @@ class NotificationService:
                 if secret:
                     mtproxy_links.append(
                         f"📡 <b>{html.escape(conn.inbound.remark)}</b>:\n"
+                        f"<a href=\"tg://proxy?server={host}&port={port}&secret={secret}\">Подключить MTProxy</a>\n"
                         f"<code>tg://proxy?server={host}&port={port}&secret={secret}</code>"
                     )
             else:

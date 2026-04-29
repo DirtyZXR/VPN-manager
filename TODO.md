@@ -438,3 +438,20 @@ ERROR | app.services.sync_service:sync_server:248 - [ERROR] Ошибка син�
 ```
 
 Inbound был удалён с 3x-ui панели через веб-интерфейс, но бот продолжает попытки синхронизации. Нужна обработка: при `record not found` — помечать inbound как `is_active=False` и уведомлять админа.
+
+## Фича: Переиспользование токена для AWG и MTProxy
+
+**Приоритет:** высокий
+**Файл:** `app/bot/handlers/admin/subscriptions.py` (и сервисы)
+
+### Суть
+
+Сейчас функция "Переиспользовать токен" (пересоздание подписки с сохранением старого UUID/токена) работает только для XUI (поддерживает `xui_client_id`). Нужно интегрировать туда поддержку AWG и MTProxy:
+
+1. Для **AWG**: сохранять `client_ip`, `public_key`, `private_key`, `psk` из старого InboundConnection и передавать их в `add_client`.
+2. Для **MTProxy**: сохранять `secret` и `domain` из старого InboundConnection и передавать их в `add_client` (чтобы пользователь не потерял старую tg://proxy ссылку).
+
+### Задача
+- Доработать `NewSubscriptionService.add_inbound_to_subscription()` чтобы он принимал параметры для сохранения (или сделать отдельный метод `rebuild_inbound_connection()`)
+- Доработать `AWGProvider` и `MTProxyProvider` чтобы они принимали существующие ключи/секреты при добавлении
+- Обновить handler `rebuild_process_expiry` для правильного проброса данных.
