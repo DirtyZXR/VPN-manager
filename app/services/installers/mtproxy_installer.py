@@ -34,9 +34,11 @@ class MTProxyInstaller(BaseInstaller):
     async def discover_existing(self) -> dict:
         """Read config.toml from an existing MTProxy installation.
 
-        Returns dict with: port, domain, implementation, max_connections.
+        Returns dict with: port, domain, implementation, max_connections, secret.
         """
         import re
+
+        from app.utils import extract_mtproxy_domain
 
         config = await self._cmd(f"cat {MTPROXY_SERVICE_DIR}/config.toml")
 
@@ -46,12 +48,15 @@ class MTProxyInstaller(BaseInstaller):
 
         implementation = "mtg-multi" if "max-connections" in config or "secrets" in config else "mtg"
 
+        secret = secret_match.group(1) if secret_match else None
+        domain = extract_mtproxy_domain(secret) if secret else "google.com"
+
         return {
             "port": int(bind_match.group(1)) if bind_match else 443,
-            "domain": self.ssh.host,
+            "domain": domain or "google.com",
             "implementation": implementation,
             "max_connections": int(conns_match.group(1)) if conns_match else 5000,
-            "secret": secret_match.group(1) if secret_match else None,
+            "secret": secret,
         }
 
     async def install(
@@ -119,6 +124,7 @@ class MTProxyInstaller(BaseInstaller):
 
             await self._progress(4, 9, "Генерация секрета...")
             await self._generate_secret(service_dir, domain)
+            secret = (await self._cmd(f"cat {service_dir}/secret.txt")).strip()
 
             await self._progress(5, 9, "Запись конфигурации...")
             await self._write_config(service_dir, port, domain, implementation, max_connections)
@@ -142,6 +148,7 @@ class MTProxyInstaller(BaseInstaller):
                 "implementation": implementation,
                 "port": port,
                 "domain": domain,
+                "secret": secret,
                 "max_connections": max_connections if implementation == "mtg-multi" else None,
                 "service_dir": service_dir,
             }

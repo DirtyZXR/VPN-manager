@@ -99,6 +99,7 @@ class SubscriptionManagement(StatesGroup):
     editing_expiry = State()
     editing_notes = State()
     waiting_for_add_days = State()
+    waiting_for_mtproxy_domain = State()
 
 
 class SubscriptionRebuild(StatesGroup):

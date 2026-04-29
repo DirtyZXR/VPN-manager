@@ -1,9 +1,13 @@
-"""MTProxy Provider implementation."""
+"""MTProxy Provider implementation.
+
+Supports two implementations:
+- mtg (single secret): one shared secret for all users, no SSH for CRUD
+- mtg-multi (per-user secrets): named secrets in [secrets] TOML section, SSH required
+"""
 
 import base64
 import io
 import logging
-import secrets
 import uuid
 from datetime import datetime
 from typing import Any
@@ -20,14 +24,15 @@ logger = logging.getLogger(__name__)
 class MTProxyProvider(BaseVPNProvider):
     """Provider for Telegram MTProxy via Docker.
 
-    Client lifecycle:
-    - add_client: generates secret, appends to config, restarts container
-    - enable_client: re-adds secret to config, restarts container
-    - disable_client: removes secret from config, restarts container
-    - remove_client: same as disable_client (secret stored in DB for re-enable)
+    mtg (single):
+      - All users share one default_secret from MTProxyService
+      - add/remove/enable/disable are no-SSH (DB only)
+      - get_client_config always returns the same link
 
-    Note: every config change restarts the container, briefly disrupting all users.
-    MTProxy has no per-user traffic or expiry tracking.
+    mtg-multi:
+      - Each user gets a named secret in [secrets] section
+      - Every config change restarts the container
+      - No per-user traffic or expiry tracking
     """
 
     def __init__(self, server: Server) -> None:
@@ -35,14 +40,22 @@ class MTProxyProvider(BaseVPNProvider):
         self.ssh = SSHManager(server)
         self.container_name = "vpnbot-mtproxy"
         self.config_path = "/opt/vpnbot/mtproxy/config.toml"
-        self.domain = "google.com"
-        self.port = "443"
 
-    def _generate_secret(self) -> str:
-        random_hex = secrets.token_hex(15)
-        secret = f"ee{random_hex}"
-        domain_hex = self.domain.encode("utf-8").hex()
-        return f"{secret}{domain_hex}"
+        svc = server.mtproxy_service
+        if svc:
+            self.implementation = svc.implementation or "mtg-multi"
+            self.port = svc.port or 443
+            self.domain = svc.domain or "google.com"
+            self.default_secret = svc.default_secret
+        else:
+            self.implementation = "mtg-multi"
+            self.port = 443
+            self.domain = "google.com"
+            self.default_secret = None
+
+    @property
+    def is_single(self) -> bool:
+        return self.implementation == "mtg"
 
     async def _restart_container(self) -> None:
         await self.ssh.run_command(f"docker restart {self.container_name}")
@@ -55,20 +68,38 @@ class MTProxyProvider(BaseVPNProvider):
         subscription: Subscription,
         client_uuid: str | None = None,
         email: str | None = None,
+        domain: str | None = None,
     ) -> dict[str, Any]:
-        secret = self._generate_secret()
-        await self.ssh.append_to_file(self.config_path, secret)
+        if self.is_single:
+            return {
+                "uuid": client_uuid or str(uuid.uuid4()),
+                "secret": self.default_secret,
+                "domain": self.domain,
+            }
+
+        secret_domain = domain or self.domain
+        name = f"user_{subscription.id}_{inbound.id}"
+        secret = (await self.ssh.run_command(
+            f"docker run --rm ghcr.io/dolonet/mtg-multi:latest generate-secret {secret_domain}"
+        )).strip()
+        await self.ssh.run_command(
+            f"sed -i '/\\[secrets\\]/a {name} = \"{secret}\"' {self.config_path}"
+        )
         await self._restart_container()
-        return {"uuid": client_uuid or str(uuid.uuid4()), "secret": secret}
+        return {"uuid": client_uuid or str(uuid.uuid4()), "secret": secret, "domain": secret_domain}
 
     async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        if self.is_single:
+            return True
+
         secret = connection.secret
         if not secret:
             return False
 
         try:
-            sed_cmd = f"sed -i '/^{secret}$/d' {self.config_path}"
-            await self.ssh.run_command(sed_cmd)
+            await self.ssh.run_command(
+                f"sed -i '/{secret}/d' {self.config_path}"
+            )
             await self._restart_container()
             return True
         except Exception as e:
@@ -85,12 +116,18 @@ class MTProxyProvider(BaseVPNProvider):
         return True
 
     async def enable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        if self.is_single:
+            return True
+
         secret = connection.secret
         if not secret:
             return False
 
         try:
-            await self.ssh.append_to_file(self.config_path, secret)
+            name = f"user_{connection.subscription_id}_{inbound.id}"
+            await self.ssh.run_command(
+                f"sed -i '/\\[secrets\\]/a {name} = \"{secret}\"' {self.config_path}"
+            )
             await self._restart_container()
             return True
         except Exception as e:
@@ -98,6 +135,9 @@ class MTProxyProvider(BaseVPNProvider):
             return False
 
     async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
+        if self.is_single:
+            return True
+
         return await self.remove_client(inbound, connection)
 
     async def reset_client_traffic(
@@ -115,7 +155,7 @@ class MTProxyProvider(BaseVPNProvider):
     async def get_client_config(
         self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
     ) -> dict[str, Any]:
-        secret = connection.secret
+        secret = connection.secret if not self.is_single else self.default_secret
         host = self.ssh.host
         link = f"tg://proxy?server={host}&port={self.port}&secret={secret}"
 

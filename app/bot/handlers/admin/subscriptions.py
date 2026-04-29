@@ -3,7 +3,8 @@
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import Message as TgMessage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 from sqlalchemy import select
@@ -201,7 +202,7 @@ async def confirm_inbound_selection(callback: CallbackQuery, state: FSMContext) 
 
 
 @router.message(SubscriptionManagement.waiting_for_subscription_name)
-async def process_subscription_name(message: Message, state: FSMContext) -> None:
+async def process_subscription_name(message: TgMessage, state: FSMContext) -> None:
     """Process subscription name input."""
     data = await state.get_data()
 
@@ -265,7 +266,7 @@ async def process_subscription_name(message: Message, state: FSMContext) -> None
 
 
 @router.message(SubscriptionManagement.waiting_for_traffic_limit)
-async def process_traffic_limit(message: Message, state: FSMContext) -> None:
+async def process_traffic_limit(message: TgMessage, state: FSMContext) -> None:
     """Process traffic limit."""
     data = await state.get_data()
 
@@ -326,7 +327,7 @@ async def process_traffic_limit(message: Message, state: FSMContext) -> None:
 
 
 @router.message(SubscriptionManagement.waiting_for_expiry_days)
-async def process_expiry_days(message: Message, state: FSMContext) -> None:
+async def process_expiry_days(message: TgMessage, state: FSMContext) -> None:
     """Process expiry days and show confirmation."""
     data = await state.get_data()
 
@@ -1067,7 +1068,6 @@ async def select_server_for_add_inbound(callback: CallbackQuery, state: FSMConte
 
 @router.callback_query(F.data == "confirm_add_inbounds")
 async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> None:
-    """Confirm and add inbounds to subscription."""
     data = await state.get_data()
     selected_inbounds = data.get("selected_inbounds", set())
 
@@ -1081,12 +1081,178 @@ async def confirm_add_inbounds(callback: CallbackQuery, state: FSMContext) -> No
         )
         return
 
-    await callback.answer()
+    async with async_session_factory() as session:
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Inbound)
+            .where(Inbound.id.in_(selected_inbounds))
+            .options(
+                selectinload(Inbound.server).selectinload(Server.mtproxy_service),
+            )
+        )
+        inbounds = result.scalars().all()
+
+    has_mtproxy_multi = any(
+        ib.type == "mtproxy_inbound"
+        and ib.server.mtproxy_service
+        and ib.server.mtproxy_service.implementation == "mtg-multi"
+        for ib in inbounds
+    )
+
+    if has_mtproxy_multi:
+        default_domain = next(
+            (
+                ib.server.mtproxy_service.domain or "google.com"
+                for ib in inbounds
+                if ib.type == "mtproxy_inbound" and ib.server.mtproxy_service
+            ),
+            "google.com",
+        )
+        await state.update_data(mtproxy_default_domain=default_domain)
+        await state.set_state(SubscriptionManagement.waiting_for_mtproxy_domain)
+
+        builder = InlineKeyboardBuilder()
+        for d in ["google.com", "microsoft.com", "apple.com", "facebook.com"]:
+            label = f"✅ {d}" if d == default_domain else d
+            builder.button(text=label, callback_data=f"mtp_domain_{d}")
+        builder.button(
+            text="✏️ Свой домен", callback_data="mtp_domain_custom"
+        )
+        builder.button(
+            text="🔙 Пропустить (default)", callback_data=f"mtp_domain_{default_domain}"
+        )
+        builder.adjust(2)
+
+        await callback.message.edit_text(
+            "📡 <b>MTProxy: выберите Fake-TLS домен</b>\n\n"
+            "Домен определяет под какой сайт маскируется трафик.\n"
+            f"По умолчанию: <code>{default_domain}</code>",
+            reply_markup=builder.as_markup(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    await _execute_add_inbounds(callback, state, mtproxy_domain=None)
+
+
+@router.callback_query(
+    SubscriptionManagement.waiting_for_mtproxy_domain,
+    F.data.startswith("mtp_domain_"),
+)
+async def select_mtproxy_domain(callback: CallbackQuery, state: FSMContext) -> None:
+    domain_part = callback.data[len("mtp_domain_"):]
+
+    if domain_part == "custom":
+        await callback.message.edit_text(
+            "📡 Введите Fake-TLS домен (например: <code>google.com</code>):",
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
+
+    await _execute_add_inbounds(callback, state, mtproxy_domain=domain_part)
+
+
+@router.message(SubscriptionManagement.waiting_for_mtproxy_domain)
+async def input_mtproxy_domain(message: TgMessage, state: FSMContext) -> None:
+    domain = message.text.strip().lower()
+    if not domain or "." not in domain:
+        await message.answer("❌ Введите корректный домен (например: google.com)")
+        return
+
+    data = await state.get_data()
+    subscription_id = data.get("subscription_id")
+    selected_inbounds = data.get("selected_inbounds", set())
+
+    if not selected_inbounds:
+        await state.clear()
+        return
+
+    await state.set_state(None)
+    await _execute_add_inbounds_by_message(message, state, subscription_id, selected_inbounds, domain)
+
+
+async def _execute_add_inbounds(
+    callback: CallbackQuery, state: FSMContext, mtproxy_domain: str | None
+) -> None:
+    data = await state.get_data()
+    subscription_id = data.get("subscription_id")
+    selected_inbounds = data.get("selected_inbounds", set())
+
+    await state.clear()
+
+    if not selected_inbounds:
+        await callback.message.edit_text("❌ Нет выбранных inbounds.")
+        return
+
     await callback.message.edit_text(
         "⏳ Добавление подключений, пожалуйста подождите...", reply_markup=None
     )
 
-    await state.clear()
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(session)
+        try:
+            for inbound_id in selected_inbounds:
+                await sub_service.add_inbound_to_subscription(
+                    subscription_id,
+                    inbound_id,
+                    mtproxy_domain=mtproxy_domain,
+                )
+            await session.commit()
+
+            await callback.message.edit_text(
+                f"✅ <b>Подключения добавлены!</b>\n\n"
+                f"Добавлено inbounds: {len(selected_inbounds)}"
+                + (f"\nMTProxy домен: <code>{mtproxy_domain}</code>" if mtproxy_domain else ""),
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to add inbounds: {e}", exc_info=True)
+            await callback.message.edit_text(
+                f"❌ Ошибка добавления подключений:\n\n<code>{str(e)[:300]}</code>",
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
+
+
+async def _execute_add_inbounds_by_message(
+    message: TgMessage, state: FSMContext,
+    subscription_id: int, selected_inbounds: set, mtproxy_domain: str,
+) -> None:
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        sub_service = NewSubscriptionService(session)
+        try:
+            for inbound_id in selected_inbounds:
+                await sub_service.add_inbound_to_subscription(
+                    subscription_id,
+                    inbound_id,
+                    mtproxy_domain=mtproxy_domain,
+                )
+            await session.commit()
+
+            await message.answer(
+                f"✅ <b>Подключения добавлены!</b>\n\n"
+                f"Добавлено inbounds: {len(selected_inbounds)}\n"
+                f"MTProxy домен: <code>{mtproxy_domain}</code>",
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to add inbounds: {e}", exc_info=True)
+            await message.answer(
+                f"❌ Ошибка добавления подключений:\n\n<code>{str(e)[:300]}</code>",
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+                parse_mode="HTML",
+            )
 
 
 async def get_inbounds_selection_keyboard(
@@ -2574,7 +2740,7 @@ async def add_time_to_subscription_handler(
 
 
 @router.message(SubscriptionManagement.waiting_for_add_days)
-async def process_add_time_days(message: Message, state: FSMContext) -> None:
+async def process_add_time_days(message: TgMessage, state: FSMContext) -> None:
     """Process days to add to subscription."""
     try:
         days = int(message.text.strip())
@@ -2929,7 +3095,7 @@ async def rebuild_mode_manual(callback: CallbackQuery, state: FSMContext, is_adm
 
 
 @router.message(SubscriptionRebuild.waiting_for_traffic_limit)
-async def rebuild_process_traffic(message: Message, state: FSMContext) -> None:
+async def rebuild_process_traffic(message: TgMessage, state: FSMContext) -> None:
     try:
         traffic = int(message.text.strip())
         if traffic < 0:
@@ -2954,7 +3120,7 @@ async def rebuild_process_traffic(message: Message, state: FSMContext) -> None:
 
 
 @router.message(SubscriptionRebuild.waiting_for_expiry_days)
-async def rebuild_process_expiry(message: Message, state: FSMContext) -> None:
+async def rebuild_process_expiry(message: TgMessage, state: FSMContext) -> None:
     try:
         expiry = int(message.text.strip())
         if expiry < 0:

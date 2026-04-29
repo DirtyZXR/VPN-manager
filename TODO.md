@@ -45,8 +45,10 @@ await callback.message.answer("✅ Результат: ...")
 
 ### Осталось исправить
 
-- `test_server` handler (`servers.py:385`) — обрезать error message до 190 символов + early `callback.answer()`
-- Проверить все handler'ы где `callback.answer()` вызывается после SSH/API операций
+- **`test_server` handler** (`servers.py:385`) — "Проверить подключение". Если сервер недоступен, SSH ping/connection test висит 10-30 сек без ответа пользователю, потом падает `query is too old`. Нужен: early `callback.answer()` → SSH timeout 10с → результат через `message.answer()` + обрезать error до 190 символов.
+- **`show_subscription_inbounds`** — загрузка конфигов через provider может быть медленной
+- **`get_connection_config`** — provider.get_client_config() для AWG/MTProxy может тратить время на SSH
+- Проверить **все** handler'ы где `callback.answer()` вызывается после SSH/API операций
 
 ---
 
@@ -345,8 +347,33 @@ ERROR | app.services.notification_checker:_get_connection_traffic:434 - Error ge
 ## Фича: уведомления о нескольких протоколах
 
 **Приоритет:** средний
+**Файл:** `app/services/notification_checker.py`
 
-Если у подписки несколько протоколов (XUI + AWG), уведомление клиента показывает только один. Нужно сообщать обо всех.
+### Суть
+
+Уведомления клиенту (трафик,expiry,статус подписки) отправляются как plain text. Нужно добавить в уведомление те же кнопки что и в меню подписки — чтобы клиент мог сразу получить конфиг/ссылку без перехода в бот:
+
+### Кнопки для добавления
+
+Для каждого подключения в подписке, по тем же правилам что `show_user_subscription_details()`:
+
+| Протокол | Кнопки |
+|----------|--------|
+| XUI | `📋 Скопировать` (CopyTextButton с URL подписки) |
+| AWG | `🔗 AmneziaVPN` (vpn:// URI) + `📥 Скачать .conf` |
+| MTProxy | `📋 Скопировать` (CopyTextButton с `tg://proxy` ссылкой) |
+
+### Реализация
+
+1. В `notification_checker.py` — при формировании уведомления о подписке, построить `InlineKeyboardMarkup` с кнопками конфигов
+2. Использовать ту же логику `config_groups` что в `show_user_subscription_details()` — группировка по серверу, config_type = link/file/empty
+3. Добавить `InlineKeyboardButton(text="📝 Все подписки", callback_data="my_subscriptions")` внизу
+4. Передать `reply_markup` в `bot.send_message()`
+
+### Ссылки
+
+- Логика группировки: `app/bot/handlers/user/subscriptions.py:289-337`
+- Провайдеры конфигов: `app/services/vpn_providers/`
 
 ---
 

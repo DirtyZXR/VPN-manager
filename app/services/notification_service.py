@@ -31,11 +31,23 @@ class NotificationService:
             for conn in connections
             if getattr(conn.inbound.server, "xui_panel", None)
         }
-        non_xui_protocols = {
-            conn.inbound.protocol
-            for conn in connections
-            if not getattr(conn.inbound.server, "xui_panel", None)
-        }
+        awg_protocols = set()
+        mtproxy_links = []
+        for conn in connections:
+            if getattr(conn.inbound.server, "xui_panel", None):
+                continue
+            if conn.inbound.type == "mtproxy_inbound":
+                svc = conn.inbound.server.mtproxy_service
+                secret = getattr(conn, "secret", None) or (svc.default_secret if svc else None)
+                port = svc.port if svc else 443
+                host = conn.inbound.server.ip_address
+                if secret:
+                    mtproxy_links.append(
+                        f"📡 <b>{html.escape(conn.inbound.remark)}</b>:\n"
+                        f"<code>tg://proxy?server={host}&port={port}&secret={secret}</code>"
+                    )
+            else:
+                awg_protocols.add(conn.inbound.protocol)
 
         parts = []
         if xui_servers:
@@ -57,12 +69,15 @@ class NotificationService:
                 )
             parts.append("🔗 <b>URL подписки:</b>\n" + "\n\n".join(f"<code>{u}</code>" for u in urls))
 
-        if non_xui_protocols:
-            protocols_str = ", ".join(sorted(non_xui_protocols))
+        if awg_protocols:
+            protocols_str = ", ".join(sorted(awg_protocols))
             parts.append(
                 f"📁 <b>Конфиг:</b> {protocols_str} — "
                 "скачайте конфигурационный файл в разделе подписок"
             )
+
+        if mtproxy_links:
+            parts.append("🔗 <b>MTProxy:</b>\n" + "\n".join(mtproxy_links))
 
         return "\n" + "\n".join(parts) if parts else ""
 

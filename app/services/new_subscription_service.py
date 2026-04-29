@@ -260,6 +260,7 @@ class NewSubscriptionService:
         subscription_id: int,
         inbound_id: int,
         client_uuid: str | None = None,
+        mtproxy_domain: str | None = None,
     ) -> InboundConnection:
         """Add inbound connection to subscription.
 
@@ -267,14 +268,7 @@ class NewSubscriptionService:
             subscription_id: Subscription ID
             inbound_id: Inbound ID
             client_uuid: Optional UUID to use (for rebuilding subscriptions)
-
-        Returns:
-            Created inbound connection
-
-        Raises:
-            XUIError: If inbound already exists in subscription
-            XUIError: If XUI client creation fails
-            XUIError: If email already exists in this inbound
+            mtproxy_domain: Optional domain for MTProxy mtg-multi secret generation
         """
         # Check if inbound already exists in subscription
         existing = await self.session.execute(
@@ -314,12 +308,15 @@ class NewSubscriptionService:
             raise XUIError(f"Failed to get VPN provider: {e}") from e
 
         try:
-            client_data = await provider.add_client(
-                inbound=inbound,
-                subscription=subscription,
-                client_uuid=client_uuid,
-                email=None,
-            )
+            provider_kwargs = {
+                "inbound": inbound,
+                "subscription": subscription,
+                "client_uuid": client_uuid,
+                "email": None,
+            }
+            if mtproxy_domain and inbound.type == "mtproxy_inbound":
+                provider_kwargs["domain"] = mtproxy_domain
+            client_data = await provider.add_client(**provider_kwargs)
             client_uuid = client_data.get("uuid", client_uuid)
             client_email = client_data.get("email")
             provider_payload = client_data
@@ -359,6 +356,7 @@ class NewSubscriptionService:
                     connection = MTProxyInboundConnection(
                         **base_kwargs,
                         secret=provider_payload.get("secret"),
+                        domain=provider_payload.get("domain"),
                     )
                 else:
                     connection = InboundConnection(**base_kwargs)

@@ -300,8 +300,9 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                     config_data = None
                 elif inbound.type in ("mtproxy_inbound",):
                     config_type = "link"
-                    if server.mtproxy_service and server.mtproxy_service.default_secret:
-                        config_data = f"tg://proxy?server={server.ip_address}&port={server.mtproxy_service.port}&secret={server.mtproxy_service.default_secret}"
+                    if conn.secret:
+                        port = server.mtproxy_service.port if server.mtproxy_service else 443
+                        config_data = f"tg://proxy?server={server.ip_address}&port={port}&secret={conn.secret}"
                     else:
                         config_type = "empty"
                         config_data = None
@@ -364,13 +365,14 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                         text += t("user.subs.conn_traffic", "      Трафик: {traffic}\n", traffic=traffic)
                         text += t("user.subs.conn_expiry", "      Срок: {expiry}\n", expiry=expiry_info)
 
-                    from aiogram.types import CopyTextButton
+                    if not url.startswith("tg://"):
+                        from aiogram.types import CopyTextButton
 
-                    label = f"📋 Скопировать | {server_name}" if server_name else "📋 Скопировать"
-                    builder.row(InlineKeyboardButton(
-                        text=label,
-                        copy_text=CopyTextButton(text=url),
-                    ))
+                        label = f"📋 Скопировать | {server_name}" if server_name else "📋 Скопировать"
+                        builder.row(InlineKeyboardButton(
+                            text=label,
+                            copy_text=CopyTextButton(text=url),
+                        ))
 
                 if files:
                     for c in files:

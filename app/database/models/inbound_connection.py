@@ -160,6 +160,7 @@ class MTProxyInboundConnection(InboundConnection):
         Integer, ForeignKey("inbound_connections.id", ondelete="CASCADE"), primary_key=True
     )
     secret: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    domain: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     __mapper_args__ = {
         "polymorphic_identity": "mtproxy_inbound_connection",

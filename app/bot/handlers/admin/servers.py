@@ -2577,6 +2577,7 @@ async def run_server_autodiscover(
                     port=details.get("port", 443),
                     domain=details.get("domain"),
                     max_connections=details.get("max_connections"),
+                    default_secret=details.get("secret"),
                 )
                 session.add(mtproxy)
                 discovered_list.append(
@@ -3836,6 +3837,7 @@ async def mtproxy_connect_existing(callback: CallbackQuery, state: FSMContext) -
         port=params["port"],
         domain=params["domain"],
         max_connections=params["max_connections"],
+        secret=params.get("secret"),
     )
 
 
@@ -3850,6 +3852,7 @@ async def mtproxy_confirm_connect(callback: CallbackQuery, state: FSMContext) ->
     domain = data["domain"]
     implementation = data["implementation"]
     max_connections = data.get("max_connections", 5000)
+    secret = data.get("secret")
     await state.clear()
 
     try:
@@ -3873,6 +3876,8 @@ async def mtproxy_confirm_connect(callback: CallbackQuery, state: FSMContext) ->
                 existing.port = port
                 existing.domain = domain
                 existing.max_connections = max_connections if implementation == "mtg-multi" else None
+                if secret:
+                    existing.default_secret = secret
             else:
                 mtproxy_service = MTProxyService(
                     server_id=server.id,
@@ -3880,6 +3885,7 @@ async def mtproxy_confirm_connect(callback: CallbackQuery, state: FSMContext) ->
                     port=port,
                     domain=domain,
                     max_connections=max_connections if implementation == "mtg-multi" else None,
+                    default_secret=secret,
                 )
                 session.add(mtproxy_service)
 
@@ -4172,6 +4178,7 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
     max_connections = data.get("max_connections", 5000)
     force = data.get("force_reinstall", False)
     connect_existing = data.get("connect_existing", False)
+    secret = data.get("secret")
 
     await state.clear()
 
@@ -4215,13 +4222,14 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                     ),
                 )
 
-                await installer.install(
+                install_result = await installer.install(
                     port=port,
                     domain=domain,
                     implementation=implementation,
                     max_connections=max_connections,
                     force=force,
                 )
+                secret = install_result.get("secret")
 
             from app.database.models.inbound import MTProxyInbound
             from app.database.models.services import MTProxyService
@@ -4235,6 +4243,8 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                 existing.port = port
                 existing.domain = domain
                 existing.max_connections = max_connections if implementation == "mtg-multi" else None
+                if secret:
+                    existing.default_secret = secret
             else:
                 mtproxy_service = MTProxyService(
                     server_id=server.id,
@@ -4242,6 +4252,7 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                     port=port,
                     domain=domain,
                     max_connections=max_connections if implementation == "mtg-multi" else None,
+                    default_secret=secret,
                 )
                 session.add(mtproxy_service)
 
@@ -4354,13 +4365,14 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
                 ),
             )
 
-            await installer.install(
+            install_result = await installer.install(
                 port=port,
                 domain=domain,
                 implementation=implementation,
                 max_connections=max_connections,
                 force=True,
             )
+            secret = install_result.get("secret")
 
             from app.database.models.inbound import MTProxyInbound
             from app.database.models.services import MTProxyService
@@ -4374,6 +4386,8 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
                 existing.port = port
                 existing.domain = domain
                 existing.max_connections = max_connections if implementation == "mtg-multi" else None
+                if secret:
+                    existing.default_secret = secret
             else:
                 mtproxy_service = MTProxyService(
                     server_id=server.id,
@@ -4381,6 +4395,7 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
                     port=port,
                     domain=domain,
                     max_connections=max_connections if implementation == "mtg-multi" else None,
+                    default_secret=secret,
                 )
                 session.add(mtproxy_service)
 
