@@ -1,22 +1,21 @@
 """User subscription management handlers."""
 
 from collections import defaultdict
-from urllib.parse import urljoin
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
 from app.bot.keyboards import get_back_keyboard
-from app.bot.keyboards.inline import get_public_templates_keyboard, get_cancel_keyboard
+from app.bot.keyboards.inline import get_cancel_keyboard, get_public_templates_keyboard
+from app.bot.states.user import UserRequestSubscription
 from app.database import async_session_factory
 from app.services.new_subscription_service import NewSubscriptionService
+from app.services.notification_service import NotificationService
 from app.services.subscription_request_service import SubscriptionRequestService
 from app.services.subscription_template_service import SubscriptionTemplateService
-from app.services.notification_service import NotificationService
-from app.bot.states.user import UserRequestSubscription
 from app.utils.texts import t
 
 router = Router()
@@ -31,62 +30,71 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         )
         return
 
-    async with async_session_factory() as session:
-        from app.services.new_subscription_service import NewSubscriptionService
+    try:
+        async with async_session_factory() as session:
+            from app.services.new_subscription_service import NewSubscriptionService
 
-        service = NewSubscriptionService(session)
-        subscriptions = await service.get_client_subscriptions(client.id)
+            service = NewSubscriptionService(session)
+            subscriptions = await service.get_client_subscriptions(client.id)
 
-    logger.info(
-        f"User {client.id} subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions"
-    )
-
-    if not subscriptions:
-        await callback.message.edit_text(
-            t(
-                "user.subs.empty",
-                "📝 У вас пока нет подписок.\n\nСвяжитесь с администратором для создания подписки.",
-            ),
-            reply_markup=get_back_keyboard("main_menu"),
-        )
-        await callback.answer()
-        return
-
-    text = t("user.subs.list_header", "📝 Ваши подписки ({count}):\n\n", count=len(subscriptions))
-
-    builder = InlineKeyboardBuilder()
-
-    for sub in subscriptions:
-        # Use new subscription status property
-        status = sub.subscription_status
-
-        text += t(
-            "user.subs.list_item",
-            "{status} <b>{name}</b>\n   Активных подключений: {active}/{total}\n\n",
-            status=status,
-            name=sub.name,
-            active=sub.active_connections_count,
-            total=len(sub.inbound_connections),
+        logger.info(
+            f"User {client.id} subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions"
         )
 
-        # Add button for each subscription
+        if not subscriptions:
+            await callback.message.edit_text(
+                t(
+                    "user.subs.empty",
+                    "📝 У вас пока нет подписок.\n\nСвяжитесь с администратором для создания подписки.",
+                ),
+                reply_markup=get_back_keyboard("main_menu"),
+            )
+            return
+
+        text = t(
+            "user.subs.list_header", "📝 Ваши подписки ({count}):\n\n", count=len(subscriptions)
+        )
+
+        builder = InlineKeyboardBuilder()
+
+        for sub in subscriptions:
+            # Use new subscription status property
+            status = sub.subscription_status
+
+            text += t(
+                "user.subs.list_item",
+                "{status} <b>{name}</b>\n   Активных подключений: {active}/{total}\n\n",
+                status=status,
+                name=sub.name,
+                active=sub.active_connections_count,
+                total=len(sub.inbound_connections),
+            )
+
+            # Add button for each subscription
+            builder.button(
+                text=t("user.subs.btn_sub", "📝 {name}", name=sub.name),
+                callback_data=f"user_sub_select_{sub.id}",
+            )
+
         builder.button(
-            text=t("user.subs.btn_sub", "📝 {name}", name=sub.name),
-            callback_data=f"user_sub_select_{sub.id}",
+            text=t("user.subs.btn_urls", "🔗 Subscription URLs"), callback_data="all_sub_urls"
         )
+        builder.button(
+            text=t("user.subs.btn_status", "📊 Сроки и остатки"),
+            callback_data="show_subscription_status",
+        )
+        builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="main_menu")
+        builder.adjust(1)
 
-    builder.button(
-        text=t("user.subs.btn_urls", "🔗 Subscription URLs"), callback_data="all_sub_urls"
-    )
-    builder.button(
-        text=t("user.subs.btn_status", "📊 Сроки и остатки"),
-        callback_data="show_subscription_status",
-    )
-    builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="main_menu")
-    builder.adjust(1)
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in show_my_subscriptions: {e}")
+        await callback.message.answer(t("user.subs.error", "❌ Ошибка при загрузке подписок."))
+    finally:
+        import contextlib
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    await callback.answer()
+        with contextlib.suppress(Exception):
+            await callback.answer()
 
 
 @router.callback_query(F.data == "all_sub_urls")
@@ -98,66 +106,75 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
         )
         return
 
-    async with async_session_factory() as session:
-        service = NewSubscriptionService(session)
-        urls = await service.get_subscription_urls(client.id)
+    try:
+        async with async_session_factory() as session:
+            service = NewSubscriptionService(session)
+            urls = await service.get_subscription_urls(client.id)
 
-    if not urls:
-        await callback.answer(
-            t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
-        )
-        return
-
-    # Group URLs by subscription ID (unique subscription = subscription_id)
-    grouped_subs = defaultdict(list)
-    for url_info in urls:
-        sub_id = url_info["subscription_id"]
-        grouped_subs[sub_id].append(url_info)
-
-    max_length = 4096
-    text = t("user.subs.urls_header", "🔗 Subscription URLs:\n\n")
-
-    # Show subscription info with URLs
-    for _sub_id, url_list in grouped_subs.items():
-        sub_name = url_list[0]["subscription_name"]
-
-        section = t("user.subs.url_group", "<b>Подписка: {name}</b>\n", name=sub_name)
-
-        # Group by URL (different inbounds on same server have same URL)
-        # Show unique URLs
-        url_map = {}  # url -> server_name
-        for url_info in url_list:
-            url = url_info["url"]
-            server_name = url_info["server_name"]
-            if url not in url_map:
-                url_map[url] = server_name
-
-        # Add URLs as text (without code blocks)
-        for url, _server_name in url_map.items():
-            section += f"{url}\n"
-
-        section += "\n"
-
-        # Check if adding this section would exceed limit
-        if len(text) + len(section) > max_length:
-            section = t(
-                "user.subs.urls_hidden",
-                "\n... (остальные подписки скрыты из-за ограничений Telegram)",
+        if not urls:
+            await callback.answer(
+                t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
             )
+            return
+
+        # Group URLs by subscription ID (unique subscription = subscription_id)
+        grouped_subs = defaultdict(list)
+        for url_info in urls:
+            sub_id = url_info["subscription_id"]
+            grouped_subs[sub_id].append(url_info)
+
+        max_length = 4096
+        text = t("user.subs.urls_header", "🔗 Subscription URLs:\n\n")
+
+        # Show subscription info with URLs
+        for _sub_id, url_list in grouped_subs.items():
+            sub_name = url_list[0]["subscription_name"]
+
+            section = t("user.subs.url_group", "<b>Подписка: {name}</b>\n", name=sub_name)
+
+            # Group by URL (different inbounds on same server have same URL)
+            # Show unique URLs
+            url_map = {}  # url -> server_name
+            for url_info in url_list:
+                url = url_info["url"]
+                server_name = url_info["server_name"]
+                if url not in url_map:
+                    url_map[url] = server_name
+
+            # Add URLs as text (without code blocks)
+            for url, _server_name in url_map.items():
+                section += f"{url}\n"
+
+            section += "\n"
+
+            # Check if adding this section would exceed limit
+            if len(text) + len(section) > max_length:
+                section = t(
+                    "user.subs.urls_hidden",
+                    "\n... (остальные подписки скрыты из-за ограничений Telegram)",
+                )
+                text += section
+                break
+
             text += section
-            break
 
-        text += section
+        builder = InlineKeyboardBuilder()
+        builder.button(
+            text=t("user.subs.btn_copy_urls", "📋 Скопировать все URL"),
+            callback_data="copy_all_urls",
+        )
+        builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="my_subscriptions")
+        builder.adjust(1)
 
-    builder = InlineKeyboardBuilder()
-    builder.button(
-        text=t("user.subs.btn_copy_urls", "📋 Скопировать все URL"), callback_data="copy_all_urls"
-    )
-    builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="my_subscriptions")
-    builder.adjust(1)
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+    except Exception as e:
+        logger.error(f"Error in show_all_subscription_urls: {e}")
+        await callback.message.answer(t("user.subs.error", "❌ Ошибка при загрузке подписок."))
+    finally:
+        import contextlib
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    await callback.answer()
+        with contextlib.suppress(Exception):
+            await callback.answer()
 
 
 @router.callback_query(F.data == "copy_all_json_urls")
@@ -169,45 +186,54 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
         )
         return
 
-    async with async_session_factory() as session:
-        service = NewSubscriptionService(session)
-        urls = await service.get_subscription_json_urls(client.id)
+    try:
+        async with async_session_factory() as session:
+            service = NewSubscriptionService(session)
+            urls = await service.get_subscription_json_urls(client.id)
 
-    if not urls:
-        await callback.answer(
-            t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
-        )
-        return
+        if not urls:
+            await callback.answer(
+                t("user.subs.no_active", "❌ Нет активных подписок."), show_alert=True
+            )
+            return
 
-    # Group URLs by subscription ID (unique subscription = subscription_id)
-    from collections import defaultdict
+        # Group URLs by subscription ID (unique subscription = subscription_id)
+        from collections import defaultdict
 
-    grouped_subs = defaultdict(list)
-    for url_info in urls:
-        sub_id = url_info["subscription_id"]
-        grouped_subs[sub_id].append(url_info)
+        grouped_subs = defaultdict(list)
+        for url_info in urls:
+            sub_id = url_info["subscription_id"]
+            grouped_subs[sub_id].append(url_info)
 
-    # Build text with all URLs
-    max_length = 4096 - 20  # Reserve space for markdown formatting
-    text = ""
+        # Build text with all URLs
+        max_length = 4096 - 20  # Reserve space for markdown formatting
+        text = ""
 
-    for _sub_id, url_list in grouped_subs.items():
-        # Group unique URLs by server (same URL = same server)
-        url_map = {}
-        for url_info in url_list:
-            url = url_info["url"]
-            server_name = url_info["server_name"]
-            if url not in url_map:
-                url_map[url] = server_name
+        for _sub_id, url_list in grouped_subs.items():
+            # Group unique URLs by server (same URL = same server)
+            url_map = {}
+            for url_info in url_list:
+                url = url_info["url"]
+                server_name = url_info["server_name"]
+                if url not in url_map:
+                    url_map[url] = server_name
 
-        for url, _server_name in url_map.items():
-            # Check if adding this URL would exceed limit
-            if len(text) + len(url) + 1 > max_length:  # +1 for newline
-                break
-            text += f"{url}\n"
+            for url, _server_name in url_map.items():
+                # Check if adding this URL would exceed limit
+                if len(text) + len(url) + 1 > max_length:  # +1 for newline
+                    break
+                text += f"{url}\n"
 
-    # Send as new message instead of callback answer for better copy support
-    await callback.message.answer(f"```\n{text}\n```", parse_mode="MarkdownV2")
+        # Send as new message instead of callback answer for better copy support
+        await callback.message.answer(f"```\n{text}\n```", parse_mode="MarkdownV2")
+    except Exception as e:
+        logger.error(f"Error in copy_all_json_urls: {e}")
+        await callback.message.answer(t("user.subs.error", "❌ Ошибка при загрузке подписок."))
+    finally:
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            await callback.answer()
 
 
 @router.callback_query(F.data.startswith("user_sub_select_"))
@@ -221,100 +247,177 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
 
     subscription_id = int(callback.data.split("_")[-1])
 
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
+
     async with async_session_factory() as session:
         service = NewSubscriptionService(session)
         subscription = await service.get_subscription(subscription_id)
 
-    if not subscription or subscription.client_id != client.id:
-        await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
-        return
+        if not subscription or subscription.client_id != client.id:
+            await callback.answer(t("user.subs.not_found", "❌ Подписка не найдена."), show_alert=True)
+            return
 
-    # Use new subscription status property
-    status = subscription.subscription_status
+        status = subscription.subscription_status
 
-    text = t(
-        "user.subs.details_header",
-        "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}\nТокен: <code>{token}</code>\n\n",
-        name=subscription.name,
-        status=status,
-        created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
-        active=subscription.active_connections_count,
-        total=len(subscription.inbound_connections),
-        token=subscription.subscription_token,
-    )
-
-    # Group URLs by server to avoid duplicates
-    server_urls = defaultdict(list)
-    for conn in subscription.inbound_connections:
-        if conn.is_enabled:
-            server = conn.inbound.server
-            # Prioritize JSON URL, fallback to standard URL
-            subscription_path = getattr(server, "subscription_json_path", None)
-            if not subscription_path:
-                subscription_path = getattr(server, "subscription_path", "/sub/")
-            subscription_url = urljoin(
-                server.url, f"{subscription_path}{subscription.subscription_token}"
+        has_xui = any(
+            conn.inbound.server.xui_panel is not None
+            for conn in subscription.inbound_connections
+            if conn.is_enabled
+        )
+        token_text = (
+            t(
+                "user.subs.details_token",
+                "\nТокен: <code>{token}</code>",
+                token=subscription.subscription_token,
             )
-            server_urls[subscription_url].append(
-                {
-                    "server_name": server.name,
-                    "inbound": conn.inbound,
-                    "connection": conn,
-                }
-            )
+            if has_xui
+            else ""
+        )
 
-    if server_urls:
-        text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
-        for url, conn_list in server_urls.items():
-            # Show URL once per group
-            text += t("user.subs.conn_url", "  • URL: {url}\n", url=url)
+        text = t(
+            "user.subs.details_header",
+            "📝 Подписка: <b>{name}</b>\n\nСтатус: {status}\nСоздана: {created}\nАктивных подключений: {active}/{total}{token_text}\n\n",
+            name=subscription.name,
+            status=status,
+            created=subscription.created_at.strftime("%d.%m.%Y %H:%M"),
+            active=subscription.active_connections_count,
+            total=len(subscription.inbound_connections),
+            token_text=token_text,
+        )
 
-            # Show per-inbound traffic and expiry
-            for i, conn_data in enumerate(conn_list):
-                conn = conn_data["connection"]
-                inbound = conn_data["inbound"]
+        server_groups = defaultdict(list)
+        builder = InlineKeyboardBuilder()
 
-                # Per-inbound traffic
-                traffic = (
-                    t("user.subs.unlimited", "Безлимит")
-                    if conn.is_unlimited
-                    else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+        for conn in subscription.inbound_connections:
+            if conn.is_enabled:
+                server = conn.inbound.server
+                inbound = conn.inbound
+
+                if inbound.type in ("awg_inbound",):
+                    config_type = "file"
+                    has_vpn_uri = bool(server.awg_service)
+                    config_data = None
+                elif inbound.type in ("mtproxy_inbound",):
+                    config_type = "link"
+                    if conn.secret:
+                        port = server.mtproxy_service.port if server.mtproxy_service else 443
+                        config_data = f"tg://proxy?server={server.ip_address}&port={port}&secret={conn.secret}"
+                    else:
+                        config_type = "empty"
+                        config_data = None
+                    has_vpn_uri = False
+                else:
+                    try:
+                        from app.services.vpn_providers import get_vpn_provider
+
+                        provider = get_vpn_provider(server, inbound_type=inbound.type)
+                        config_dict = await provider.get_client_config(inbound, conn)
+                        config_type = config_dict.get("config_type")
+                        config_data = config_dict.get("config_data")
+                        has_vpn_uri = bool(config_dict.get("vpn_uri"))
+                        import contextlib
+
+                        with contextlib.suppress(Exception):
+                            await provider.close()
+                    except Exception as e:
+                        logger.warning(f"Failed to get config for conn {conn.id}: {e}")
+                        config_type = "empty"
+                        config_data = None
+                        has_vpn_uri = False
+
+                server_groups[server.id].append(
+                    {
+                        "server_name": server.name,
+                        "inbound": inbound,
+                        "connection": conn,
+                        "config_type": config_type,
+                        "config_data": config_data,
+                        "vpn_uri": has_vpn_uri,
+                    }
                 )
 
-                # Per-inbound expiry
-                from app.utils.date_utils import format_expiry_date
+        if server_groups:
+            text += t("user.subs.active_connections", "📢 Активные подключения:\n\n")
+            for _server_id, conn_list in server_groups.items():
+                server_name = conn_list[0]["server_name"]
+                text += f"🖥️ <b>{server_name}:</b>\n"
 
-                expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                url_groups = defaultdict(list)
+                files = []
+                empties = []
 
-                # Add empty line before each inbound for better readability (except first)
-                if i > 0:
-                    text += "\n"
+                for c in conn_list:
+                    if c["config_type"] == "link":
+                        url_groups[c["config_data"]].append(c)
+                    elif c["config_type"] == "file":
+                        files.append(c)
+                    else:
+                        empties.append(c)
 
-                # Add connection status indicator with server name
-                conn_status = "✅" if conn.is_connection_active else "❌"
-                server_name = conn_data.get("server_name", "Unknown")
-                text += t(
-                    "user.subs.conn_info",
-                    "    └ {status} {remark} ({protocol}) | {server}\n",
-                    status=conn_status,
-                    remark=inbound.remark,
-                    protocol=inbound.protocol,
-                    server=server_name,
-                )
-                text += t("user.subs.conn_traffic", "      Трафик: {traffic}\n", traffic=traffic)
-                text += t("user.subs.conn_expiry", "      Срок: {expiry}\n", expiry=expiry_info)
+                for url, url_items in url_groups.items():
+                    remarks = []
+                    for c in url_items:
+                        rem = c["inbound"].remark.split(":")[0] if c["inbound"].remark else "Без названия"
+                        if rem not in remarks:
+                            remarks.append(rem)
+                    combined_remark = ", ".join(remarks)
 
-            text += "\n"
+                    is_tg_proxy = url.startswith("tg://") or "t.me" in url
+                    if is_tg_proxy:
+                        text += f"  - {combined_remark}: {url}\n"
+                    else:
+                        text += f"  - {combined_remark}: <code>{url}</code>\n"
+                        from aiogram.types import CopyTextButton
+                        label = f"📋 Скопировать | {combined_remark}"
+                        builder.row(InlineKeyboardButton(
+                            text=label,
+                            copy_text=CopyTextButton(text=url),
+                        ))
 
-    builder = InlineKeyboardBuilder()
-    builder.button(
+                    conn = url_items[0]["connection"]
+                    traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+                    from app.utils.date_utils import format_expiry_date
+                    expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                    text += t("user.subs.conn_traffic_indented", "    Трафик: {traffic}\n", traffic=traffic)
+                    text += t("user.subs.conn_expiry_indented", "    Срок: {expiry}\n\n", expiry=expiry_info)
+
+                for c in files:
+                    conn = c["connection"]
+                    inbound = c["inbound"]
+                    remark = inbound.remark.split(":")[0] if inbound.remark else "Без названия"
+                    text += f"  - {remark}\n"
+
+                    traffic = t("user.subs.unlimited", "Безлимит") if conn.is_unlimited else t("user.subs.traffic_gb", "{gb} GB", gb=conn.total_gb)
+                    from app.utils.date_utils import format_expiry_date
+                    expiry_info = format_expiry_date(conn.expiry_date, include_time=False)
+                    text += t("user.subs.conn_traffic_indented", "    Трафик: {traffic}\n", traffic=traffic)
+                    text += t("user.subs.conn_expiry_indented", "    Срок: {expiry}\n\n", expiry=expiry_info)
+
+                    has_vpn_uri = c.get("vpn_uri")
+                    if has_vpn_uri:
+                        uri_btn = InlineKeyboardButton(
+                            text=f"🔗 {remark}",
+                            callback_data=f"user_uri_conf_{conn.id}",
+                        )
+                        dl_btn = InlineKeyboardButton(
+                            text=f"📥 {remark}", callback_data=f"user_dl_conf_{conn.id}"
+                        )
+                        builder.row(uri_btn, dl_btn)
+                    else:
+                        builder.row(InlineKeyboardButton(
+                            text=f"📥 {remark}", callback_data=f"user_dl_conf_{conn.id}"
+                        ))
+
+                for _c in empties:
+                    text += t("user.subs.conn_empty", "  - Конфиг недоступен (не установлен или ошибка)\n\n")
+
+    builder.row(InlineKeyboardButton(
         text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
         callback_data="my_subscriptions",
-    )
-    builder.adjust(1)
+    ))
 
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_export")
@@ -479,46 +582,48 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                 traffic_text = t("user.status.traffic_gb", "{gb} ГБ", gb=conn.total_gb)
 
                 # Get actual traffic from XUI
-                try:
-                    async with async_session_factory() as traffic_session:
-                        xui_service = XUIService(traffic_session)
-                        if server.id not in xui_clients:
-                            xui_clients[server.id] = await xui_service._get_client(server)
+                if conn.type == "xui_inbound_connection":
+                    try:
+                        async with async_session_factory() as traffic_session:
+                            xui_service = XUIService(traffic_session)
+                            if server.id not in xui_clients:
+                                xui_clients[server.id] = await xui_service._get_client(server)
 
-                        xui_client = xui_clients[server.id]
-                        clients = await xui_client.get_clients(inbound.xui_id)
+                            xui_client = xui_clients[server.id]
+                            clients = await xui_client.get_clients(inbound.xui_id)
 
-                        for xui_conn in clients:
-                            if xui_conn.get("id") == conn.uuid:
-                                used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
-                                    1024**3
-                                )
-                                remaining_gb = conn.total_gb - used_gb
-
-                                if remaining_gb <= 5:
-                                    traffic_text += t(
-                                        "user.status.traffic_low",
-                                        " (⚠️ осталось {gb:.2f} ГБ)",
-                                        gb=remaining_gb,
+                            for xui_conn in clients:
+                                if xui_conn.get("id") == conn.uuid:
+                                    used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
+                                        1024**3
                                     )
-                                else:
-                                    traffic_text += t(
-                                        "user.status.traffic_remaining",
-                                        " (осталось {gb:.2f} ГБ)",
-                                        gb=remaining_gb,
-                                    )
-                                break
-                except Exception as e:
-                    logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
-                    traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
+                                    remaining_gb = conn.total_gb - used_gb
+
+                                    if remaining_gb <= 5:
+                                        traffic_text += t(
+                                            "user.status.traffic_low",
+                                            " (⚠️ осталось {gb:.2f} ГБ)",
+                                            gb=remaining_gb,
+                                        )
+                                    else:
+                                        traffic_text += t(
+                                            "user.status.traffic_remaining",
+                                            " (осталось {gb:.2f} ГБ)",
+                                            gb=remaining_gb,
+                                        )
+                                    break
+                    except Exception as e:
+                        logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
+                        traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
 
             # Add connection status indicator
             conn_status = "✅" if conn.is_connection_active else "❌"
+            display_remark = inbound.remark.split(":")[0]
             text += t(
                 "user.status.conn_info",
-                "      {status} {remark} ({server})\n",
+                "      {status} {remark} | {server}\n",
                 status=conn_status,
-                remark=inbound.remark,
+                remark=display_remark,
                 server=server.name,
             )
             text += t("user.status.conn_expiry", "        📅 Срок: {expiry}\n", expiry=conn_expiry)
@@ -535,15 +640,16 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
     )
     builder.adjust(1)
 
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
-    await callback.answer()
-
-    # Close XUI clients
-    for client_obj in xui_clients.values():
-        try:
-            await client_obj.close()
-        except Exception as e:
-            logger.warning(f"Error closing XUI client: {e}")
+    try:
+        await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+        await callback.answer()
+    finally:
+        # Close XUI clients
+        for client_obj in xui_clients.values():
+            try:
+                await client_obj.close()
+            except Exception as e:
+                logger.warning(f"Error closing XUI client: {e}")
 
 
 @router.callback_query(F.data == "request_subscription")
@@ -648,3 +754,230 @@ async def process_subscription_request_name(message: Message, state: FSMContext,
         )
     )
     await state.clear()
+
+
+@router.callback_query(F.data.startswith("user_uri_conf_"))
+async def send_vpn_uri(callback: CallbackQuery, client) -> None:
+    if not client:
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
+        return
+
+    conn_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Inbound, InboundConnection
+        from app.database.models.server import Server
+
+        conn_result = await session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.id == conn_id)
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.subscription),
+            )
+        )
+        conn = conn_result.scalar_one_or_none()
+
+        if not conn or conn.subscription.client_id != client.id:
+            await callback.answer(
+                t("user.subs.not_found", "❌ Подключение не найдено."), show_alert=True
+            )
+            return
+
+        from app.services.vpn_providers import get_vpn_provider
+
+        provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
+
+        await callback.answer()
+
+        try:
+            config = await provider.get_client_config(conn.inbound, conn)
+            vpn_uri = config.get("vpn_uri")
+
+            if not vpn_uri:
+                await callback.message.answer("❌ Ссылка недоступна для этого подключения.")
+                return
+
+            await callback.message.answer(
+                f"<code>{vpn_uri}</code>",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Failed to get vpn_uri for connection {conn_id}: {e}", exc_info=True)
+            await callback.message.answer(
+                t("user.subs.download_error", "❌ Ошибка при получении ссылки.")
+            )
+        finally:
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await provider.close()
+
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text=t("user.subs.btn_back_to_sub", "🔙 Назад к подписке"),
+                callback_data=f"user_sub_select_{conn.subscription.id}",
+            )
+            builder.button(
+                text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+                callback_data="my_subscriptions",
+            )
+            builder.adjust(1)
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("user_dl_conf_"))
+async def download_file_config(callback: CallbackQuery, client) -> None:
+    """Download file config (like Wireguard .conf) and QR code."""
+    if not client:
+        await callback.answer(
+            t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
+        )
+        return
+
+    conn_id = int(callback.data.split("_")[-1])
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from app.database.models import Inbound, InboundConnection
+        from app.database.models.server import Server
+
+        conn_result = await session.execute(
+            select(InboundConnection)
+            .where(InboundConnection.id == conn_id)
+            .options(
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.xui_panel),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.awg_service),
+                selectinload(InboundConnection.inbound)
+                .selectinload(Inbound.server)
+                .selectinload(Server.mtproxy_service),
+                selectinload(InboundConnection.subscription),
+            )
+        )
+        conn = conn_result.scalar_one_or_none()
+
+        if not conn or conn.subscription.client_id != client.id:
+            await callback.answer(
+                t("user.subs.not_found", "❌ Подключение не найдено."), show_alert=True
+            )
+            return
+
+        from app.services.vpn_providers import get_vpn_provider
+
+        provider = get_vpn_provider(conn.inbound.server, inbound_type=conn.inbound.type)
+
+        await callback.answer(t("user.subs.downloading", "⏳ Загрузка конфига..."))
+
+        try:
+            config = await provider.get_client_config(conn.inbound, conn)
+
+            if config.get("config_data"):
+                from aiogram.types import BufferedInputFile
+
+                config_data = config["config_data"]
+                config_type = config.get("config_type", "file")
+
+                if config_type == "file":
+                    file_content = config_data.encode("utf-8")
+                    display_remark = conn.inbound.remark.split(":")[0]
+                    filename = f"{conn.subscription.name}_{display_remark}.conf".replace(
+                        " ", "_"
+                    )
+                    doc = BufferedInputFile(file_content, filename=filename)
+                    await callback.message.answer_document(
+                        document=doc,
+                        caption=t(
+                            "user.subs.config_caption",
+                            "📁 Ваш конфигурационный файл для {remark}",
+                            remark=display_remark,
+                        ),
+                    )
+
+                else:
+                    # Send as link message
+                    if config_data.startswith("tg://") or "t.me" in config_data:
+                        await callback.message.answer(
+                            text=t(
+                                "user.subs.link_caption_clickable",
+                                "🔗 Ссылка для {remark}:\n{link}",
+                                remark=conn.inbound.remark,
+                                link=config_data,
+                            ),
+                            parse_mode="HTML",
+                        )
+                    else:
+                        await callback.message.answer(
+                            text=t(
+                                "user.subs.link_caption",
+                                "🔗 Ссылка для {remark}:\n<code>{link}</code>",
+                                remark=conn.inbound.remark,
+                                link=config_data,
+                            ),
+                            parse_mode="HTML",
+                        )
+
+                # Generate and send QR code for both link and file
+                # TODO: Раскомментировать, когда появится поддержка QR-кодов в клиенте Amnezia
+                # qr = qrcode.QRCode(version=1, box_size=10, border=4)
+                # qr.add_data(config_data)
+                # qr.make(fit=True)
+                # img = qr.make_image(fill_color="black", back_color="white")
+
+                # bio = io.BytesIO()
+                # img.save(bio, "PNG")
+                # bio.seek(0)
+
+                # photo = BufferedInputFile(bio.getvalue(), filename="qr.png")
+                # await callback.message.answer_photo(
+                #     photo=photo,
+                #     caption=t(
+                #         "user.subs.qr_caption", "📱 QR-код для {remark}", remark=conn.inbound.remark
+                #     ),
+                # )
+
+        except Exception as e:
+            from loguru import logger
+
+            logger.error(f"Error downloading config for conn {conn_id}: {e}")
+            await callback.message.answer(
+                t("user.subs.download_error", "❌ Ошибка при скачивании конфига.")
+            )
+
+        finally:
+            try:
+                await provider.close()
+            except Exception as e:
+                from loguru import logger
+
+                logger.warning(f"Failed to close provider: {e}")
+
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text=t("user.subs.btn_back_to_sub", "🔙 Назад к подписке"),
+                callback_data=f"user_sub_select_{conn.subscription.id}",
+            )
+            builder.button(
+                text=t("user.subs.btn_back_to_subs", "🔙 Назад к подпискам"),
+                callback_data="my_subscriptions",
+            )
+            builder.adjust(1)
+            try:
+                await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
+            except Exception as e:
+                logger.warning(f"Could not restore keyboard: {e}")

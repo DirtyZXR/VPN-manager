@@ -25,8 +25,8 @@ from app.bot.states.admin import TemplateManagement
 from app.database import async_session_factory
 from app.services.client_service import ClientService
 from app.services.subscription_template_service import SubscriptionTemplateService
-from app.xui_client.exceptions import XUIError
 from app.utils.texts import t
+from app.xui_client.exceptions import XUIError
 
 router = Router()
 
@@ -625,7 +625,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
             template = await template_service.get_template(data["template_id"])
 
             # Create subscription from template with template settings only
-            subscription, connections = await template_service.create_subscription_from_template(
+            subscription, _ = await template_service.create_subscription_from_template(
                 template_id=data["template_id"],
                 client_id=data["client_id"],
                 subscription_name=name,
@@ -634,7 +634,15 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
                 notes=template.notes,  # Use template notes
             )
 
+            # Reload subscription to eager-load relationships (connections, inbounds, servers)
+            from app.services.new_subscription_service import NewSubscriptionService
+            sub_service = NewSubscriptionService(session)
+            subscription = await sub_service.get_subscription_by_id(subscription.id)
+            
+            connections = list(subscription.inbound_connections)
+
             # Get client for notification
+            # Ensure client is fully loaded before detached usage
             client = await client_service.get_client_by_id(data["client_id"])
 
             # Send notification if client has telegram_id
@@ -647,19 +655,28 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
                     subscription=subscription,
                     connections=connections,
                 )
+                
+            # Extract properties needed for message before committing (which expires objects)
+            sub_total_gb = subscription.total_gb
+            sub_expiry_date = subscription.expiry_date
+            sub_remaining_days = subscription.remaining_days
+            sub_name = subscription.name
+            client_name = client.name
+            client_has_tg = bool(client.telegram_id)
+            conn_count = len(connections)
 
             await session.commit()
 
         await state.clear()
 
         traffic_text = (
-            f"{subscription.total_gb} ГБ"
-            if subscription.total_gb > 0
+            f"{sub_total_gb} ГБ"
+            if sub_total_gb > 0
             else t("admin.templates.unlimited_capital", "Безлимитный")
         )
         expiry_text = (
-            t("admin.templates.days_format", "{count} дн.", count=subscription.remaining_days)
-            if subscription.expiry_date
+            t("admin.templates.days_format", "{count} дн.", count=sub_remaining_days)
+            if sub_expiry_date
             else t("admin.templates.unlimited_time_capital", "Бессрочный")
         )
 
@@ -671,14 +688,14 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
             "📊 <b>Лимит трафика:</b> {traffic}\n"
             "📅 <b>Срок действия:</b> {expiry}\n"
             "🔌 <b>Создано подключений:</b> {conn_count}\n",
-            client_name=client.name,
-            sub_name=subscription.name,
+            client_name=client_name,
+            sub_name=sub_name,
             traffic=traffic_text,
             expiry=expiry_text,
-            conn_count=len(connections),
+            conn_count=conn_count,
         )
 
-        if client.telegram_id:
+        if client_has_tg:
             text += t("admin.templates.notification_sent", "\n📱 <b>Уведомление отправлено:</b> Да")
 
         keyboard = get_back_keyboard("admin_clients_menu")
@@ -694,6 +711,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
                 error=str(e),
             )
         )
+        return
     except Exception as e:
         await state.clear()
         logger.error(f"Error creating subscription from template: {e}", exc_info=True)
@@ -724,7 +742,7 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
             return
 
     # Get current template inbounds
-    template_inbound_ids = await get_template_inbounds(template_id, session)
+    template_inbound_ids = await get_template_inbounds(template_id)
 
     # Show multi-select for adding inbounds
     await state.update_data(template_id=template_id, selected_inbound_ids=set())
@@ -738,7 +756,7 @@ async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMConte
         inbounds = await xui_service.get_all_inbounds()
 
         # Filter out inbounds already in template
-        template_inbound_ids = await get_template_inbounds(template_id, session2)
+        template_inbound_ids = await get_template_inbounds(template_id)
         available_inbounds = [ib for ib in inbounds if ib.id not in template_inbound_ids]
 
         if not available_inbounds:
@@ -812,7 +830,7 @@ async def toggle_inbound_selection_for_template(callback: CallbackQuery, state: 
         inbounds = await xui_service.get_all_inbounds()
 
         # Filter out inbounds already in template
-        template_inbound_ids = await get_template_inbounds(template_id, session)
+        template_inbound_ids = await get_template_inbounds(template_id)
         available_inbounds = [ib for ib in inbounds if ib.id not in template_inbound_ids]
 
         # Get template info
@@ -872,7 +890,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
             template_service = SubscriptionTemplateService(session)
 
             # Get current inbound IDs count for order
-            template_inbound_ids = await get_template_inbounds(template_id, session)
+            template_inbound_ids = await get_template_inbounds(template_id)
             start_order = len(template_inbound_ids)
 
             # Add each selected inbound to template
@@ -968,24 +986,16 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
         await callback.answer()
 
 
-async def get_template_inbounds(template_id: int, session=None) -> set:
+async def get_template_inbounds(template_id: int) -> set:
     """Helper function to get template inbound IDs.
 
     Args:
         template_id: Template ID
-        session: Optional session object (if provided, use it directly)
 
     Returns:
         Set of inbound IDs already in template
     """
-    if session is None:
-        async with async_session_factory() as session:
-            template_service = SubscriptionTemplateService(session)
-            inbounds = await template_service.get_template_inbounds(template_id)
-            inbound_ids = {ti.inbound_id for ti in inbounds}
-            return inbound_ids
-    else:
-        # Use provided session directly without creating new one
+    async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
         inbounds = await template_service.get_template_inbounds(template_id)
         inbound_ids = {ti.inbound_id for ti in inbounds}
@@ -1370,7 +1380,7 @@ async def process_edit_template_description(message: Message, state: FSMContext)
     except Exception as e:
         logger.error(f"Error updating template description: {e}", exc_info=True)
         await message.answer(
-            t("admin.templates.update_desc_error", "❌ Произошла ошибка при изменении описания")
+            t("admin.templates.edit_error", "❌ Произошла ошибка при обновлении шаблона")
         )
         await show_template_details_edit_menu(message, state)
 
@@ -2109,7 +2119,6 @@ async def cancel_template_multi_action(callback: CallbackQuery, state: FSMContex
 
     async with async_session_factory() as session:
         template_service = SubscriptionTemplateService(session)
-        await get_template_inbounds(template_id, session)
         template_inbounds = await template_service.get_template_inbounds(template_id)
 
     selected_inbound_ids = data.get("selected_inbound_ids", set())
@@ -2241,7 +2250,7 @@ async def select_server_for_template_edit(callback: CallbackQuery, state: FSMCon
         xui_service = XUIService(session)
 
         # Get template inbounds
-        template_inbound_ids = await get_template_inbounds(template_id, session)
+        template_inbound_ids = await get_template_inbounds(template_id)
 
         # Get inbounds for selected server - use XUI service from same session
         inbounds = await xui_service.get_server_inbounds(server_id)
@@ -2399,7 +2408,7 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
             template_service = SubscriptionTemplateService(session)
 
             # Get current inbound IDs count for order
-            template_inbound_ids = await get_template_inbounds(template_id, session)
+            template_inbound_ids = await get_template_inbounds(template_id)
             start_order = len(template_inbound_ids)
 
             # Add each selected inbound to template

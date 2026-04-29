@@ -159,11 +159,13 @@ def get_servers_keyboard(
             if server.is_active
             else t("keyboards.common.status.inactive", "Неактивен")
         )
+        panel_marker = "[Amnezia] " if getattr(server, "panel_type", "xui") == "amnezia" else ""
         builder.button(
             text=t(
                 "keyboards.servers.server_button",
-                "{status} {name}",
+                "{status} {panel}{name}",
                 status=status,
+                panel=panel_marker,
                 name=server.name,
             ),
             callback_data=f"server_{action}_{server.id}",
@@ -171,6 +173,21 @@ def get_servers_keyboard(
 
     builder.button(text=t("keyboards.servers.add", "Добавить сервер"), callback_data="server_add")
     builder.button(text=t("keyboards.common.back", "Назад"), callback_data=back_target)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_server_panel_type_keyboard() -> InlineKeyboardMarkup:
+    """Get keyboard for selecting server panel type."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.servers.type_xui", "🌐 3x-ui Panel"), callback_data="add_server_type_xui"
+    )
+    builder.button(
+        text=t("keyboards.servers.type_amnezia", "🛡 Amnezia PHP Panel (Auto-Sync)"),
+        callback_data="add_server_type_amnezia",
+    )
+    builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_servers")
     builder.adjust(1)
     return builder.as_markup()
 

@@ -86,33 +86,3 @@ class NotificationLog(Base, TimestampMixin):
             f"<NotificationLog(id={self.id}, user_id={self.user_id}, "
             f"type='{self.notification_type}', level='{self.level}')>"
         )
-
-    @classmethod
-    def should_notify(
-        cls,
-        user_id: int,
-        notification_type: str,
-        level: str,
-        group_key: str,
-        sent_at: datetime,
-        cooldown_hours: int = 24,
-    ) -> bool:
-        """Check if notification should be sent.
-
-        Args:
-            user_id: User ID
-            notification_type: Type of notification
-            level: Level of notification
-            group_key: Hash of grouped IDs
-            sent_at: Current time to check from
-            cooldown_hours: Minimum hours between similar notifications
-
-        Returns:
-            True if notification should be sent
-        """
-        from datetime import timedelta
-
-        cutoff_time = sent_at - timedelta(hours=cooldown_hours)
-
-        # If sent_at is more recent than cutoff, we should NOT notify
-        return not sent_at > cutoff_time

@@ -1,17 +1,19 @@
 import asyncio
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+import os
 
 # Import local modules
 import sys
-import os
+
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from app.database import async_session_factory
-from app.database.models import InboundConnection, Subscription, Inbound
-from app.services.xui_service import XUIService
 from loguru import logger
+
+from app.database import async_session_factory
+from app.database.models import Inbound, InboundConnection, Subscription
+from app.services.xui_service import XUIService
 
 
 async def main():

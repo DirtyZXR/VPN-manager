@@ -15,6 +15,7 @@ from app.database.models import (
     Inbound,
     InboundConnection,
     NotificationLog,
+    Server,
     Subscription,
 )
 from app.database.models.notification_log import (
@@ -57,45 +58,33 @@ class NotificationChecker:
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
         try:
-            # Clean up old logs first
             await self._cleanup_old_logs()
 
-            # Get all user IDs with telegram_id to avoid expiration issues on rollback
-            users_result = await self.session.execute(
-                select(Client.id).where(Client.telegram_id.isnot(None)).where(Client.is_active)
+            clients_result = await self.session.execute(
+                select(Client)
+                .where(Client.telegram_id.isnot(None))
+                .where(Client.is_active)
+                .options(
+                    selectinload(Client.subscriptions)
+                    .selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
+                )
             )
-            user_ids = list(users_result.scalars())
+            clients = list(clients_result.scalars())
 
-            for user_id in user_ids:
+            for user in clients:
                 try:
-                    # Fetch the user fresh for each iteration
-                    user = await self.session.get(Client, user_id)
-                    if not user:
-                        continue
-
-                    # Load subscriptions for this user with eager loading
-                    subs_result = await self.session.execute(
-                        select(Subscription)
-                        .where(Subscription.client_id == user.id)
-                        .where(Subscription.is_active)
-                        .options(
-                            selectinload(Subscription.inbound_connections)
-                            .selectinload(InboundConnection.inbound)
-                            .selectinload(Inbound.server)
-                        )
-                    )
-                    subscriptions = list(subs_result.scalars())
-
+                    subscriptions = [s for s in user.subscriptions if s.is_active]
                     if not subscriptions:
                         continue
 
-                    # Build subs_with_conns mapping from eager loaded data
                     subs_with_conns = []
                     for sub in subscriptions:
                         connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
                         subs_with_conns.append({"subscription": sub, "connections": connections})
 
-                    # Check expiry notifications
                     for notification_type, (
                         window_min,
                         window_max,
@@ -104,15 +93,12 @@ class NotificationChecker:
                             user, subs_with_conns, notification_type.value, window_min, window_max
                         )
 
-                    # Check traffic notifications
                     await self._check_traffic_notifications(user, subs_with_conns)
 
-                    # Commit all notification logs for this user
                     await self.session.commit()
 
                 except Exception as e:
-                    logger.error(f"Error checking user {user_id}: {e}", exc_info=True)
-                    # Rollback on error to avoid leaving pending transaction
+                    logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
                     with contextlib.suppress(Exception):
                         await self.session.rollback()
 
@@ -407,7 +393,7 @@ class NotificationChecker:
         }
 
     async def _get_connection_traffic(self, conn: InboundConnection) -> dict | None:
-        """Get traffic data for inbound connection from XUI.
+        """Get traffic data for inbound connection.
 
         Args:
             conn: Inbound connection (must have eager loaded inbound and server)
@@ -416,7 +402,6 @@ class NotificationChecker:
             Traffic info or None
         """
 
-        # Use eager loaded relationships
         if not hasattr(conn, "inbound") or not conn.inbound:
             logger.warning(f"Connection {conn.id} has no eager loaded inbound")
             return None
@@ -429,25 +414,40 @@ class NotificationChecker:
 
         server = inbound.server
 
+        if conn.type not in ("xui_inbound_connection",):
+            logger.debug(f"Skipping traffic for connection {conn.id} (type={conn.type})")
+            return None
+
+        if getattr(server, "is_online", True) is False:
+            logger.debug(f"Skipping traffic for connection {conn.id} (server {server.id} offline)")
+            return None
+
         try:
-            # Get or create XUI client using the cache
+            logger.debug(f"Getting traffic for connection {conn.id} (type={conn.type}, inbound={inbound.id}, server={server.id})")
+
             if server.id not in self._xui_clients:
                 from app.services.xui_service import XUIService
 
+                logger.debug(f"Creating new XUIService for server {server.id}")
                 xui_service = XUIService(self.session)
+                logger.debug(f"Calling _get_client for server {server.id}, xui_panel={bool(server.xui_panel)}")
                 self._xui_clients[server.id] = await xui_service._get_client(server)
+                logger.debug(f"XUI client created for server {server.id}")
 
             client = self._xui_clients[server.id]
 
-            # Get client stats from XUI
+            logger.debug(f"Getting clients from XUI for inbound {inbound.id}, xui_id={getattr(inbound, 'xui_id', 'N/A')}")
             clients = await client.get_clients(inbound.xui_id)
             for xui_client in clients:
                 if xui_client.get("id") == conn.uuid:
                     used_gb = (xui_client.get("up", 0) + xui_client.get("down", 0)) / (1024**3)
+                    logger.debug(f"Traffic for connection {conn.id}: {used_gb:.2f} GB")
                     return {"used_gb": used_gb}
 
+            logger.debug(f"No matching XUI client found for connection {conn.id} uuid={conn.uuid}")
+
         except Exception as e:
-            logger.error(f"Error getting traffic for connection {conn.id}: {e}", exc_info=True)
+            logger.error(f"Error getting traffic for connection {conn.id} (type={conn.type}, server={server.id}): {e}", exc_info=True)
 
         return None
 

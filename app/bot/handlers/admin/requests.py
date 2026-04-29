@@ -5,9 +5,9 @@ from aiogram.types import CallbackQuery
 from loguru import logger
 
 from app.database import async_session_factory
+from app.services.notification_service import NotificationService
 from app.services.subscription_request_service import SubscriptionRequestService
 from app.services.subscription_template_service import SubscriptionTemplateService
-from app.services.notification_service import NotificationService
 from app.utils.texts import t
 
 router = Router()

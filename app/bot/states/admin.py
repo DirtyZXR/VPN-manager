@@ -7,6 +7,15 @@ class ServerManagement(StatesGroup):
     """Server management states."""
 
     waiting_for_name = State()
+    waiting_for_ip_address = State()
+    confirm_add_offline = State()
+
+    # SSH setup flow
+    waiting_for_ssh_port = State()
+    waiting_for_ssh_user = State()
+    waiting_for_ssh_auth = State()  # Password or Key
+
+    # Legacy / XUI Panel
     waiting_for_base_url = State()
     waiting_for_panel_path = State()
     waiting_for_subscription_path = State()
@@ -18,6 +27,11 @@ class ServerManagement(StatesGroup):
 
     # Server editing states
     waiting_for_edit_name = State()
+    waiting_for_edit_ip_address = State()
+    waiting_for_edit_ssh_port = State()
+    waiting_for_edit_ssh_user = State()
+    waiting_for_edit_ssh_auth = State()
+
     waiting_for_edit_base_url = State()
     waiting_for_edit_panel_path = State()
     waiting_for_edit_subscription_path = State()
@@ -65,7 +79,7 @@ class SubscriptionManagement(StatesGroup):
     # Select client
     waiting_for_client_selection = State()
 
-    # Select server
+    # Select server (multiple selection)
     waiting_for_server_selection = State()
 
     # Select inbound (multiple selection)
@@ -85,6 +99,7 @@ class SubscriptionManagement(StatesGroup):
     editing_expiry = State()
     editing_notes = State()
     waiting_for_add_days = State()
+    waiting_for_mtproxy_domain = State()
 
 
 class SubscriptionRebuild(StatesGroup):
@@ -149,3 +164,46 @@ class BroadcastManagement(StatesGroup):
 
     waiting_for_message = State()
     confirm_broadcast = State()
+
+
+class FirstSetup(StatesGroup):
+    """Shared first-install setup states (firewall policy + SSH port)."""
+
+    waiting_for_firewall_policy = State()
+    waiting_for_ssh_port_choice = State()
+    waiting_for_ssh_port = State()
+
+
+class AWGInstall(StatesGroup):
+    """AWG installation flow states."""
+
+    waiting_for_port = State()
+    waiting_for_obfuscation_mode = State()
+    waiting_for_obfuscation_params = State()
+    confirm_install = State()
+
+
+class XUIInstall(StatesGroup):
+    """3x-ui installation flow states."""
+
+    waiting_for_domain = State()
+    waiting_for_caddy_port = State()
+    waiting_for_paths_mode = State()
+    waiting_for_web_path = State()
+    waiting_for_sub_path = State()
+    waiting_for_sub_json_path = State()
+    waiting_for_credentials_mode = State()
+    waiting_for_username = State()
+    waiting_for_password = State()
+    waiting_for_inbound_range = State()
+    confirm_install = State()
+
+
+class MTProxyInstall(StatesGroup):
+    """MTProxy installation flow states."""
+
+    waiting_for_implementation = State()
+    waiting_for_port = State()
+    waiting_for_domain = State()
+    waiting_for_max_connections = State()
+    confirm_install = State()
