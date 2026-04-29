@@ -45,6 +45,7 @@ await callback.message.answer("✅ Результат: ...")
 
 ### Осталось исправить
 
+- **Создание подписки** (`create_subscription`) — добавление клиентов через SSH (MTProxy/AWG) или API (XUI) может занимать больше 30 секунд. Вызывает `TelegramBadRequest: query is too old and response timeout expired`.
 - **`test_server` handler** (`servers.py:385`) — "Проверить подключение". Если сервер недоступен, SSH ping/connection test висит 10-30 сек без ответа пользователю, потом падает `query is too old`. Нужен: early `callback.answer()` → SSH timeout 10с → результат через `message.answer()` + обрезать error до 190 символов.
 - **`show_subscription_inbounds`** — загрузка конфигов через provider может быть медленной
 - **`get_connection_config`** — provider.get_client_config() для AWG/MTProxy может тратить время на SSH
