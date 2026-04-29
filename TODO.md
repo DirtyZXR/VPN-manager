@@ -52,98 +52,6 @@ await callback.message.answer("✅ Результат: ...")
 
 ---
 
-## Архитектура: полный CRUD через BaseVPNProvider
-
-**Приоритет:** высокий
-
-### Суть
-
-Привести `BaseVPNProvider` к единому контракту CRUD для всех 3 протоколов (XUI, AWG, MTProxy). Сейчас `update_client` и `reset_client_traffic` не в абстрактном интерфейсе — вызываются через duck typing. AWG/MTProxy disable — деструктивный (remove вместо мягкого переключения).
-
-### Предлагаемый контракт
-
-```python
-class BaseVPNProvider(ABC):
-    # CRUD
-    async def add_client(inbound, subscription, ...) -> dict
-    async def remove_client(inbound, connection) -> bool
-    async def update_client(inbound, connection, **kwargs) -> bool
-    async def enable_client(inbound, connection) -> bool
-    async def disable_client(inbound, connection) -> bool
-
-    # Config
-    async def get_client_config(inbound, connection, ...) -> dict
-
-    # Traffic
-    async def reset_client_traffic(inbound, connection) -> bool
-    async def get_client_traffic(inbound, connection) -> dict | None
-
-    # Lifecycle
-    async def close() -> None
-```
-
-### Реализация по протоколам
-
-| Метод | XUI | AWG | MTProxy |
-|-------|-----|-----|---------|
-| `add_client` | REST API ✅ | SSH + awg ✅ | SSH + config ✅ |
-| `remove_client` | REST API ✅ | SSH + awg ✅ | SSH + config ✅ |
-| `update_client` | REST API ✅ | no-op | no-op |
-| `enable_client` | REST API ✅ | SSH (re-add peer) | SSH (re-add secret) |
-| `disable_client` | REST API ✅ | SSH (remove from kernel, сохранить данные) | SSH (remove secret) |
-| `reset_client_traffic` | REST API ✅ | no-op | no-op |
-| `get_client_traffic` | REST API ✅ | no-op (None) | no-op (None) |
-| `get_client_config` | sub URL ✅ | .conf + QR ✅ | tg:// link ✅ |
-
-### Дизайн AWG: резервирование данных при отключении
-
-Для AWG критично, чтобы при отключении клиента (disable/expire) его данные **оставались зарезервированными**:
-- IP-адрес не освобождался — остаётся за клиентом
-- Public/private ключи сохраняются в БД
-- Peer удаляется из ядра WG (`awg set wg0 peer ... remove`), но **конфиг не перезаписывается**
-
-При включении (enable/renew):
-- Peer добавляется обратно с **теми же** ключами и IP
-- Конфиг клиента (`.conf`) не нужно перегенерировать — те же данные
-
-Это позволяет:
-- Время истекло → клиент выключился (peer removed from kernel)
-- Админ обновил подписку → клиент включился (peer re-added, тот же конфиг)
-- Админ очистил → данные удаляются, IP освобождается
-
-### Проверка expiry на стороне бота (AWG)
-
-AWG не имеет API для проверки лимитов. Бот должен:
-1. При фоновой синхронизации проверять `connection.expiry_date` и `connection.is_enabled`
-2. Если `expiry_date < now()` и `is_enabled` → вызвать `provider.disable_client()`
-3. Если админ обновил подписку → вызвать `provider.enable_client()`
-4. Это аналогично XUI, но проверка на стороне бота, не панели
-
-MTProxy (классический) — такого функционала не будет.
-MTProxy (multi) — будет в будущем, через API mtg-multi.
-
-### План
-
-1. Обновить `BaseVPNProvider` — добавить `update_client`, `reset_client_traffic`, `get_client_traffic`
-2. Обновить `XUIProvider` — привести в соответствие
-3. Обновить `AmneziaAWGProvider` — реализовать enable/disable с резервированием, no-op для traffic
-4. Обновить `MTProxyProvider` — no-op для traffic, enable/disable
-5. Обновить `NewSubscriptionService` — убрать duck typing
-6. Обновить handlers — убрать хардкод XUI в toggle/rebuild
-7. Добавить expiry checker для AWG в sync_service / отдельный background task
-
-### Файлы
-
-- `app/services/vpn_providers/base.py`
-- `app/services/vpn_providers/xui_provider.py`
-- `app/services/vpn_providers/amnezia_awg.py`
-- `app/services/vpn_providers/mtproxy.py`
-- `app/services/vpn_providers/factory.py`
-- `app/services/new_subscription_service.py`
-- `app/bot/handlers/admin/subscriptions.py`
-- `app/services/protocol_sync/awg_sync.py` (будущий expiry checker)
-
----
 
 ## 3x-ui: синхронизация путей из панели в бота
 
@@ -206,18 +114,6 @@ MTProxy (multi) — будет в будущем, через API mtg-multi.
 
 ---
 
-## Инсталлеры: автопоиск сервисов на сервере
-
-**Приоритет:** средний
-
-### Что нужно
-
-1. Проверять `docker ps -a --filter name=vpnbot-` — находит все vpnbot-контейнеры
-2. Для 3x-ui: дополнительно проверять `docker ps -a` на предмет контейнеров с образами `mhsanaei/3x-ui`, `3x-ui` и т.д. (могут быть установлены не через бота)
-3. Для AWG: проверять `awg` интерфейс или порт 51820/udp
-4. При обнаружении — предлагать подключить (запросить credentials) или пропустить
-
----
 
 ## Архитектура: миграция хендлеров на session-per-request
 
@@ -377,13 +273,6 @@ ERROR | app.services.notification_checker:_get_connection_traffic:434 - Error ge
 
 ---
 
-## Баг: QR-кнопка для vless ссылок бесполезна
-
-**Приоритет:** средний
-
-Кнопка "📱 QR" для vless/XUI ссылок отправляет ту же ссылку текстом. Заменить на кнопку "📋 Скопировать" или убрать.
-
----
 
 ## Баг: токен показывается для подписок без XUI
 
@@ -393,18 +282,6 @@ AWG-подписка показывает "Токен: vs9KM7rOR9naZi_0" хот�
 
 ---
 
-## Баг: некорректная группировка подключений в подписке
-
-**Приоритет:** средний
-
-Подписка с 4 подключениями (2 XUI + 2 AWG) показывает некорректную группировку:
-- XUI сгруппированы правильно (по URL)
-- AWG подключения показаны под первым XUI URL вместо отдельной группы
-- Два XUI на одном сервере разделены на разные группы
-
-Нужно проверить логику `config_groups` — AWG должен быть отдельной группой с кнопками, XUI — с URL.
-
----
 
 ## Рефакторинг: поддержка domain для AWG Endpoint
 
