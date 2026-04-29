@@ -3,6 +3,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+
+
 
 def run_command(command: list[str], description: str) -> None:
     """Выполняет команду и выводит результат."""
@@ -29,6 +33,9 @@ def main():
 
     base_dir = Path(__file__).resolve().parent
     venv_dir = base_dir / ".venv"
+
+    # 0. Обновление кода из Git
+    run_command(["git", "pull"], "Загрузка обновлений из репозитория (git pull)")
 
     # Проверка наличия .venv
     if not venv_dir.exists():
