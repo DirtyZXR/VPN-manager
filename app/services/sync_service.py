@@ -205,12 +205,21 @@ class SyncService:
                 server.is_online = is_online
                 logger.debug(f"[SYNC] Сервер {server.id} ping: {'Успешно' if is_online else 'Неудачно'}")
 
+                # Зафиксируем изменение статуса (is_online) в БД сразу же.
+                # Это освободит блокировку базы данных (SQLite write lock),
+                # чтобы параллельные запросы от пользователей не падали с ошибкой
+                # "database is locked" во время долгих сетевых запросов ниже.
+                await self.session.commit()
+
             xui_client = None
             if server.is_online and server.xui_panel and server.xui_panel.url and server.xui_panel.username:
                 # Получить XUI клиент
                 xui_client = await self._xui_service._get_client(server)
                 # Синхронизировать inbounds
                 await self._sync_server_inbounds(server, xui_client)
+                
+                # Фиксируем inbounds, чтобы освободить SQLite перед запросами клиентов
+                await self.session.commit()
             else:
                 logger.debug(f"Сервер {server.id} не имеет XUI панели (или не настроена), пропуск XUI inbounds синхронизации")
 
@@ -244,11 +253,15 @@ class SyncService:
                     synced = await self._sync_inbound_clients(inbound)
                     clients_synced += synced
                     logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
+                    
+                    # Фиксируем каждого inbound, чтобы не держать SQLite write lock
+                    await self.session.commit()
                 except Exception as e:
                     logger.error(
                         f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
+                    await self.session.commit()
 
             # Обновить статус синхронизации
             server.last_sync_at = datetime.now(UTC)
@@ -292,6 +305,11 @@ class SyncService:
             )
             return False
 
+        finally:
+            # Освобождаем блокировку БД (SQLite write lock) после обработки сервера,
+            # независимо от того, успешной была синхронизация или упала с ошибкой.
+            await self.session.commit()
+
         # Don't close clients - keep them cached for reuse
         # finally:
         #     if xui_service:
@@ -329,12 +347,16 @@ class SyncService:
                 try:
                     synced = await self._sync_inbound_clients(inbound)
                     total_synced += synced
+                    
+                    # Фиксируем каждого inbound
+                    await self.session.commit()
 
                 except Exception as e:
                     logger.error(
                         f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
+                    await self.session.commit()
 
         except Exception as e:
             logger.error(f"[ERROR] Ошибка в sync_all_clients: {type(e).__name__} - {str(e)}", exc_info=True)
@@ -394,11 +416,15 @@ class SyncService:
                 try:
                     synced = await self._sync_inbound_clients(inbound)
                     total_synced += synced
+                    
+                    # Фиксируем каждого inbound
+                    await self.session.commit()
                 except Exception as e:
                     logger.error(
                         f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
+                    await self.session.commit()
 
         except Exception as e:
             logger.error(f"[ERROR] Ошибка в sync_server_clients: {e}", exc_info=True)
