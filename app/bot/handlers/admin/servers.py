@@ -604,6 +604,12 @@ async def xui_connect_existing(callback: CallbackQuery, state: FSMContext) -> No
 
         ssh = SSHManager(server)
         installer = XUIInstaller(ssh)
+        
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+            return
+            
         params = await installer.discover_existing()
     except Exception as e:
         logger.error(f"XUI discover failed: {e}", exc_info=True)
@@ -2835,6 +2841,11 @@ async def _check_first_setup(
 
     ssh = SSHManager(server)
     installer = BaseInstaller(ssh)
+    
+    ok, err_msg = await installer.preflight_check()
+    if not ok:
+        await message.answer(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", parse_mode="HTML")
+        return False
 
     policy = await installer.get_firewall_policy()
     if policy is not None:
@@ -2896,6 +2907,11 @@ async def _apply_firewall_policy(callback: CallbackQuery, state: FSMContext, str
     installer = BaseInstaller(ssh)
 
     try:
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+            return
+            
         await installer.apply_firewall_policy(strict=strict)
     except Exception as e:
         await msg.edit_text(
@@ -2985,6 +3001,11 @@ async def ssh_port_process(message: TgMessage, state: FSMContext) -> None:
 
     ssh = SSHManager(server)
     installer = BaseInstaller(ssh)
+
+    ok, err_msg = await installer.preflight_check()
+    if not ok:
+        await message.answer(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", parse_mode="HTML")
+        return
 
     success, change_msg = await installer.change_ssh_port(new_port)
 
@@ -3229,6 +3250,12 @@ async def awg_connect_existing(callback: CallbackQuery, state: FSMContext) -> No
 
         ssh = SSHManager(server)
         installer = AWGInstaller(ssh)
+        
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+            return
+            
         params = await installer.discover_existing()
     except Exception as e:
         logger.error(f"AWG discover failed: {e}", exc_info=True)
@@ -3987,6 +4014,12 @@ async def mtproxy_connect_existing(callback: CallbackQuery, state: FSMContext) -
 
         ssh = SSHManager(server)
         installer = MTProxyInstaller(ssh)
+        
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+            return
+            
         params = await installer.discover_existing()
     except Exception as e:
         logger.error(f"MTProxy discover failed: {e}", exc_info=True)
