@@ -4654,6 +4654,13 @@ async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             
             installer = AWGInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление AWG</b>\n\n{text}", parse_mode="HTML"))
             
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
             await installer.install(
                 port=server.awg_service.port,
                 subnet_ip=server.awg_service.subnet_ip,
@@ -4700,6 +4707,13 @@ async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             from app.services.ssh_service import SSHManager
             
             installer = MTProxyInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление MTProxy</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
             
             await installer.install(
                 port=server.mtproxy_service.port,
@@ -4750,18 +4764,409 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             
             installer = XUIInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Аварийное восстановление 3x-ui</b>\n\n{text}", parse_mode="HTML"))
             
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
             pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
             domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
             
             await installer.install(
                 domain=domain,
-                caddy_port=panel.caddy_port,
-                web_path=panel.panel_path,
-                sub_path=panel.subscription_path,
-                sub_json_path=panel.subscription_json_path,
+                caddy_port=panel.caddy_port or 8443,
+                web_path=panel.panel_path or "/",
+                sub_path=panel.subscription_path or "/sub/",
+                sub_json_path=panel.subscription_json_path or "/json/",
                 username=panel.username or "admin",
                 password=pwd,
-                inbound_ranges=panel.inbound_ranges,
+                inbound_ranges=panel.inbound_ranges or [(10000, 10100)],
+                force=True
+            )
+            
+            # Now restore inbounds and connections
+            from app.xui_client import XUIClient
+            from app.database.models import Inbound, XUIInboundConnection
+            
+            await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
+            
+            async with XUIClient(
+                url=panel.url,
+                username=panel.username,
+                password=pwd,
+                panel_path=panel.panel_path,
+            ) as client:
+                await client.login()
+                
+                inbounds = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol.in_(("vless", "vmess", "trojan", "shadowsocks", "wireguard", "socks", "http"))))).scalars().all()
+                for ib in inbounds:
+                    payload = {
+                        "up": 0, "down": 0, "total": 0, "remark": ib.remark or f"Inbound_{ib.port}",
+                        "enable": True, "expiryTime": 0, "listen": "", "port": ib.port, "protocol": ib.protocol,
+                        "settings": '{"clients": [], "fallbacks": []}', 
+                        "streamSettings": '{"network": "tcp", "security": "none", "tcpSettings": {"header": {"type": "none"}}}', 
+                        "sniffing": '{"enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false, "routeOnly": false}'
+                    }
+                    try:
+                        await client.add_inbound(payload)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Failed to recreate inbound {ib.id} port {ib.port}: {e}")
+                    
+                    # Add clients to this inbound
+                    connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
+                    for conn in connections:
+                        if conn.provider_payload and conn.is_enabled:
+                            try:
+                                await client.add_client(ib.id, [conn.provider_payload])
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).warning(f"Failed to recreate client {conn.id}: {e}")
+                                
+        await msg.edit_text("✅ <b>Аварийное восстановление 3x-ui завершено!</b>\n\nБазовые настройки и клиенты воссозданы. Тонкие настройки Xray (сертификаты/streamSettings) могли сброситься к значениям по умолчанию.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore 3x-ui: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("xui_desync_restore_file_"))
+async def xui_desync_restore_file(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_restore_file)
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Отмена", callback_data=f"server_services_{server_id}")]])
+    
+    await callback.message.edit_text(
+        "📂 <b>Восстановление 3x-ui из бэкапа</b>\n\n"
+        "Пожалуйста, отправьте файл <code>x-ui.db</code> в этот чат (как документ).\n"
+        "⚠️ <i>Убедитесь, что это именно тот файл от панели, которая была привязана к боту.</i>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(ServerManagement.waiting_for_restore_file, F.document)
+async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> None:
+    document = message.document
+    if not document.file_name.endswith(".db"):
+        await message.answer("❌ Пожалуйста, отправьте файл с расширением .db (например, x-ui.db)")
+        return
+        
+    data = await state.get_data()
+    server_id = data.get("server_id")
+    if not server_id:
+        await message.answer("❌ Ошибка сессии. Начните заново.")
+        await state.clear()
+        return
+        
+    msg = await message.answer("🔄 Скачивание файла...")
+    
+    import base64
+    from aiogram import Bot
+    
+    bot: Bot = message.bot
+    file_id = document.file_id
+    file_path_tg = (await bot.get_file(file_id)).file_path
+    
+    # Download file to memory
+    file_bytes = await bot.download_file(file_path_tg)
+    db_content = file_bytes.read()
+    
+    # Encode to base64 for safe transfer
+    b64_db = base64.b64encode(db_content).decode("ascii")
+    
+    await msg.edit_text("🔄 <b>Восстановление 3x-ui из файла x-ui.db...</b>\n\nЗагрузка БД на сервер для анализа...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server
+
+            server = (await session.execute(select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id))).scalar_one()
+            panel = server.xui_panel
+            
+            from app.services.installers.xui_installer import XUIInstaller
+            from app.services.ssh_service import SSHManager
+            from app.utils import decrypt_password
+            
+            ssh = SSHManager(server)
+            installer = XUIInstaller(ssh, progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\n{text}", parse_mode="HTML"))
+            
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+                
+            pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
+            domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
+            caddy_port = panel.caddy_port or 8443
+            
+            # 1. Сначала загружаем БД на сервер во временную папку
+            tmp_db = "/tmp/x-ui_restore.db"
+            # Для больших файлов echo 'huge_b64' ломает SSH сессию
+            # Поэтому сначала пишем файл штатным методом asyncssh
+            await ssh.write_file(tmp_db + ".b64", b64_db)
+            # А затем декодируем его через sudo (чтобы права были нужные)
+            await installer._cmd(f"base64 -d {tmp_db}.b64 > {tmp_db}")
+            await installer._cmd(f"rm {tmp_db}.b64")
+            
+            # 2. Анализируем БД прямо на сервере с помощью sqlite3
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nИзвлечение путей и портов из БД...", parse_mode="HTML")
+            
+            # Убедимся, что sqlite3 установлен
+            await installer._cmd("apt-get update -yq && apt-get install -yq sqlite3 || yum install -yq sqlite || apk add --no-cache sqlite")
+            
+            # Читаем пути
+            web_path = await installer._cmd(f"sqlite3 {tmp_db} \"SELECT value FROM settings WHERE key='webBasePath'\" 2>/dev/null || echo ''")
+            sub_path = await installer._cmd(f"sqlite3 {tmp_db} \"SELECT value FROM settings WHERE key='subPath'\" 2>/dev/null || echo ''")
+            sub_json_path = await installer._cmd(f"sqlite3 {tmp_db} \"SELECT value FROM settings WHERE key='subJsonPath'\" 2>/dev/null || echo ''")
+            
+            web_path = web_path.strip() or "/"
+            sub_path = sub_path.strip() or "/sub/"
+            sub_json_path = sub_json_path.strip() or "/json/"
+            
+            # Читаем порты инбаундов
+            inbound_ports_raw = await installer._cmd(f"sqlite3 {tmp_db} \"SELECT port FROM inbounds\" 2>/dev/null || echo ''")
+            inbound_ranges = []
+            for port_str in inbound_ports_raw.strip().split('\n'):
+                if port_str.strip().isdigit():
+                    p = int(port_str.strip())
+                    inbound_ranges.append((p, p))
+                    
+            if not inbound_ranges:
+                inbound_ranges = panel.inbound_ranges or [(10000, 10100)]
+                
+            await msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nПути: {web_path}\nИнбаунды: {len(inbound_ranges)} шт.\n\nНачинаю установку...", parse_mode="HTML")
+            
+            # 3. Выполняем установку с извлеченными параметрами
+            await installer.install(
+                domain=domain,
+                caddy_port=caddy_port,
+                web_path=web_path,
+                sub_path=sub_path,
+                sub_json_path=sub_json_path,
+                username=panel.username or "admin",
+                password=pwd,
+                inbound_ranges=inbound_ranges,
+                force=True
+            )
+            
+            # 4. Переносим файл БД в контейнер
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nЗамещение БД в контейнере...", parse_mode="HTML")
+            await installer._cmd("docker stop vpnbot-xui")
+            await installer._cmd(f"mv {tmp_db} /opt/vpnbot/xui/db/x-ui.db")
+            await installer._cmd("docker start vpnbot-xui")
+            import asyncio
+            await asyncio.sleep(3)
+            
+            # 5. Принудительно перезаписываем пароль/домен в БД, чтобы гарантировать доступ бота к API
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nСинхронизация учетных данных бота...", parse_mode="HTML")
+            await installer._configure_xui(
+                username=panel.username or "admin",
+                password=pwd,
+                web_path=web_path,
+                sub_path=sub_path,
+                sub_json_path=sub_json_path,
+                domain=domain,
+                caddy_port=caddy_port
+            )
+            
+            # 6. Обновляем пути и диапазоны в БД бота
+            panel.panel_path = web_path
+            panel.subscription_path = sub_path
+            panel.subscription_json_path = sub_json_path
+            panel.inbound_ranges = inbound_ranges
+            await session.commit()
+            
+        await msg.edit_text("✅ <b>Панель 3x-ui успешно восстановлена из файла!</b>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+        await state.clear()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore 3x-ui from file: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+        await state.clear()
+
+@router.callback_query(F.data.startswith("awg_desync_remove_db_"))
+async def awg_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    async with async_session_factory() as session:
+        from sqlalchemy import delete
+        from app.database.models import AWGService, Inbound
+        await session.execute(delete(AWGService).where(AWGService.server_id == server_id))
+        await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "awg"))
+        await session.commit()
+    await callback.answer("✅ AWG удален из БД", show_alert=True)
+    await show_server_services(callback, state, is_admin)
+
+@router.callback_query(F.data.startswith("mtp_desync_remove_db_"))
+async def mtp_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    async with async_session_factory() as session:
+        from sqlalchemy import delete
+        from app.database.models import MTProxyService, Inbound
+        await session.execute(delete(MTProxyService).where(MTProxyService.server_id == server_id))
+        await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "mtproto"))
+        await session.commit()
+    await callback.answer("✅ MTProxy удален из БД", show_alert=True)
+    await show_server_services(callback, state, is_admin)
+
+@router.callback_query(F.data.startswith("awg_desync_restore_db_"))
+async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    
+    msg = await callback.message.edit_text("🔄 <b>Восстановление AWG из БД...</b>\n\nНачинаю установку...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server, AWGInboundConnection, Inbound
+
+            server = (await session.execute(select(Server).options(selectinload(Server.awg_service)).where(Server.id == server_id))).scalar_one()
+            
+            from app.services.installers.awg_installer import AWGInstaller
+            from app.services.ssh_service import SSHManager
+            
+            installer = AWGInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление AWG</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
+            await installer.install(
+                port=server.awg_service.port,
+                subnet_ip=server.awg_service.subnet_ip,
+                subnet_cidr=server.awg_service.subnet_cidr,
+                obfuscation=server.awg_service.obfuscation,
+                force=True
+            )
+            
+            # Now restore peers
+            from app.services.vpn_providers.factory import get_vpn_provider
+            
+            awg_inbound = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "awg"))).scalar_one_or_none()
+            if awg_inbound:
+                connections = (await session.execute(select(AWGInboundConnection).where(AWGInboundConnection.inbound_id == awg_inbound.id))).scalars().all()
+                if connections:
+                    provider = get_vpn_provider(server, inbound_type="awg_inbound")
+                    for conn in connections:
+                        if conn.is_enabled:
+                            await provider.enable_client(awg_inbound, conn)
+                    await provider.close()
+            
+        await msg.edit_text("✅ <b>AWG успешно восстановлен!</b>\n\nВсе конфигурации и ключи перенесены на сервер.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore AWG: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("mtp_desync_restore_db_"))
+async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    
+    msg = await callback.message.edit_text("🔄 <b>Восстановление MTProxy из БД...</b>\n\nНачинаю установку...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server, MTProxyInboundConnection, Inbound
+
+            server = (await session.execute(select(Server).options(selectinload(Server.mtproxy_service)).where(Server.id == server_id))).scalar_one()
+            
+            from app.services.installers.mtproxy_installer import MTProxyInstaller
+            from app.services.ssh_service import SSHManager
+            
+            installer = MTProxyInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление MTProxy</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
+            await installer.install(
+                port=server.mtproxy_service.port,
+                domain=server.mtproxy_service.domain,
+                implementation=server.mtproxy_service.implementation,
+                max_connections=server.mtproxy_service.max_connections or 5000,
+                force=True
+            )
+            
+            # Restore peers if mtg-multi
+            if server.mtproxy_service.implementation == "mtg-multi":
+                from app.services.vpn_providers.factory import get_vpn_provider
+                mtp_inbound = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "mtproto"))).scalar_one_or_none()
+                if mtp_inbound:
+                    connections = (await session.execute(select(MTProxyInboundConnection).where(MTProxyInboundConnection.inbound_id == mtp_inbound.id))).scalars().all()
+                    if connections:
+                        provider = get_vpn_provider(server, inbound_type="mtproxy_inbound")
+                        for conn in connections:
+                            if conn.is_enabled:
+                                await provider.enable_client(mtp_inbound, conn)
+                        await provider.close()
+                        
+        await msg.edit_text("✅ <b>MTProxy успешно восстановлен!</b>\n\nВсе секреты перенесены на сервер.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore MTProxy: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("xui_desync_restore_db_"))
+async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    
+    msg = await callback.message.edit_text("🔄 <b>Аварийное восстановление 3x-ui из БД...</b>\n\nНачинаю переустановку панели...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server
+
+            server = (await session.execute(select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id))).scalar_one()
+            panel = server.xui_panel
+            
+            from app.services.installers.xui_installer import XUIInstaller
+            from app.services.ssh_service import SSHManager
+            from app.utils import decrypt_password
+            
+            installer = XUIInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Аварийное восстановление 3x-ui</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
+            pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
+            domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
+            
+            await installer.install(
+                domain=domain,
+                caddy_port=panel.caddy_port or 8443,
+                web_path=panel.panel_path or "/",
+                sub_path=panel.subscription_path or "/sub/",
+                sub_json_path=panel.subscription_json_path or "/json/",
+                username=panel.username or "admin",
+                password=pwd,
+                inbound_ranges=panel.inbound_ranges or [(10000, 10100)],
                 force=True
             )
             
@@ -4877,33 +5282,40 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
             ssh = SSHManager(server)
             installer = XUIInstaller(ssh, progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\n{text}", parse_mode="HTML"))
             
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
             pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
             domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
             
             # 1. Install fresh panel first
             await installer.install(
                 domain=domain,
-                caddy_port=panel.caddy_port,
-                web_path=panel.panel_path,
-                sub_path=panel.subscription_path,
-                sub_json_path=panel.subscription_json_path,
+                caddy_port=panel.caddy_port or 8443,
+                web_path=panel.panel_path or "/",
+                sub_path=panel.subscription_path or "/sub/",
+                sub_json_path=panel.subscription_json_path or "/json/",
                 username=panel.username or "admin",
                 password=pwd,
-                inbound_ranges=panel.inbound_ranges,
+                inbound_ranges=panel.inbound_ranges or [(10000, 10100)],
                 force=True
             )
             
             await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nЗагрузка вашей БД x-ui.db на сервер...", parse_mode="HTML")
             
             # 2. Stop container, upload db, restart container
-            await ssh.run_command("docker stop vpnbot-xui")
+            await installer._cmd("docker stop vpnbot-xui")
             
             # Write base64 to server and decode it to binary file
             remote_path = "/opt/vpnbot/xui/db/x-ui.db"
-            await ssh.run_command(f"echo '{b64_db}' | base64 -d > {remote_path}")
+            await installer._cmd(f"echo '{b64_db}' | base64 -d > {remote_path}")
             
             # 3. Patch the DB with bot's credentials and paths (runs sqlite3 inside container)
-            await ssh.run_command("docker start vpnbot-xui")
+            await installer._cmd("docker start vpnbot-xui")
             import asyncio
             await asyncio.sleep(3)
             
