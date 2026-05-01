@@ -78,7 +78,10 @@ class XUIInstaller(BaseInstaller):
                 )
                 if result.strip():
                     return True
-            except Exception:
+            except Exception as e:
+                import asyncssh
+                if isinstance(e, (asyncssh.Error, OSError)) or "SSH" in str(e):
+                    raise
                 return False
         return False
 

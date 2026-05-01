@@ -172,7 +172,11 @@ class BaseInstaller:
                 f"docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'"
             )
             return bool(result.strip())
-        except Exception:
+        except Exception as e:
+            # Re-raise SSH connection errors so the UI can catch them
+            import asyncssh
+            if isinstance(e, (asyncssh.Error, OSError)) or "SSH" in str(e):
+                raise
             return False
 
     async def list_installed_services(self) -> list[str]:
@@ -193,7 +197,11 @@ class BaseInstaller:
         try:
             result = await self._cmd(f"test -f {PREPARED_MARKER} && echo yes")
             return result.strip() == "yes"
-        except Exception:
+        except Exception as e:
+            # Re-raise SSH connection errors so the UI can catch them
+            import asyncssh
+            if isinstance(e, (asyncssh.Error, OSError)) or "SSH" in str(e):
+                raise
             return False
 
     async def prepare_host(self) -> None:
@@ -276,7 +284,11 @@ class BaseInstaller:
         try:
             result = await self._cmd("docker --version")
             return bool(result.strip())
-        except Exception:
+        except Exception as e:
+            # Re-raise SSH connection errors so the UI can catch them
+            import asyncssh
+            if isinstance(e, (asyncssh.Error, OSError)) or "SSH" in str(e):
+                raise
             return False
 
     async def _compose_is_available(self) -> bool:
@@ -284,7 +296,11 @@ class BaseInstaller:
         try:
             result = await self._cmd("docker compose version")
             return bool(result.strip())
-        except Exception:
+        except Exception as e:
+            # Re-raise SSH connection errors so the UI can catch them
+            import asyncssh
+            if isinstance(e, (asyncssh.Error, OSError)) or "SSH" in str(e):
+                raise
             return False
 
     async def _install_compose_plugin(self) -> None:
