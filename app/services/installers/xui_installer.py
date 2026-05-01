@@ -379,7 +379,8 @@ class XUIInstaller(BaseInstaller):
         sql_del = (
             "DELETE FROM settings WHERE key IN "
             "('webBasePath', 'subPath', 'subJsonPath', "
-            "'subEnable', 'subJsonEnable', 'subURI', 'subJsonURI')"
+            "'subEnable', 'subJsonEnable', 'subURI', 'subJsonURI', "
+            "'webPort', 'subPort')"
         )
         await self._cmd(
             f"docker exec -i {name} sqlite3 {db_path}",
@@ -394,7 +395,9 @@ class XUIInstaller(BaseInstaller):
             f"('subEnable', 'true'), "
             f"('subJsonEnable', 'true'), "
             f"('subURI', '{sub_uri}'), "
-            f"('subJsonURI', '{sub_json_uri}')"
+            f"('subJsonURI', '{sub_json_uri}'), "
+            f"('webPort', '{XUI_INTERNAL_PORT}'), "
+            f"('subPort', '{XUI_SUB_PORT}')"
         )
         await self._cmd(
             f"docker exec -i {name} sqlite3 {db_path}",
