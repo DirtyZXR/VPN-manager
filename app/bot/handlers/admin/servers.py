@@ -4654,6 +4654,13 @@ async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             
             installer = AWGInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление AWG</b>\n\n{text}", parse_mode="HTML"))
             
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
+            
             await installer.install(
                 port=server.awg_service.port,
                 subnet_ip=server.awg_service.subnet_ip,
@@ -4700,6 +4707,13 @@ async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             from app.services.ssh_service import SSHManager
             
             installer = MTProxyInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление MTProxy</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
             
             await installer.install(
                 port=server.mtproxy_service.port,
@@ -4749,6 +4763,13 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             from app.utils import decrypt_password
             
             installer = XUIInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Аварийное восстановление 3x-ui</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
             
             pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
             domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
@@ -4876,6 +4897,13 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
             
             ssh = SSHManager(server)
             installer = XUIInstaller(ssh, progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\n{text}", parse_mode="HTML"))
+            
+            # Need to initialize sudo if needed
+            ok, err_msg = await installer.preflight_check()
+            if not ok:
+                await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                return
+            
             
             pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
             domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
