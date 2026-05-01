@@ -37,24 +37,33 @@ class AmneziaAWGProvider(BaseVPNProvider):
         super().__init__(server)
         self.ssh = SSHManager(server)
         self.container_name = "vpnbot-awg"
+        self.config_path = "/opt/amnezia/awg/awg0.conf"
         self.interface_name = "awg0"
-        self.config_path = f"/opt/amnezia/awg/{self.interface_name}.conf"
+        self._is_root = (server.ssh_user == "root")
+
+    async def _cmd(self, cmd: str, input_data: str | None = None) -> str:
+        """Run command with sudo if needed."""
+        if self._is_root:
+            full_cmd = cmd
+        else:
+            full_cmd = f"sudo -n {cmd}"
+        return await self.ssh.run_command(full_cmd, input_data=input_data)
 
     async def _get_server_psk(self) -> str:
         cmd = f"docker exec -i {self.container_name} cat /opt/amnezia/awg/wireguard_psk.key"
         try:
-            return await self.ssh.run_command(cmd)
+            return await self._cmd(cmd)
         except Exception:
             logger.warning("Failed to read PSK from server, generating a new one.")
-            return await self.ssh.run_command(f"docker exec -i {self.container_name} awg genpsk")
+            return await self._cmd(f"docker exec -i {self.container_name} awg genpsk")
 
     async def _get_server_public_key(self) -> str:
         cmd = f"docker exec -i {self.container_name} cat /opt/amnezia/awg/wireguard_server_public_key.key"
-        return await self.ssh.run_command(cmd)
+        return await self._cmd(cmd)
 
     async def _find_next_free_ip(self, inbound: Inbound) -> str:
         cmd = f"docker exec -i {self.container_name} cat {self.config_path}"
-        config_text = await self.ssh.run_command(cmd)
+        config_text = await self._cmd(cmd)
 
         file_ips = re.findall(r"AllowedIPs\s*=\s*([0-9\.]+)/32", config_text)
 
@@ -96,7 +105,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
 
     async def _get_awg_server_params(self) -> dict[str, str]:
         cmd = f"docker exec -i {self.container_name} cat {self.config_path}"
-        config_text = await self.ssh.run_command(cmd)
+        config_text = await self._cmd(cmd)
 
         params = {}
         for line in config_text.splitlines():
@@ -127,15 +136,26 @@ class AmneziaAWGProvider(BaseVPNProvider):
             f"docker exec -i {self.container_name} bash -c "
             f"'awg syncconf {self.interface_name} <(awg-quick strip {self.config_path})'"
         )
-        await self.ssh.run_command(sync_cmd)
+        await self._cmd(sync_cmd)
 
     async def _add_peer_to_config(self, public_key: str, psk: str, client_ip: str) -> None:
-        peer_block = f"\\n[Peer]\\nPublicKey = {public_key}\\nPresharedKey = {psk}\\nAllowedIPs = {client_ip}/32\\n"
+        peer_block = f"\n[Peer]\nPublicKey = {public_key}\nPresharedKey = {psk}\nAllowedIPs = {client_ip}/32\n"
         append_cmd = f"docker exec -i {self.container_name} bash -c 'echo -e \"{peer_block}\" >> {self.config_path}'"
-        await self.ssh.run_command(append_cmd)
+        await self._cmd(append_cmd)
 
     async def _remove_peer_from_config(self, public_key: str) -> None:
-        config_text = await self.ssh.run_command(
+        config_text = await self._cmd(
+            f"docker exec -i {self.container_name} cat {self.config_path}"
+        )
+        await self._cmd(sync_cmd)
+
+    async def _add_peer_to_config(self, public_key: str, psk: str, client_ip: str) -> None:
+        peer_block = f"\n[Peer]\nPublicKey = {public_key}\nPresharedKey = {psk}\nAllowedIPs = {client_ip}/32\n"
+        append_cmd = f"docker exec -i {self.container_name} bash -c 'echo -e \"{peer_block}\" >> {self.config_path}'"
+        await self._cmd(append_cmd)
+
+    async def _remove_peer_from_config(self, public_key: str) -> None:
+        config_text = await self._cmd(
             f"docker exec -i {self.container_name} cat {self.config_path}"
         )
 
@@ -149,16 +169,16 @@ class AmneziaAWGProvider(BaseVPNProvider):
         new_config_text = "[Peer]".join(new_blocks)
 
         write_cmd = f"docker exec -i {self.container_name} bash -c 'cat > {self.config_path}'"
-        await self.ssh.run_command(write_cmd, input_data=new_config_text)
+        await self._cmd(write_cmd, input_data=new_config_text)
 
     async def _peer_in_config(self, public_key: str) -> bool:
         check_cmd = f"docker exec -i {self.container_name} grep -q {public_key} {self.config_path} && echo 'EXISTS' || echo 'MISSING'"
-        status = await self.ssh.run_command(check_cmd)
+        status = await self._cmd(check_cmd)
         return "EXISTS" in status
 
     async def _kick_peer_from_kernel(self, public_key: str) -> None:
         kick_cmd = f"docker exec -i {self.container_name} awg set {self.interface_name} peer {public_key} remove"
-        await self.ssh.run_command(kick_cmd)
+        await self._cmd(kick_cmd)
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -170,14 +190,14 @@ class AmneziaAWGProvider(BaseVPNProvider):
         email: str | None = None,
     ) -> dict[str, Any]:
         priv_key_cmd = f"docker exec -i {self.container_name} awg genkey"
-        private_key = await self.ssh.run_command(priv_key_cmd)
+        private_key = (await self._cmd(priv_key_cmd)).strip()
 
         pub_key_cmd = (
             f"docker exec -i {self.container_name} bash -c 'echo \"{private_key}\" | awg pubkey'"
         )
-        public_key = await self.ssh.run_command(pub_key_cmd)
+        public_key = (await self._cmd(pub_key_cmd)).strip()
 
-        psk = await self._get_server_psk()
+        psk = (await self._get_server_psk()).strip()
         next_ip = await self._find_next_free_ip(inbound)
 
         await self._add_peer_to_config(public_key, psk, next_ip)
@@ -306,10 +326,10 @@ class AmneziaAWGProvider(BaseVPNProvider):
         if not awg:
             return {"config_type": "empty", "config_data": None}
 
-        private_key = connection.private_key
-        public_key = connection.public_key
-        client_ip = connection.client_ip
-        psk = connection.psk
+        private_key = connection.private_key.strip() if connection.private_key else ""
+        public_key = connection.public_key.strip() if connection.public_key else ""
+        client_ip = connection.client_ip.strip() if connection.client_ip else ""
+        psk = connection.psk.strip() if connection.psk else ""
 
         host = self.server.ip_address
         port = str(awg.port)

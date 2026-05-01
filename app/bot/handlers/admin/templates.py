@@ -2052,6 +2052,23 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
 
                 await session.commit()
 
+                # Запускаем фоновое обновление для привязанных подписок
+                async def run_bg():
+                    try:
+                        async with async_session_factory() as bg_session:
+                            bg_service = SubscriptionTemplateService(bg_session)
+                            await bg_service._apply_template_inbounds_change(
+                                template_id,
+                                added_inbound_ids=set(),
+                                removed_inbound_ids=set(selected_inbound_ids),
+                            )
+                            await bg_session.commit()
+                            logger.info("✅ Background task completed successfully")
+                    except Exception as e:
+                        logger.error(f"❌ Background task failed: {e}")
+
+                asyncio.create_task(run_bg())
+
                 # Get updated template info
                 template = await template_service.get_template(template_id)
 
@@ -2426,6 +2443,25 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
 
             await session.commit()
 
+            # Запускаем фоновое обновление для привязанных подписок
+            async def run_bg():
+                try:
+                    logger.info(f"🚀 [TOTAL LOG] Starting background task run_bg for template_id={template_id}. Added: {inbounds_to_add}")
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        logger.info(f"🚀 [TOTAL LOG] Calling _apply_template_inbounds_change...")
+                        await bg_service._apply_template_inbounds_change(
+                            template_id,
+                            added_inbound_ids=set(inbounds_to_add),
+                            removed_inbound_ids=set(),
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ [TOTAL LOG] Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ [TOTAL LOG] Background task failed: {e}", exc_info=True)
+
+            asyncio.create_task(run_bg())
+
             # Get updated template info
             template = await template_service.get_template(template_id)
             await template_service.get_template_inbounds(template_id)
@@ -2526,6 +2562,23 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
                     logger.warning(f"Failed to remove inbound {inbound_id} from template: {e}")
 
             await session.commit()
+
+            # Запускаем фоновое обновление для привязанных подписок
+            async def run_bg():
+                try:
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        await bg_service._apply_template_inbounds_change(
+                            template_id,
+                            added_inbound_ids=set(),
+                            removed_inbound_ids=set(inbounds_to_remove),
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Background task failed: {e}")
+
+            asyncio.create_task(run_bg())
 
             # Get updated template info
             template = await template_service.get_template(template_id)

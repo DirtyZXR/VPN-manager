@@ -40,6 +40,7 @@ class MTProxyProvider(BaseVPNProvider):
         self.ssh = SSHManager(server)
         self.container_name = "vpnbot-mtproxy"
         self.config_path = "/opt/vpnbot/mtproxy/config.toml"
+        self._is_root = (server.ssh_user == "root")
 
         svc = server.mtproxy_service
         if svc:
@@ -53,12 +54,20 @@ class MTProxyProvider(BaseVPNProvider):
             self.domain = "google.com"
             self.default_secret = None
 
+    async def _cmd(self, cmd: str, input_data: str | None = None) -> str:
+        """Run command with sudo if needed."""
+        if self._is_root:
+            full_cmd = cmd
+        else:
+            full_cmd = f"sudo -n {cmd}"
+        return await self.ssh.run_command(full_cmd, input_data=input_data)
+
     @property
     def is_single(self) -> bool:
         return self.implementation == "mtg"
 
     async def _restart_container(self) -> None:
-        await self.ssh.run_command(f"docker restart -t 1 {self.container_name}")
+        await self._cmd(f"docker restart -t 1 {self.container_name}")
 
     # ── CRUD ──────────────────────────────────────────────────────────
 
@@ -79,11 +88,11 @@ class MTProxyProvider(BaseVPNProvider):
 
         secret_domain = domain or self.domain
         name = f"user_{subscription.id}_{inbound.id}"
-        secret = (await self.ssh.run_command(
+        secret = (await self._cmd(
             f"docker run --rm ghcr.io/dolonet/mtg-multi:latest generate-secret {secret_domain}"
         )).strip()
-        await self.ssh.run_command(
-            f"sed -i '/\\[secrets\\]/a {name} = \"{secret}\"' {self.config_path}"
+        await self._cmd(
+            f"bash -c 'sed -i \"/\\[secrets\\]/a {name} = \\\"{secret}\\\"\" {self.config_path}'"
         )
         await self._restart_container()
         return {"uuid": client_uuid or str(uuid.uuid4()), "secret": secret, "domain": secret_domain}
@@ -97,8 +106,8 @@ class MTProxyProvider(BaseVPNProvider):
             return False
 
         try:
-            await self.ssh.run_command(
-                f"sed -i '/{secret}/d' {self.config_path}"
+            await self._cmd(
+                f"bash -c 'sed -i \"/{secret}/d\" {self.config_path}'"
             )
             await self._restart_container()
             return True
@@ -125,8 +134,8 @@ class MTProxyProvider(BaseVPNProvider):
 
         try:
             name = f"user_{connection.subscription_id}_{inbound.id}"
-            await self.ssh.run_command(
-                f"sed -i '/\\[secrets\\]/a {name} = \"{secret}\"' {self.config_path}"
+            await self._cmd(
+                f"bash -c 'sed -i \"/\\[secrets\\]/a {name} = \\\"{secret}\\\"\" {self.config_path}'"
             )
             await self._restart_container()
             return True

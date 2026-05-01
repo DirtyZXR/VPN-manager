@@ -33,12 +33,12 @@ class PortManager:
             # We parse the local address column (e.g. 0.0.0.0:443 or :::80)
             try:
                 output = await self.ssh.run_command(
-                    "ss -tuln | awk '{print $5}' | grep -o '[0-9]*$'"
+                    "sudo -n ss -tuln 2>/dev/null | awk '{print $5}' | grep -o '[0-9]*$' || ss -tuln | awk '{print $5}' | grep -o '[0-9]*$'"
                 )
             except Exception:
                 # Fallback to netstat if ss is not available
                 output = await self.ssh.run_command(
-                    "netstat -tuln | awk '{print $4}' | grep -o '[0-9]*$'"
+                    "sudo -n netstat -tuln 2>/dev/null | awk '{print $4}' | grep -o '[0-9]*$' || netstat -tuln | awk '{print $4}' | grep -o '[0-9]*$'"
                 )
 
             used_ports = set()
