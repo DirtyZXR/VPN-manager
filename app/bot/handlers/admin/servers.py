@@ -4776,13 +4776,13 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             
             await installer.install(
                 domain=domain,
-                caddy_port=panel.caddy_port,
-                web_path=panel.panel_path,
-                sub_path=panel.subscription_path,
-                sub_json_path=panel.subscription_json_path,
+                caddy_port=panel.caddy_port or 8443,
+                web_path=panel.panel_path or "/",
+                sub_path=panel.subscription_path or "/sub/",
+                sub_json_path=panel.subscription_json_path or "/json/",
                 username=panel.username or "admin",
                 password=pwd,
-                inbound_ranges=panel.inbound_ranges,
+                inbound_ranges=panel.inbound_ranges or [(10000, 10100)],
                 force=True
             )
             
@@ -4911,13 +4911,13 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
             # 1. Install fresh panel first
             await installer.install(
                 domain=domain,
-                caddy_port=panel.caddy_port,
-                web_path=panel.panel_path,
-                sub_path=panel.subscription_path,
-                sub_json_path=panel.subscription_json_path,
+                caddy_port=panel.caddy_port or 8443,
+                web_path=panel.panel_path or "/",
+                sub_path=panel.subscription_path or "/sub/",
+                sub_json_path=panel.subscription_json_path or "/json/",
                 username=panel.username or "admin",
                 password=pwd,
-                inbound_ranges=panel.inbound_ranges,
+                inbound_ranges=panel.inbound_ranges or [(10000, 10100)],
                 force=True
             )
             
