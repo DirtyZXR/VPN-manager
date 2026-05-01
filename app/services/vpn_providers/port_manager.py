@@ -100,9 +100,9 @@ class PortManager:
         """
         try:
             if protocol.lower() == "any":
-                await self.ssh.run_command(f"ufw allow {port}")
+                await self.ssh.run_command(f"sudo -n ufw allow {port} 2>/dev/null || ufw allow {port}")
             else:
-                await self.ssh.run_command(f"ufw allow {port}/{protocol.lower()}")
+                await self.ssh.run_command(f"sudo -n ufw allow {port}/{protocol.lower()} 2>/dev/null || ufw allow {port}/{protocol.lower()}")
             logger.info(f"Opened port {port}/{protocol} via UFW on server {self.ssh.server.id}")
         except Exception as e:
             logger.error(f"Failed to open port {port} via UFW on server {self.ssh.server.id}: {e}")
