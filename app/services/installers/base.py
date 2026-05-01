@@ -100,7 +100,8 @@ class BaseInstaller:
     async def _cmd(self, command: str, input_data: str | None = None) -> str:
         """Execute command with optional sudo prefix."""
         if self._use_sudo:
-            command = f"sudo {command}"
+            import shlex
+            command = f"sudo bash -c {shlex.quote(command)}"
         return await self.ssh.run_command(command, input_data=input_data)
 
     async def _write_file(self, filepath: str, content: str) -> None:
