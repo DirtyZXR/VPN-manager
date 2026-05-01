@@ -78,7 +78,10 @@ class XUIInstaller(BaseInstaller):
                 )
                 if result.strip():
                     return True
-            except Exception:
+            except Exception as e:
+                import asyncssh
+                if isinstance(e, (asyncssh.Error, OSError)) or "SSH" in str(e):
+                    raise
                 return False
         return False
 
@@ -257,8 +260,12 @@ class XUIInstaller(BaseInstaller):
         await self.port_manager.open_port(caddy_port, "tcp")
         await self.port_manager.open_port(caddy_port, "udp")
         for start, end in inbound_ranges:
-            await self._cmd(f"ufw allow {start}:{end}/tcp")
-            await self._cmd(f"ufw allow {start}:{end}/udp")
+            if start == end:
+                await self._cmd(f"ufw allow {start}/tcp")
+                await self._cmd(f"ufw allow {start}/udp")
+            else:
+                await self._cmd(f"ufw allow {start}:{end}/tcp")
+                await self._cmd(f"ufw allow {start}:{end}/udp")
 
     async def _block_internal_ports(self) -> None:
         await self._cmd(f"ufw deny {XUI_INTERNAL_PORT}/tcp || true")
@@ -376,7 +383,8 @@ class XUIInstaller(BaseInstaller):
         sql_del = (
             "DELETE FROM settings WHERE key IN "
             "('webBasePath', 'subPath', 'subJsonPath', "
-            "'subEnable', 'subJsonEnable', 'subURI', 'subJsonURI')"
+            "'subEnable', 'subJsonEnable', 'subURI', 'subJsonURI', "
+            "'webPort', 'subPort')"
         )
         await self._cmd(
             f"docker exec -i {name} sqlite3 {db_path}",
@@ -391,7 +399,9 @@ class XUIInstaller(BaseInstaller):
             f"('subEnable', 'true'), "
             f"('subJsonEnable', 'true'), "
             f"('subURI', '{sub_uri}'), "
-            f"('subJsonURI', '{sub_json_uri}')"
+            f"('subJsonURI', '{sub_json_uri}'), "
+            f"('webPort', '{XUI_INTERNAL_PORT}'), "
+            f"('subPort', '{XUI_SUB_PORT}')"
         )
         await self._cmd(
             f"docker exec -i {name} sqlite3 {db_path}",
@@ -443,11 +453,19 @@ class XUIInstaller(BaseInstaller):
     async def open_inbound_ports(self, ranges: list[tuple[int, int]]) -> None:
         """Open additional port ranges for VPN inbounds (post-install)."""
         for start, end in ranges:
-            await self._cmd(f"ufw allow {start}:{end}/tcp")
-            await self._cmd(f"ufw allow {start}:{end}/udp")
+            if start == end:
+                await self._cmd(f"ufw allow {start}/tcp")
+                await self._cmd(f"ufw allow {start}/udp")
+            else:
+                await self._cmd(f"ufw allow {start}:{end}/tcp")
+                await self._cmd(f"ufw allow {start}:{end}/udp")
 
     async def close_inbound_ports(self, ranges: list[tuple[int, int]]) -> None:
         """Close port ranges for VPN inbounds (post-install)."""
         for start, end in ranges:
-            await self._cmd(f"ufw delete allow {start}:{end}/tcp || true")
-            await self._cmd(f"ufw delete allow {start}:{end}/udp || true")
+            if start == end:
+                await self._cmd(f"ufw delete allow {start}/tcp || true")
+                await self._cmd(f"ufw delete allow {start}/udp || true")
+            else:
+                await self._cmd(f"ufw delete allow {start}:{end}/tcp || true")
+                await self._cmd(f"ufw delete allow {start}:{end}/udp || true")
