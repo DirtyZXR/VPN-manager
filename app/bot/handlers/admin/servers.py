@@ -2139,7 +2139,7 @@ async def show_server_services(callback: CallbackQuery, state: FSMContext, is_ad
 
 @router.callback_query(F.data.startswith("server_edit_xui_"))
 async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    """Show XUI edit menu."""
+    """Show XUI edit menu or desync menu if container is missing."""
     if not is_admin:
         await callback.answer(
             t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
@@ -2149,10 +2149,11 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
     server_id = int(callback.data.split("_")[-1])
     await state.update_data(server_id=server_id)
 
+    msg = await callback.message.edit_text("🔍 Проверка состояния 3x-ui на сервере...")
+
     async with async_session_factory() as session:
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
-
         from app.database.models import Server
 
         result = await session.execute(
@@ -2163,10 +2164,41 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
         server = result.scalar_one_or_none()
 
     if not server or not server.xui_panel:
-        await callback.answer(
-            t("admin.servers.errors.not_found", "❌ Сервер или 3x-ui панель не найдены."),
-            show_alert=True,
+        await msg.edit_text(
+            t("admin.servers.errors.not_found", "❌ Сервер или 3x-ui панель не найдены.")
         )
+        return
+
+    from app.services.installers.xui_installer import XUIInstaller
+    from app.services.ssh_service import SSHManager
+
+    try:
+        ssh = SSHManager(server)
+        installer = XUIInstaller(ssh)
+        is_installed = await installer.check_already_installed()
+    except Exception as e:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n{e}", reply_markup=kb.as_markup())
+        return
+
+    if not is_installed:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📂 Восстановить из x-ui.db", callback_data=f"xui_desync_restore_file_{server_id}")
+        kb.button(text="🆘 Аварийное восстановление", callback_data=f"xui_desync_restore_db_{server_id}")
+        kb.button(text="🗑 Удалить панель из БД", callback_data=f"xui_desync_remove_db_{server_id}")
+        kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+        kb.adjust(1)
+
+        text = (
+            "⚠️ <b>Обнаружен рассинхрон!</b>\n\n"
+            "В БД бота числится установленная панель 3x-ui, но физически на сервере контейнеры отсутствуют. "
+            "Вероятно, сервер был очищен или переустановлен.\n\n"
+            "Выберите действие:"
+        )
+        await msg.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
         return
 
     panel = server.xui_panel
@@ -2210,25 +2242,123 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
 
 @router.callback_query(F.data.startswith("server_edit_awg_"))
 async def edit_awg_service(callback: CallbackQuery, is_admin: bool) -> None:
-    """Edit AWG service (placeholder)."""
+    """Edit AWG service or show desync menu."""
     if not is_admin:
         await callback.answer(
             t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
         )
         return
-    await callback.answer("В разработке", show_alert=True)
 
+    server_id = int(callback.data.split("_")[-1])
+    msg = await callback.message.edit_text("🔍 Проверка состояния AWG на сервере...")
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.awg_service))
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server or not server.awg_service:
+        await msg.edit_text("❌ Сервер или сервис AWG не найдены.")
+        return
+
+    from app.services.installers.awg_installer import AWGInstaller
+    from app.services.ssh_service import SSHManager
+
+    try:
+        ssh = SSHManager(server)
+        installer = AWGInstaller(ssh)
+        is_installed = await installer.check_already_installed()
+    except Exception as e:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n{e}", reply_markup=kb.as_markup())
+        return
+
+    if not is_installed:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🛠 Восстановить сервис из БД", callback_data=f"awg_desync_restore_db_{server_id}")
+        kb.button(text="🗑 Удалить из БД бота", callback_data=f"awg_desync_remove_db_{server_id}")
+        kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+        kb.adjust(1)
+
+        text = (
+            "⚠️ <b>Обнаружен рассинхрон!</b>\n\n"
+            "В БД бота числится сервис AmneziaWG, но физически на сервере он отсутствует.\n\n"
+            "Выберите действие:"
+        )
+        await msg.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        return
+
+    await msg.edit_text("Меню управления AWG (в разработке).", reply_markup=get_back_keyboard(f"server_services_{server_id}"))
 
 @router.callback_query(F.data.startswith("server_edit_mtproxy_"))
 async def edit_mtproxy_service(callback: CallbackQuery, is_admin: bool) -> None:
-    """Edit MTProxy service (placeholder)."""
+    """Edit MTProxy service or show desync menu."""
     if not is_admin:
         await callback.answer(
             t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
         )
         return
-    await callback.answer("В разработке", show_alert=True)
 
+    server_id = int(callback.data.split("_")[-1])
+    msg = await callback.message.edit_text("🔍 Проверка состояния MTProxy на сервере...")
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server)
+            .options(selectinload(Server.mtproxy_service))
+            .where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+
+    if not server or not server.mtproxy_service:
+        await msg.edit_text("❌ Сервер или сервис MTProxy не найдены.")
+        return
+
+    from app.services.installers.mtproxy_installer import MTProxyInstaller
+    from app.services.ssh_service import SSHManager
+
+    try:
+        ssh = SSHManager(server)
+        installer = MTProxyInstaller(ssh)
+        is_installed = await installer.check_already_installed()
+    except Exception as e:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n{e}", reply_markup=kb.as_markup())
+        return
+
+    if not is_installed:
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🛠 Восстановить сервис из БД", callback_data=f"mtp_desync_restore_db_{server_id}")
+        kb.button(text="🗑 Удалить из БД бота", callback_data=f"mtp_desync_remove_db_{server_id}")
+        kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+        kb.adjust(1)
+
+        text = (
+            "⚠️ <b>Обнаружен рассинхрон!</b>\n\n"
+            "В БД бота числится сервис MTProxy, но физически на сервере он отсутствует.\n\n"
+            "Выберите действие:"
+        )
+        await msg.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+        return
+
+    await msg.edit_text("Меню управления MTProxy (в разработке).", reply_markup=get_back_keyboard(f"server_services_{server_id}"))
 
 @router.callback_query(F.data.startswith("xui_toggle_ssl_"))
 async def xui_toggle_ssl(callback: CallbackQuery, state: FSMContext) -> None:
@@ -4461,3 +4591,338 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
+
+
+# ── Desync Recovery Handlers ──────────────────────────────────────
+
+@router.callback_query(F.data.startswith("xui_desync_remove_db_"))
+async def xui_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    async with async_session_factory() as session:
+        from sqlalchemy import delete
+        from app.database.models import XUIPanel, Inbound
+        await session.execute(delete(XUIPanel).where(XUIPanel.server_id == server_id))
+        await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol.in_(("vless", "vmess", "trojan", "shadowsocks", "wireguard", "socks", "http"))))
+        await session.commit()
+    await callback.answer("✅ 3x-ui панель и инбаунды удалены из БД", show_alert=True)
+    await show_server_services(callback, state, is_admin)
+
+@router.callback_query(F.data.startswith("awg_desync_remove_db_"))
+async def awg_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    async with async_session_factory() as session:
+        from sqlalchemy import delete
+        from app.database.models import AWGService, Inbound
+        await session.execute(delete(AWGService).where(AWGService.server_id == server_id))
+        await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "awg"))
+        await session.commit()
+    await callback.answer("✅ AWG удален из БД", show_alert=True)
+    await show_server_services(callback, state, is_admin)
+
+@router.callback_query(F.data.startswith("mtp_desync_remove_db_"))
+async def mtp_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    async with async_session_factory() as session:
+        from sqlalchemy import delete
+        from app.database.models import MTProxyService, Inbound
+        await session.execute(delete(MTProxyService).where(MTProxyService.server_id == server_id))
+        await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "mtproto"))
+        await session.commit()
+    await callback.answer("✅ MTProxy удален из БД", show_alert=True)
+    await show_server_services(callback, state, is_admin)
+
+@router.callback_query(F.data.startswith("awg_desync_restore_db_"))
+async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    
+    msg = await callback.message.edit_text("🔄 <b>Восстановление AWG из БД...</b>\n\nНачинаю установку...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server, AWGInboundConnection, Inbound
+
+            server = (await session.execute(select(Server).options(selectinload(Server.awg_service)).where(Server.id == server_id))).scalar_one()
+            
+            from app.services.installers.awg_installer import AWGInstaller
+            from app.services.ssh_service import SSHManager
+            
+            installer = AWGInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление AWG</b>\n\n{text}", parse_mode="HTML"))
+            
+            await installer.install(
+                port=server.awg_service.port,
+                subnet_ip=server.awg_service.subnet_ip,
+                subnet_cidr=server.awg_service.subnet_cidr,
+                obfuscation=server.awg_service.obfuscation,
+                force=True
+            )
+            
+            # Now restore peers
+            from app.services.vpn_providers.factory import get_vpn_provider
+            
+            awg_inbound = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "awg"))).scalar_one_or_none()
+            if awg_inbound:
+                connections = (await session.execute(select(AWGInboundConnection).where(AWGInboundConnection.inbound_id == awg_inbound.id))).scalars().all()
+                if connections:
+                    provider = get_vpn_provider(server, inbound_type="awg_inbound")
+                    for conn in connections:
+                        if conn.is_enabled:
+                            await provider.enable_client(awg_inbound, conn)
+                    await provider.close()
+            
+        await msg.edit_text("✅ <b>AWG успешно восстановлен!</b>\n\nВсе конфигурации и ключи перенесены на сервер.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore AWG: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("mtp_desync_restore_db_"))
+async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    
+    msg = await callback.message.edit_text("🔄 <b>Восстановление MTProxy из БД...</b>\n\nНачинаю установку...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server, MTProxyInboundConnection, Inbound
+
+            server = (await session.execute(select(Server).options(selectinload(Server.mtproxy_service)).where(Server.id == server_id))).scalar_one()
+            
+            from app.services.installers.mtproxy_installer import MTProxyInstaller
+            from app.services.ssh_service import SSHManager
+            
+            installer = MTProxyInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление MTProxy</b>\n\n{text}", parse_mode="HTML"))
+            
+            await installer.install(
+                port=server.mtproxy_service.port,
+                domain=server.mtproxy_service.domain,
+                implementation=server.mtproxy_service.implementation,
+                max_connections=server.mtproxy_service.max_connections or 5000,
+                force=True
+            )
+            
+            # Restore peers if mtg-multi
+            if server.mtproxy_service.implementation == "mtg-multi":
+                from app.services.vpn_providers.factory import get_vpn_provider
+                mtp_inbound = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "mtproto"))).scalar_one_or_none()
+                if mtp_inbound:
+                    connections = (await session.execute(select(MTProxyInboundConnection).where(MTProxyInboundConnection.inbound_id == mtp_inbound.id))).scalars().all()
+                    if connections:
+                        provider = get_vpn_provider(server, inbound_type="mtproxy_inbound")
+                        for conn in connections:
+                            if conn.is_enabled:
+                                await provider.enable_client(mtp_inbound, conn)
+                        await provider.close()
+                        
+        await msg.edit_text("✅ <b>MTProxy успешно восстановлен!</b>\n\nВсе секреты перенесены на сервер.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore MTProxy: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("xui_desync_restore_db_"))
+async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    
+    msg = await callback.message.edit_text("🔄 <b>Аварийное восстановление 3x-ui из БД...</b>\n\nНачинаю переустановку панели...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server
+
+            server = (await session.execute(select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id))).scalar_one()
+            panel = server.xui_panel
+            
+            from app.services.installers.xui_installer import XUIInstaller
+            from app.services.ssh_service import SSHManager
+            from app.utils import decrypt_password
+            
+            installer = XUIInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Аварийное восстановление 3x-ui</b>\n\n{text}", parse_mode="HTML"))
+            
+            pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
+            domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
+            
+            await installer.install(
+                domain=domain,
+                caddy_port=panel.caddy_port,
+                web_path=panel.panel_path,
+                sub_path=panel.subscription_path,
+                sub_json_path=panel.subscription_json_path,
+                username=panel.username or "admin",
+                password=pwd,
+                inbound_ranges=panel.inbound_ranges,
+                force=True
+            )
+            
+            # Now restore inbounds and connections
+            from app.xui_client import XUIClient
+            from app.database.models import Inbound, XUIInboundConnection
+            
+            await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
+            
+            async with XUIClient(
+                url=panel.url,
+                username=panel.username,
+                password=pwd,
+                panel_path=panel.panel_path,
+            ) as client:
+                await client.login()
+                
+                inbounds = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol.in_(("vless", "vmess", "trojan", "shadowsocks", "wireguard", "socks", "http"))))).scalars().all()
+                for ib in inbounds:
+                    payload = {
+                        "up": 0, "down": 0, "total": 0, "remark": ib.remark or f"Inbound_{ib.port}",
+                        "enable": True, "expiryTime": 0, "listen": "", "port": ib.port, "protocol": ib.protocol,
+                        "settings": '{"clients": [], "fallbacks": []}', 
+                        "streamSettings": '{"network": "tcp", "security": "none", "tcpSettings": {"header": {"type": "none"}}}', 
+                        "sniffing": '{"enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false, "routeOnly": false}'
+                    }
+                    try:
+                        await client.add_inbound(payload)
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Failed to recreate inbound {ib.id} port {ib.port}: {e}")
+                    
+                    # Add clients to this inbound
+                    connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
+                    for conn in connections:
+                        if conn.provider_payload and conn.is_enabled:
+                            try:
+                                await client.add_client(ib.id, [conn.provider_payload])
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).warning(f"Failed to recreate client {conn.id}: {e}")
+                                
+        await msg.edit_text("✅ <b>Аварийное восстановление 3x-ui завершено!</b>\n\nБазовые настройки и клиенты воссозданы. Тонкие настройки Xray (сертификаты/streamSettings) могли сброситься к значениям по умолчанию.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore 3x-ui: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("xui_desync_restore_file_"))
+async def xui_desync_restore_file(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+    if not is_admin: return
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_restore_file)
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Отмена", callback_data=f"server_services_{server_id}")]])
+    
+    await callback.message.edit_text(
+        "📂 <b>Восстановление 3x-ui из бэкапа</b>\n\n"
+        "Пожалуйста, отправьте файл <code>x-ui.db</code> в этот чат (как документ).\n"
+        "⚠️ <i>Убедитесь, что это именно тот файл от панели, которая была привязана к боту.</i>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(ServerManagement.waiting_for_restore_file, F.document)
+async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> None:
+    document = message.document
+    if not document.file_name.endswith(".db"):
+        await message.answer("❌ Пожалуйста, отправьте файл с расширением .db (например, x-ui.db)")
+        return
+        
+    data = await state.get_data()
+    server_id = data.get("server_id")
+    if not server_id:
+        await message.answer("❌ Ошибка сессии. Начните заново.")
+        await state.clear()
+        return
+        
+    msg = await message.answer("🔄 Скачивание файла...")
+    
+    import base64
+    from aiogram import Bot
+    
+    bot: Bot = message.bot
+    file_id = document.file_id
+    file_path_tg = (await bot.get_file(file_id)).file_path
+    
+    # Download file to memory
+    file_bytes = await bot.download_file(file_path_tg)
+    db_content = file_bytes.read()
+    
+    # Encode to base64 for safe transfer
+    b64_db = base64.b64encode(db_content).decode("ascii")
+    
+    await msg.edit_text("🔄 <b>Восстановление 3x-ui из файла x-ui.db...</b>\n\nНачинаю переустановку панели...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server
+
+            server = (await session.execute(select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id))).scalar_one()
+            panel = server.xui_panel
+            
+            from app.services.installers.xui_installer import XUIInstaller
+            from app.services.ssh_service import SSHManager
+            from app.utils import decrypt_password
+            
+            ssh = SSHManager(server)
+            installer = XUIInstaller(ssh, progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\n{text}", parse_mode="HTML"))
+            
+            pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
+            domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
+            
+            # 1. Install fresh panel first
+            await installer.install(
+                domain=domain,
+                caddy_port=panel.caddy_port,
+                web_path=panel.panel_path,
+                sub_path=panel.subscription_path,
+                sub_json_path=panel.subscription_json_path,
+                username=panel.username or "admin",
+                password=pwd,
+                inbound_ranges=panel.inbound_ranges,
+                force=True
+            )
+            
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nЗагрузка вашей БД x-ui.db на сервер...", parse_mode="HTML")
+            
+            # 2. Stop container, upload db, restart container
+            await ssh.run_command("docker stop vpnbot-xui")
+            
+            # Write base64 to server and decode it to binary file
+            remote_path = "/opt/vpnbot/xui/db/x-ui.db"
+            await ssh.run_command(f"echo '{b64_db}' | base64 -d > {remote_path}")
+            
+            # 3. Patch the DB with bot's credentials and paths (runs sqlite3 inside container)
+            await ssh.run_command("docker start vpnbot-xui")
+            import asyncio
+            await asyncio.sleep(3)
+            
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nПрименение настроек панели...", parse_mode="HTML")
+            
+            await installer._configure_xui(
+                username=panel.username or "admin",
+                password=pwd,
+                web_path=panel.panel_path,
+                sub_path=panel.subscription_path,
+                sub_json_path=panel.subscription_json_path,
+                domain=domain,
+                caddy_port=panel.caddy_port
+            )
+            
+        await msg.edit_text("✅ <b>Панель 3x-ui успешно восстановлена из файла!</b>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+        await state.clear()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore 3x-ui from file: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+        await state.clear()

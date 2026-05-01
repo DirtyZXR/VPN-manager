@@ -30,6 +30,7 @@ class XUIService:
         self._cipher = Fernet(settings.encryption_key.encode())
         self._timeout = settings.xui_timeout
         self._clients: dict[int, XUIClient] = {}
+        self._failed_clients: dict[int, datetime] = {}
 
     def _encrypt_password(self, password: str) -> str:
         """Encrypt password for storage.
@@ -74,6 +75,11 @@ class XUIService:
         """
         if server.id in self._clients:
             return self._clients[server.id]
+
+        if server.id in self._failed_clients:
+            time_since_fail = datetime.now(UTC) - self._failed_clients[server.id]
+            if time_since_fail.total_seconds() < 60:
+                raise XUIConnectionError(f"Server {server.id} connection recently failed, skipping retry")
 
         if (
             not server.xui_panel
@@ -122,12 +128,17 @@ class XUIService:
             verify_ssl=verify_ssl,
             saved_cookies=saved_cookies,
         )
-        await client.connect()
+        try:
+            await client.connect()
+        except Exception:
+            self._failed_clients[server.id] = datetime.now(UTC)
+            raise
 
         # Save cookies after successful connection
         self._save_session_cookies(server, client)
 
         self._clients[server.id] = client
+        self._failed_clients.pop(server.id, None)
         return client
 
     def _save_session_cookies(self, server: Server, client: XUIClient) -> None:
