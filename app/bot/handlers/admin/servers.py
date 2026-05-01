@@ -4909,7 +4909,12 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
             
             # 1. Сначала загружаем БД на сервер во временную папку
             tmp_db = "/tmp/x-ui_restore.db"
-            await installer._cmd(f"echo '{b64_db}' | base64 -d > {tmp_db}")
+            # Для больших файлов echo 'huge_b64' ломает SSH сессию
+            # Поэтому сначала пишем файл штатным методом asyncssh
+            await ssh.write_file(tmp_db + ".b64", b64_db)
+            # А затем декодируем его через sudo (чтобы права были нужные)
+            await installer._cmd(f"base64 -d {tmp_db}.b64 > {tmp_db}")
+            await installer._cmd(f"rm {tmp_db}.b64")
             
             # 2. Анализируем БД прямо на сервере с помощью sqlite3
             await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nИзвлечение путей и портов из БД...", parse_mode="HTML")
