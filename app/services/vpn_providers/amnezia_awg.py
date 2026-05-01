@@ -190,14 +190,14 @@ class AmneziaAWGProvider(BaseVPNProvider):
         email: str | None = None,
     ) -> dict[str, Any]:
         priv_key_cmd = f"docker exec -i {self.container_name} awg genkey"
-        private_key = await self._cmd(priv_key_cmd)
+        private_key = (await self._cmd(priv_key_cmd)).strip()
 
         pub_key_cmd = (
             f"docker exec -i {self.container_name} bash -c 'echo \"{private_key}\" | awg pubkey'"
         )
-        public_key = await self._cmd(pub_key_cmd)
+        public_key = (await self._cmd(pub_key_cmd)).strip()
 
-        psk = await self._get_server_psk()
+        psk = (await self._get_server_psk()).strip()
         next_ip = await self._find_next_free_ip(inbound)
 
         await self._add_peer_to_config(public_key, psk, next_ip)
@@ -326,10 +326,10 @@ class AmneziaAWGProvider(BaseVPNProvider):
         if not awg:
             return {"config_type": "empty", "config_data": None}
 
-        private_key = connection.private_key
-        public_key = connection.public_key
-        client_ip = connection.client_ip
-        psk = connection.psk
+        private_key = connection.private_key.strip() if connection.private_key else ""
+        public_key = connection.public_key.strip() if connection.public_key else ""
+        client_ip = connection.client_ip.strip() if connection.client_ip else ""
+        psk = connection.psk.strip() if connection.psk else ""
 
         host = self.server.ip_address
         port = str(awg.port)
