@@ -4303,9 +4303,11 @@ async def mtproxy_domain_manual(message: TgMessage, state: FSMContext) -> None:
     await state.update_data(domain=domain)
     data = await state.get_data()
     if data.get("implementation") == "mtg-multi":
-        await _mtproxy_ask_max_connections(message, state)
+        msg = await message.answer("🔄 Загрузка...")
+        await _mtproxy_ask_max_connections(msg, state)
     else:
-        await _mtproxy_show_confirm(message, state)
+        msg = await message.answer("🔄 Загрузка...")
+        await _mtproxy_show_confirm(msg, state)
 
 
 async def _mtproxy_ask_max_connections(message_or_callback, state: FSMContext) -> None:
@@ -4347,7 +4349,8 @@ async def mtproxy_conns_manual(message: TgMessage, state: FSMContext) -> None:
         await message.answer("❌ Минимум 100 подключений.")
         return
     await state.update_data(max_connections=int(text))
-    await _mtproxy_show_confirm(message, state)
+    msg = await message.answer("🔄 Загрузка...")
+    await _mtproxy_show_confirm(msg, state)
 
 
 async def _mtproxy_show_confirm(message_or_callback, state: FSMContext) -> None:
