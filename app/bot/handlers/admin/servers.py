@@ -4924,14 +4924,14 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
             await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nЗагрузка вашей БД x-ui.db на сервер...", parse_mode="HTML")
             
             # 2. Stop container, upload db, restart container
-            await ssh.run_command("docker stop vpnbot-xui")
+            await installer._cmd("docker stop vpnbot-xui")
             
             # Write base64 to server and decode it to binary file
             remote_path = "/opt/vpnbot/xui/db/x-ui.db"
-            await ssh.run_command(f"echo '{b64_db}' | base64 -d > {remote_path}")
+            await installer._cmd(f"echo '{b64_db}' | base64 -d > {remote_path}")
             
             # 3. Patch the DB with bot's credentials and paths (runs sqlite3 inside container)
-            await ssh.run_command("docker start vpnbot-xui")
+            await installer._cmd("docker start vpnbot-xui")
             import asyncio
             await asyncio.sleep(3)
             

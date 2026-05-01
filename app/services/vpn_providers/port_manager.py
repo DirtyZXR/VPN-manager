@@ -117,10 +117,10 @@ class PortManager:
         """
         try:
             if protocol.lower() == "any":
-                await self.ssh.run_command(f"ufw delete allow {port} || true")
+                await self.ssh.run_command(f"sudo -n ufw delete allow {port} 2>/dev/null || ufw delete allow {port} 2>/dev/null || true")
             else:
                 await self.ssh.run_command(
-                    f"ufw delete allow {port}/{protocol.lower()} || true"
+                    f"sudo -n ufw delete allow {port}/{protocol.lower()} 2>/dev/null || ufw delete allow {port}/{protocol.lower()} 2>/dev/null || true"
                 )
             logger.info(f"Closed port {port}/{protocol} via UFW on server {self.ssh.server.id}")
         except Exception as e:
