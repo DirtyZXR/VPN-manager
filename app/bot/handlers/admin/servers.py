@@ -2175,12 +2175,21 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
     try:
         ssh = SSHManager(server)
         installer = XUIInstaller(ssh)
+        
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            kb = InlineKeyboardBuilder()
+            kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=kb.as_markup(), parse_mode="HTML")
+            return
+            
         is_installed = await installer.check_already_installed()
     except Exception as e:
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         kb = InlineKeyboardBuilder()
         kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
-        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n{e}", reply_markup=kb.as_markup())
+        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n<code>{e}</code>", reply_markup=kb.as_markup(), parse_mode="HTML")
         return
 
     if not is_installed:
@@ -2274,12 +2283,21 @@ async def edit_awg_service(callback: CallbackQuery, is_admin: bool) -> None:
     try:
         ssh = SSHManager(server)
         installer = AWGInstaller(ssh)
+        
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            kb = InlineKeyboardBuilder()
+            kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=kb.as_markup(), parse_mode="HTML")
+            return
+            
         is_installed = await installer.check_already_installed()
     except Exception as e:
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         kb = InlineKeyboardBuilder()
         kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
-        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n{e}", reply_markup=kb.as_markup())
+        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n<code>{e}</code>", reply_markup=kb.as_markup(), parse_mode="HTML")
         return
 
     if not is_installed:
@@ -2334,12 +2352,21 @@ async def edit_mtproxy_service(callback: CallbackQuery, is_admin: bool) -> None:
     try:
         ssh = SSHManager(server)
         installer = MTProxyInstaller(ssh)
+        
+        ok, err_msg = await installer.preflight_check()
+        if not ok:
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            kb = InlineKeyboardBuilder()
+            kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
+            await msg.edit_text(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", reply_markup=kb.as_markup(), parse_mode="HTML")
+            return
+            
         is_installed = await installer.check_already_installed()
     except Exception as e:
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         kb = InlineKeyboardBuilder()
         kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
-        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n{e}", reply_markup=kb.as_markup())
+        await msg.edit_text(f"❌ Ошибка подключения по SSH:\n<code>{e}</code>", reply_markup=kb.as_markup(), parse_mode="HTML")
         return
 
     if not is_installed:
