@@ -260,8 +260,12 @@ class XUIInstaller(BaseInstaller):
         await self.port_manager.open_port(caddy_port, "tcp")
         await self.port_manager.open_port(caddy_port, "udp")
         for start, end in inbound_ranges:
-            await self._cmd(f"ufw allow {start}:{end}/tcp")
-            await self._cmd(f"ufw allow {start}:{end}/udp")
+            if start == end:
+                await self._cmd(f"ufw allow {start}/tcp")
+                await self._cmd(f"ufw allow {start}/udp")
+            else:
+                await self._cmd(f"ufw allow {start}:{end}/tcp")
+                await self._cmd(f"ufw allow {start}:{end}/udp")
 
     async def _block_internal_ports(self) -> None:
         await self._cmd(f"ufw deny {XUI_INTERNAL_PORT}/tcp || true")
@@ -449,11 +453,19 @@ class XUIInstaller(BaseInstaller):
     async def open_inbound_ports(self, ranges: list[tuple[int, int]]) -> None:
         """Open additional port ranges for VPN inbounds (post-install)."""
         for start, end in ranges:
-            await self._cmd(f"ufw allow {start}:{end}/tcp")
-            await self._cmd(f"ufw allow {start}:{end}/udp")
+            if start == end:
+                await self._cmd(f"ufw allow {start}/tcp")
+                await self._cmd(f"ufw allow {start}/udp")
+            else:
+                await self._cmd(f"ufw allow {start}:{end}/tcp")
+                await self._cmd(f"ufw allow {start}:{end}/udp")
 
     async def close_inbound_ports(self, ranges: list[tuple[int, int]]) -> None:
         """Close port ranges for VPN inbounds (post-install)."""
         for start, end in ranges:
-            await self._cmd(f"ufw delete allow {start}:{end}/tcp || true")
-            await self._cmd(f"ufw delete allow {start}:{end}/udp || true")
+            if start == end:
+                await self._cmd(f"ufw delete allow {start}/tcp || true")
+                await self._cmd(f"ufw delete allow {start}/udp || true")
+            else:
+                await self._cmd(f"ufw delete allow {start}:{end}/tcp || true")
+                await self._cmd(f"ufw delete allow {start}:{end}/udp || true")
