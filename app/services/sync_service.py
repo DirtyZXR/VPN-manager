@@ -602,6 +602,10 @@ class SyncService:
                 try:
                     inbound = connection.inbound
                     if inbound:
+                        if inbound.server and getattr(inbound.server, "sync_status", None) != "synced":
+                            stats["offline"] += 1
+                            continue
+
                         handler = for_inbound(inbound)
                         if handler is None:
                             continue
