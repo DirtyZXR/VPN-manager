@@ -15,6 +15,11 @@ def encrypt_password(password: str) -> str:
     cipher = Fernet(settings.encryption_key.encode())
     return cipher.encrypt(password.encode()).decode()
 
+def decrypt_password(encrypted_password: str) -> str:
+    settings = get_settings()
+    cipher = Fernet(settings.encryption_key.encode())
+    return cipher.decrypt(encrypted_password.encode()).decode()
+
 
 def generate_uuid() -> str:
     return str(uuid_lib.uuid4())

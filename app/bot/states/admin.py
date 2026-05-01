@@ -39,6 +39,9 @@ class ServerManagement(StatesGroup):
     waiting_for_edit_username = State()
     waiting_for_edit_password = State()
     waiting_for_edit_verify_ssl = State()
+    
+    # Desync restore
+    waiting_for_restore_file = State()
 
 
 class UserManagement(StatesGroup):
