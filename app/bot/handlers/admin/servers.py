@@ -4814,4 +4814,115 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
 async def xui_desync_restore_file(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
     if not is_admin: return
     server_id = int(callback.data.split("_")[-1])
-    await callback.answer("В разработке: Пришлите файл x-ui.db", show_alert=True)
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_restore_file)
+    
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Отмена", callback_data=f"server_services_{server_id}")]])
+    
+    await callback.message.edit_text(
+        "📂 <b>Восстановление 3x-ui из бэкапа</b>\n\n"
+        "Пожалуйста, отправьте файл <code>x-ui.db</code> в этот чат (как документ).\n"
+        "⚠️ <i>Убедитесь, что это именно тот файл от панели, которая была привязана к боту.</i>",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+@router.message(ServerManagement.waiting_for_restore_file, F.document)
+async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> None:
+    document = message.document
+    if not document.file_name.endswith(".db"):
+        await message.answer("❌ Пожалуйста, отправьте файл с расширением .db (например, x-ui.db)")
+        return
+        
+    data = await state.get_data()
+    server_id = data.get("server_id")
+    if not server_id:
+        await message.answer("❌ Ошибка сессии. Начните заново.")
+        await state.clear()
+        return
+        
+    msg = await message.answer("🔄 Скачивание файла...")
+    
+    import base64
+    from aiogram import Bot
+    
+    bot: Bot = message.bot
+    file_id = document.file_id
+    file_path_tg = (await bot.get_file(file_id)).file_path
+    
+    # Download file to memory
+    file_bytes = await bot.download_file(file_path_tg)
+    db_content = file_bytes.read()
+    
+    # Encode to base64 for safe transfer
+    b64_db = base64.b64encode(db_content).decode("ascii")
+    
+    await msg.edit_text("🔄 <b>Восстановление 3x-ui из файла x-ui.db...</b>\n\nНачинаю переустановку панели...", parse_mode="HTML")
+    
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server
+
+            server = (await session.execute(select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id))).scalar_one()
+            panel = server.xui_panel
+            
+            from app.services.installers.xui_installer import XUIInstaller
+            from app.services.ssh_service import SSHManager
+            from app.utils import decrypt_password
+            
+            ssh = SSHManager(server)
+            installer = XUIInstaller(ssh, progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\n{text}", parse_mode="HTML"))
+            
+            pwd = decrypt_password(panel.password_encrypted) if panel.password_encrypted else "admin"
+            domain = panel.url.split("://")[1].split(":")[0] if panel.url else server.ip_address
+            
+            # 1. Install fresh panel first
+            await installer.install(
+                domain=domain,
+                caddy_port=panel.caddy_port,
+                web_path=panel.panel_path,
+                sub_path=panel.subscription_path,
+                sub_json_path=panel.subscription_json_path,
+                username=panel.username or "admin",
+                password=pwd,
+                inbound_ranges=panel.inbound_ranges,
+                force=True
+            )
+            
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nЗагрузка вашей БД x-ui.db на сервер...", parse_mode="HTML")
+            
+            # 2. Stop container, upload db, restart container
+            await ssh.run_command("docker stop vpnbot-xui")
+            
+            # Write base64 to server and decode it to binary file
+            remote_path = "/opt/vpnbot/xui/db/x-ui.db"
+            await ssh.run_command(f"echo '{b64_db}' | base64 -d > {remote_path}")
+            
+            # 3. Patch the DB with bot's credentials and paths (runs sqlite3 inside container)
+            await ssh.run_command("docker start vpnbot-xui")
+            import asyncio
+            await asyncio.sleep(3)
+            
+            await msg.edit_text("🔄 <b>Восстановление 3x-ui (Файл)</b>\n\nПрименение настроек панели...", parse_mode="HTML")
+            
+            await installer._configure_xui(
+                username=panel.username or "admin",
+                password=pwd,
+                web_path=panel.panel_path,
+                sub_path=panel.subscription_path,
+                sub_json_path=panel.subscription_json_path,
+                domain=domain,
+                caddy_port=panel.caddy_port
+            )
+            
+        await msg.edit_text("✅ <b>Панель 3x-ui успешно восстановлена из файла!</b>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+        await state.clear()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to restore 3x-ui from file: {e}", exc_info=True)
+        await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+        await state.clear()
