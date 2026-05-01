@@ -4455,6 +4455,11 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                         parse_mode="HTML",
                     ),
                 )
+                
+                ok, err_msg = await installer.preflight_check()
+                if not ok:
+                    await msg.edit_text(f"❌ Ошибка проверки прав:\n<code>{err_msg}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
+                    return
 
                 install_result = await installer.install(
                     port=port,
