@@ -572,17 +572,14 @@ class SubscriptionTemplateService:
         added_inbound_ids: set[int] | None = None,
         removed_inbound_ids: set[int] | None = None,
     ) -> None:
-        """Mass update inbounds for all subscriptions linked to a template.
-
-        Args:
-            template_id: Template ID
-            added_inbound_ids: Set of inbound IDs to add
-            removed_inbound_ids: Set of inbound IDs to remove
-        """
+        """Mass update inbounds for all subscriptions linked to a template."""
         added = added_inbound_ids or set()
         removed = removed_inbound_ids or set()
 
+        logger.info(f"🚀 [TOTAL LOG] _apply_template_inbounds_change called. Template: {template_id}, Added: {added}, Removed: {removed}")
+
         if not added and not removed:
+            logger.info("🚀 [TOTAL LOG] Nothing to do, returning.")
             return
 
         from app.services.new_subscription_service import NewSubscriptionService
@@ -595,37 +592,50 @@ class SubscriptionTemplateService:
                 select(Subscription).where(Subscription.template_id == template_id)
             )
             subscriptions = result.scalars().all()
+            logger.info(f"🚀 [TOTAL LOG] Found {len(subscriptions)} subscriptions linked to template {template_id}")
 
             for sub in subscriptions:
+                logger.info(f"🚀 [TOTAL LOG] Processing subscription {sub.id} ({sub.name})")
                 # Handle additions
                 for inbound_id in added:
                     try:
+                        logger.info(f"🚀 [TOTAL LOG] Attempting to add inbound {inbound_id} to sub {sub.id}...")
                         await sub_service.add_inbound_to_subscription(
                             subscription_id=sub.id,
                             inbound_id=inbound_id,
                         )
                         logger.info(
-                            f"✅ Mass added inbound {inbound_id} to subscription {sub.name} (ID: {sub.id})"
+                            f"✅ [TOTAL LOG] Mass added inbound {inbound_id} to subscription {sub.name} (ID: {sub.id})"
                         )
                     except Exception as e:
-                        logger.warning(
-                            f"⚠️ Failed to add inbound {inbound_id} to subscription {sub.name}: {e}"
+                        logger.error(
+                            f"⚠️ [TOTAL LOG] Failed to add inbound {inbound_id} to subscription {sub.name} (ID: {sub.id}): {e}",
+                            exc_info=True
                         )
 
                 # Handle removals
                 for inbound_id in removed:
                     try:
+                        logger.info(f"🚀 [TOTAL LOG] Attempting to remove inbound {inbound_id} from sub {sub.id}...")
                         removed_ok = await sub_service.remove_inbound_from_subscription(
                             subscription_id=sub.id,
                             inbound_id=inbound_id,
                         )
                         if removed_ok:
                             logger.info(
-                                f"✅ Mass removed inbound {inbound_id} from subscription {sub.name} (ID: {sub.id})"
+                                f"✅ [TOTAL LOG] Mass removed inbound {inbound_id} from subscription {sub.name} (ID: {sub.id})"
                             )
+                        else:
+                            logger.warning(f"⚠️ [TOTAL LOG] remove_inbound_from_subscription returned False for sub {sub.id}, inbound {inbound_id}")
                     except Exception as e:
-                        logger.warning(
-                            f"⚠️ Failed to remove inbound {inbound_id} from subscription {sub.name}: {e}"
+                        logger.error(
+                            f"⚠️ [TOTAL LOG] Failed to remove inbound {inbound_id} from subscription {sub.name} (ID: {sub.id}): {e}",
+                            exc_info=True
                         )
+            logger.info(f"🚀 [TOTAL LOG] Finished iterating through subscriptions for template {template_id}")
+        except Exception as e:
+            logger.error(f"❌ [TOTAL LOG] Critical error in _apply_template_inbounds_change: {e}", exc_info=True)
         finally:
+            logger.info("🚀 [TOTAL LOG] Closing all clients in sub_service")
             await sub_service.close_all_clients()
+            logger.info("🚀 [TOTAL LOG] Exiting _apply_template_inbounds_change")

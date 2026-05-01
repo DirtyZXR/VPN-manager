@@ -24,7 +24,7 @@ class AutoDiscoveryService:
         """List all vpnbot-* container names on the server."""
         try:
             output = await self.ssh.run_command(
-                "docker ps -a --filter name=vpnbot- --format '{{.Names}}'"
+                "sudo -n docker ps -a --filter name=vpnbot- --format '{{.Names}}' 2>/dev/null || docker ps -a --filter name=vpnbot- --format '{{.Names}}'"
             )
             return [name.strip() for name in output.strip().split("\n") if name.strip()]
         except Exception:
