@@ -2539,29 +2539,29 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
                 try:
                     await template_service.remove_inbound_from_template(template_id, inbound_id)
                     removed_count += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to remove inbound {inbound_id} from template: {e}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove inbound {inbound_id} from template: {e}")
 
-                await session.commit()
+            await session.commit()
 
-                # Запускаем фоновое обновление для привязанных подписок
-                async def run_bg():
-                    try:
-                        async with async_session_factory() as bg_session:
-                            bg_service = SubscriptionTemplateService(bg_session)
-                            await bg_service._apply_template_inbounds_change(
-                                template_id,
-                                added_inbound_ids=set(),
-                                removed_inbound_ids=set(inbounds_to_remove),
-                            )
-                            await bg_session.commit()
-                            logger.info("✅ Background task completed successfully")
-                    except Exception as e:
-                        logger.error(f"❌ Background task failed: {e}")
+            # Запускаем фоновое обновление для привязанных подписок
+            async def run_bg():
+                try:
+                    async with async_session_factory() as bg_session:
+                        bg_service = SubscriptionTemplateService(bg_session)
+                        await bg_service._apply_template_inbounds_change(
+                            template_id,
+                            added_inbound_ids=set(),
+                            removed_inbound_ids=set(inbounds_to_remove),
+                        )
+                        await bg_session.commit()
+                        logger.info("✅ Background task completed successfully")
+                except Exception as e:
+                    logger.error(f"❌ Background task failed: {e}")
 
-                asyncio.create_task(run_bg())
+            asyncio.create_task(run_bg())
 
-                # Get updated template info
+            # Get updated template info
             template = await template_service.get_template(template_id)
             await template_service.get_template_inbounds(template_id)
 
