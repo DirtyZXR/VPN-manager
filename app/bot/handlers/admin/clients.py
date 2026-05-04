@@ -391,20 +391,35 @@ async def show_client_subscriptions(
             if page > 0:
                 pagination_row.append(
                     InlineKeyboardButton(
-                        text=t("keyboards.pagination.prev", "⬅️ Назад"),
+                        text=t(
+                            "keyboards.pagination.prev", 
+                            "⬅️ Назад ({page}/{total_pages})",
+                            page=page,
+                            total_pages=total_pages
+                        ),
                         callback_data=f"client_subscriptions_p_{page - 1}_{client_id}",
                     )
                 )
             pagination_row.append(
                 InlineKeyboardButton(
-                    text=f"📄 {page + 1}/{total_pages}",
+                    text=t(
+                        "keyboards.pagination.current",
+                        "📄 {current}/{total}",
+                        current=page + 1,
+                        total=total_pages
+                    ),
                     callback_data="instruction_page_current",
                 )
             )
             if page < total_pages - 1:
                 pagination_row.append(
                     InlineKeyboardButton(
-                        text=t("keyboards.pagination.next", "Вперед ➡️"),
+                        text=t(
+                            "keyboards.pagination.next", 
+                            "Вперед ➡️ ({next_page}/{total_pages})",
+                            next_page=page + 2,
+                            total_pages=total_pages
+                        ),
                         callback_data=f"client_subscriptions_p_{page + 1}_{client_id}",
                     )
                 )
