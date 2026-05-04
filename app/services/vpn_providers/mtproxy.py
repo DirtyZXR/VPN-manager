@@ -162,7 +162,7 @@ class MTProxyProvider(BaseVPNProvider):
     # ── Config generation ─────────────────────────────────────────────
 
     async def get_client_config(
-        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
+        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = True
     ) -> dict[str, Any]:
         secret = connection.secret if not self.is_single else self.default_secret
         host = self.ssh.host

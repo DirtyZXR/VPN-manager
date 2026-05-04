@@ -320,7 +320,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
     async def get_client_config(
-        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
+        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = True
     ) -> dict[str, Any]:
         awg = self.server.awg_service
         if not awg:

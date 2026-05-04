@@ -78,7 +78,7 @@ class BaseVPNProvider(ABC):
 
     @abstractmethod
     async def get_client_config(
-        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = False
+        self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = True
     ) -> dict[str, Any]:
         """Get client configuration (links, files, QR codes).
 
