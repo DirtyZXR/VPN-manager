@@ -9,11 +9,13 @@ from aiogram.types import CallbackQuery, FSInputFile, Message
 from loguru import logger
 
 from app.bot.keyboards import (
+    get_back_keyboard,
     get_faq_answer_keyboard,
     get_faq_list_keyboard,
     get_help_main_keyboard,
     get_instruction_menu_keyboard,
     get_main_menu_keyboard,
+    get_protocol_selection_keyboard,
     get_step_navigation_keyboard,
 )
 from app.bot.states.user import InstructionViewing
@@ -111,10 +113,25 @@ async def show_main_menu(
 
 
 @router.callback_query(F.data == "instruction_menu")
-@router.callback_query(F.data == "help_main")
 async def show_instruction_menu(callback: CallbackQuery) -> None:
-    """Show instruction selection menu."""
-    text = t("instruction.select_os", "Выберите операционную систему или раздел:")
+    """Show protocol selection menu."""
+    text = t("instruction.select_protocol", "Выберите протокол для настройки:")
+    reply_markup = get_protocol_selection_keyboard()
+
+    try:
+        await callback.message.edit_text(text, reply_markup=reply_markup)
+    except Exception:
+        with contextlib.suppress(Exception):
+            await callback.message.delete()
+        await callback.message.answer(text, reply_markup=reply_markup)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "help_protocol_vless")
+@router.callback_query(F.data == "help_main")
+async def show_vless_os_menu(callback: CallbackQuery) -> None:
+    """Show OS selection menu for VLESS."""
+    text = t("instruction.select_os", "Выберите вашу платформу (операционную систему):")
     reply_markup = get_help_main_keyboard()
 
     try:
@@ -148,9 +165,13 @@ async def show_full_instruction(callback: CallbackQuery) -> None:
     os_name = callback.data.replace("instruction_full_", "")
     instructions = load_instructions()
     text = instructions.get(os_name, {}).get(
-        "full_instruction", t("instruction.not_found", "⚠️ Инструкция не найдена.")
+        "full_instruction", t("instruction.not_found", "❌ Текст инструкции не найден.")
     )
-    reply_markup = get_instruction_menu_keyboard(os_name)
+    
+    if os_name in ["awg", "mtproxy"]:
+        reply_markup = get_back_keyboard("instruction_menu")
+    else:
+        reply_markup = get_instruction_menu_keyboard(os_name)
 
     try:
         await callback.message.edit_text(text, reply_markup=reply_markup, parse_mode="HTML")
@@ -314,10 +335,17 @@ async def faq_main(callback: CallbackQuery) -> None:
     faq_list = load_instructions().get("faq", {}).get("faq", [])
     if not faq_list:
         await callback.message.edit_text(
-            t("faq.empty", "Частые вопросы пока не добавлены."),
-            reply_markup=get_help_main_keyboard(),
+            t("faq.empty", "К сожалению список пуст."),
+            reply_markup=get_protocol_selection_keyboard(),
         )
         await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        t("faq.title", "Частые вопросы:"),
+        reply_markup=get_faq_list_keyboard(faq_list),
+    )
+    await callback.answer()
         return
 
     await callback.message.edit_text(

@@ -1,0 +1,17 @@
+full_instruction: |
+  <b>🛡 Инструкция для AmneziaWG</b>
+
+  1. Скачайте приложение AmneziaWG для вашего устройства:
+  • <a href="https://apps.apple.com/us/app/amneziawg/id6478942365">iOS / iPadOS</a>
+  • <a href="https://play.google.com/store/apps/details?id=org.amnezia.awg">Android</a>
+  • <a href="https://github.com/amnezia-vpn/amneziawg-windows-client/releases">Windows</a>
+  • <a href="https://github.com/amnezia-vpn/amneziawg-mac-client/releases">macOS</a>
+  
+  2. Перейдите в раздел "Мои подписки" в боте.
+  3. Выберите подписку AmneziaWG.
+  4. Скачайте конфигурационный файл (<code>.conf</code>).
+  5. Откройте приложение AmneziaWG.
+  6. Нажмите "Добавить туннель" (Add Tunnel) и выберите скачанный файл.
+  7. Включите туннель (переключатель должен стать зеленым).
+  
+  ✅ <b>Готово!</b> VPN подключен.
