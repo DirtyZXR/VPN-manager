@@ -288,7 +288,7 @@ async def _render_step(callback: CallbackQuery, step_index: int, state: FSMConte
             photo = FSInputFile(media_path)
             await callback.message.answer_photo(
                 photo,
-                caption=f"{title}\n\n{text}",
+                caption=f"<b>{title}</b>\n\n{text}",
                 reply_markup=keyboard,
                 parse_mode="HTML",
             )
@@ -339,13 +339,6 @@ async def faq_main(callback: CallbackQuery) -> None:
             reply_markup=get_protocol_selection_keyboard(),
         )
         await callback.answer()
-        return
-
-    await callback.message.edit_text(
-        t("faq.title", "Частые вопросы:"),
-        reply_markup=get_faq_list_keyboard(faq_list),
-    )
-    await callback.answer()
         return
 
     await callback.message.edit_text(

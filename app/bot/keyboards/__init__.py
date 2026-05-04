@@ -36,6 +36,7 @@ from app.bot.keyboards.inline import (
     get_user_actions_keyboard,
     get_user_keyboard,
     get_users_keyboard,
+    get_inbound_selection_for_template,
 )
 
 __all__ = [
