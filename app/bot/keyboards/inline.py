@@ -494,22 +494,37 @@ def get_clients_page_keyboard(
     return builder.as_markup()
 
 
-def get_help_main_keyboard() -> InlineKeyboardMarkup:
-    """Get main help and FAQ keyboard.
+def get_protocol_selection_keyboard() -> InlineKeyboardMarkup:
+    """Get protocol selection keyboard.
 
     Returns:
         Inline keyboard markup
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text=t("keyboards.help.os_ios", "iOS / Mac"), callback_data="help_os_ios")
-    builder.button(text=t("keyboards.help.os_android", "Android"), callback_data="help_os_android")
-    builder.button(text=t("keyboards.help.os_windows", "Windows"), callback_data="help_os_windows")
-    builder.button(text=t("keyboards.help.os_linux", "Linux"), callback_data="help_os_linux")
-    builder.button(text=t("keyboards.help.faq", "Частые вопросы (FAQ)"), callback_data="faq_main")
+    builder.button(text=t("keyboards.help.protocol_vless", "🛡 VLESS (Xray)"), callback_data="help_protocol_vless")
+    builder.button(text=t("keyboards.help.protocol_awg", "🛡 AmneziaWG"), callback_data="instruction_full_awg")
+    builder.button(text=t("keyboards.help.protocol_mtproxy", "🛡 MTProxy (Telegram)"), callback_data="instruction_full_mtproxy")
+    builder.button(text=t("keyboards.help.faq", "❓ Частые вопросы (FAQ)"), callback_data="faq_main")
+    builder.button(text=t("keyboards.common.main_menu", "🔙 Главное меню"), callback_data="main_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_help_main_keyboard() -> InlineKeyboardMarkup:
+    """Get VLESS OS selection keyboard.
+
+    Returns:
+        Inline keyboard markup
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text=t("keyboards.help.os_ios", "🍎 iOS / Mac"), callback_data="help_os_ios")
+    builder.button(text=t("keyboards.help.os_android", "🤖 Android"), callback_data="help_os_android")
+    builder.button(text=t("keyboards.help.os_windows", "🖥 Windows"), callback_data="help_os_windows")
+    builder.button(text=t("keyboards.help.os_linux", "🐧 Linux"), callback_data="help_os_linux")
     builder.button(
-        text=t("keyboards.common.main_menu", "🔙 Главное меню"), callback_data="main_menu"
+        text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="instruction_menu"
     )
-    builder.adjust(2, 2, 1, 1)
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 
@@ -532,7 +547,7 @@ def get_instruction_menu_keyboard(os_name: str) -> InlineKeyboardMarkup:
         callback_data=f"instruction_full_{os_name}",
     )
     builder.button(
-        text=t("keyboards.help.back_to_os", "🔙 Назад к выбору ОС"), callback_data="help_main"
+        text=t("keyboards.help.back_to_os", "🔙 Назад к выбору ОС"), callback_data="help_protocol_vless"
     )
     builder.adjust(1)
     return builder.as_markup()
@@ -551,7 +566,7 @@ def get_faq_list_keyboard(faq_list: list[dict]) -> InlineKeyboardMarkup:
     for i, item in enumerate(faq_list):
         builder.button(text=item["question"], callback_data=f"faq_q_{i}")
 
-    builder.button(text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="help_main")
+    builder.button(text=t("keyboards.common.back_icon", "🔙 Назад"), callback_data="instruction_menu")
     builder.adjust(1)
     return builder.as_markup()
 

@@ -13,10 +13,10 @@ from app.bot.keyboards.inline import (
     get_faq_answer_keyboard,
     get_faq_list_keyboard,
     get_help_main_keyboard,
-    get_inbound_selection_for_template,
     get_inbounds_keyboard,
     get_instruction_menu_keyboard,
     get_main_menu_keyboard,
+    get_protocol_selection_keyboard,
     get_public_templates_keyboard,
     get_registration_keyboard,
     get_request_admin_keyboard,
@@ -36,6 +36,7 @@ from app.bot.keyboards.inline import (
     get_user_actions_keyboard,
     get_user_keyboard,
     get_users_keyboard,
+    get_inbound_selection_for_template,
 )
 
 __all__ = [
@@ -53,6 +54,7 @@ __all__ = [
     "get_clients_keyboard",
     "get_clients_page_keyboard",
     "get_client_search_keyboard",
+    "get_protocol_selection_keyboard",
     "get_help_main_keyboard",
     "get_instruction_menu_keyboard",
     "get_step_navigation_keyboard",
