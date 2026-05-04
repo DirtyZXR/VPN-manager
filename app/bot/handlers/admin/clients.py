@@ -4,7 +4,7 @@ import contextlib
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
@@ -304,7 +304,18 @@ async def show_client_subscriptions(
         return
 
     await state.clear()
-    client_id = int(callback.data.split("_")[-1])
+    
+    # Parse client_id and page
+    parts = callback.data.split("_")
+    
+    # Format can be: client_subscriptions_123 or client_subscriptions_p_0_123
+    page = 0
+    if "_p_" in callback.data:
+        p_index = parts.index("p")
+        page = int(parts[p_index + 1])
+        client_id = int(parts[-1])
+    else:
+        client_id = int(parts[-1])
 
     from app.services.new_subscription_service import NewSubscriptionService
 
@@ -318,12 +329,38 @@ async def show_client_subscriptions(
             "📝 У клиента нет подписок.\n\nНажмите '➕ Создать подписку' для добавления первой подписки.",
         )
     else:
-        text = t("admin.clients.subscriptions.title", "📝 Подписки клиента:\n\n")
+        per_page = 5
+        total_count = len(subscriptions)
+        total_pages = max(1, -(-total_count // per_page))
+        
+        if page < 0:
+            page = 0
+        elif page >= total_pages:
+            page = total_pages - 1
+
+        start_idx = page * per_page
+        end_idx = start_idx + per_page
+        current_subs = subscriptions[start_idx:end_idx]
+
+        if total_pages > 1:
+            text = t(
+                "admin.clients.subscriptions.title_paginated", 
+                "📝 Подписки клиента ({count}) | Страница {current} из {total}:\n\n",
+                count=total_count,
+                current=page + 1,
+                total=total_pages
+            )
+        else:
+            text = t(
+                "admin.clients.subscriptions.title", 
+                "📝 Подписки клиента ({count}):\n\n",
+                count=total_count
+            )
 
     kb = InlineKeyboardBuilder()
 
     if subscriptions:
-        for sub in subscriptions:
+        for sub in current_subs:
             status = "✅" if sub.is_active else "❌"
             expiry = (
                 sub.expiry_date.strftime("%d.%m.%Y")
@@ -347,16 +384,39 @@ async def show_client_subscriptions(
             )
 
             # Add button for each subscription
-            kb.button(text=f"📝 {sub.name}", callback_data=f"client_sub_detail_{sub.id}")
+            kb.row(InlineKeyboardButton(text=f"📝 {sub.name}", callback_data=f"client_sub_detail_{sub.id}"))
 
-    kb.button(
+        if 'total_pages' in locals() and total_pages > 1:
+            pagination_row = []
+            if page > 0:
+                pagination_row.append(
+                    InlineKeyboardButton(
+                        text=t("keyboards.pagination.prev", "⬅️ Назад"),
+                        callback_data=f"client_subscriptions_p_{page - 1}_{client_id}",
+                    )
+                )
+            pagination_row.append(
+                InlineKeyboardButton(
+                    text=f"📄 {page + 1}/{total_pages}",
+                    callback_data="instruction_page_current",
+                )
+            )
+            if page < total_pages - 1:
+                pagination_row.append(
+                    InlineKeyboardButton(
+                        text=t("keyboards.pagination.next", "Вперед ➡️"),
+                        callback_data=f"client_subscriptions_p_{page + 1}_{client_id}",
+                    )
+                )
+            kb.row(*pagination_row)
+
+    kb.row(InlineKeyboardButton(
         text=t("admin.clients.btn.create_subscription", "➕ Создать подписку"),
         callback_data=f"client_create_subscription_{client_id}",
-    )
-    kb.button(
+    ))
+    kb.row(InlineKeyboardButton(
         text=t("admin.clients.btn.back", "🔙 Назад"), callback_data=f"client_select_{client_id}"
-    )
-    kb.adjust(1)
+    ))
 
     try:
         await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")

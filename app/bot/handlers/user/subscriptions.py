@@ -22,6 +22,7 @@ router = Router()
 
 
 @router.callback_query(F.data == "my_subscriptions")
+@router.callback_query(F.data.startswith("my_subscriptions_p_"))
 async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
     """Show user's subscriptions."""
     if not client:
@@ -29,6 +30,13 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
             t("user.errors.client_not_found", "❌ Клиент не найден."), show_alert=True
         )
         return
+
+    page = 0
+    if callback.data.startswith("my_subscriptions_p_"):
+        try:
+            page = int(callback.data.split("_p_")[1])
+        except ValueError:
+            pass
 
     try:
         async with async_session_factory() as session:
@@ -51,13 +59,35 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
             )
             return
 
-        text = t(
-            "user.subs.list_header", "📝 Ваши подписки ({count}):\n\n", count=len(subscriptions)
-        )
+        per_page = 5
+        total_count = len(subscriptions)
+        total_pages = max(1, -(-total_count // per_page))
+        
+        if page < 0:
+            page = 0
+        elif page >= total_pages:
+            page = total_pages - 1
+
+        start_idx = page * per_page
+        end_idx = start_idx + per_page
+        current_subs = subscriptions[start_idx:end_idx]
+
+        if total_pages > 1:
+            text = t(
+                "user.subs.list_header_paginated", 
+                "📝 Ваши подписки ({count}) | Страница {current} из {total}:\n\n", 
+                count=total_count,
+                current=page + 1,
+                total=total_pages
+            )
+        else:
+            text = t(
+                "user.subs.list_header", "📝 Ваши подписки ({count}):\n\n", count=total_count
+            )
 
         builder = InlineKeyboardBuilder()
 
-        for sub in subscriptions:
+        for sub in current_subs:
             # Use new subscription status property
             status = sub.subscription_status
 
@@ -71,20 +101,43 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
             )
 
             # Add button for each subscription
-            builder.button(
+            builder.row(InlineKeyboardButton(
                 text=t("user.subs.btn_sub", "📝 {name}", name=sub.name),
                 callback_data=f"user_sub_select_{sub.id}",
-            )
+            ))
 
-        builder.button(
+        if total_pages > 1:
+            pagination_row = []
+            if page > 0:
+                pagination_row.append(
+                    InlineKeyboardButton(
+                        text=t("keyboards.pagination.prev", "⬅️ Назад"),
+                        callback_data=f"my_subscriptions_p_{page - 1}",
+                    )
+                )
+            pagination_row.append(
+                InlineKeyboardButton(
+                    text=f"📄 {page + 1}/{total_pages}",
+                    callback_data="instruction_page_current",
+                )
+            )
+            if page < total_pages - 1:
+                pagination_row.append(
+                    InlineKeyboardButton(
+                        text=t("keyboards.pagination.next", "Вперед ➡️"),
+                        callback_data=f"my_subscriptions_p_{page + 1}",
+                    )
+                )
+            builder.row(*pagination_row)
+
+        builder.row(InlineKeyboardButton(
             text=t("user.subs.btn_urls", "🔗 Subscription URLs"), callback_data="all_sub_urls"
-        )
-        builder.button(
+        ))
+        builder.row(InlineKeyboardButton(
             text=t("user.subs.btn_status", "📊 Сроки и остатки"),
             callback_data="show_subscription_status",
-        )
-        builder.button(text=t("common.btn_back", "🔙 Назад"), callback_data="main_menu")
-        builder.adjust(1)
+        ))
+        builder.row(InlineKeyboardButton(text=t("common.btn_back", "🔙 Назад"), callback_data="main_menu"))
 
         await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
     except Exception as e:
