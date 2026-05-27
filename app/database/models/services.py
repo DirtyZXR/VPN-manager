@@ -49,6 +49,15 @@ class XUIPanel(Base, TimestampMixin):
         SADateTime(timezone=True), nullable=True
     )
 
+    # 2FA
+    two_factor_code_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # API Token auth (v3.1.0+)
+    api_token_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auth_mode: Mapped[str] = mapped_column(
+        String(20), default="credentials", nullable=False
+    )
+
 
 class AWGService(Base, TimestampMixin):
     """AmneziaWG service configuration."""

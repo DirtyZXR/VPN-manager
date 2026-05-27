@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload, with_polymorphic
 
 from app.services.protocol_sync import ProtocolSyncBase, register
+from app.xui_client.models import ensure_settings_dict
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +53,7 @@ class XUIProtocolSync(ProtocolSyncBase):
             return 0
 
         try:
-            settings_dict = json.loads(xui_inbound.settings)
+            settings_dict = ensure_settings_dict(xui_inbound.settings)
             xui_clients = settings_dict.get("clients", [])
         except (json.JSONDecodeError, TypeError) as e:
             logger.error(f"Ошибка парсинга settings для inbound {inbound.id}: {e}")

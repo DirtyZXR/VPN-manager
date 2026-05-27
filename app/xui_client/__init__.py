@@ -11,6 +11,7 @@ from app.xui_client.exceptions import (
 from app.xui_client.models import (
     XUIAddClientRequest,
     XUIInbound,
+    ensure_settings_dict,
 )
 from app.xui_client.models import (
     XUIClient as XUIClientModel,
@@ -26,4 +27,5 @@ __all__ = [
     "XUIInbound",
     "XUIClientModel",
     "XUIAddClientRequest",
+    "ensure_settings_dict",
 ]

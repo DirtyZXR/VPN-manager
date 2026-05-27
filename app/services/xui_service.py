@@ -13,7 +13,15 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.database.models import Inbound, Server, XUIInbound
 from app.database.models.services import XUIPanel
-from app.xui_client import XUIClient, XUIError
+from app.xui_client import XUIClient, XUIConnectionError, XUIError
+
+
+def _settings_to_str(val: dict | str | None) -> str:
+    if val is None:
+        return "{}"
+    if isinstance(val, str):
+        return val
+    return json.dumps(val)
 
 
 class XUIService:
@@ -81,27 +89,47 @@ class XUIService:
             if time_since_fail.total_seconds() < 60:
                 raise XUIConnectionError(f"Server {server.id} connection recently failed, skipping retry")
 
-        if (
-            not server.xui_panel
-            or not getattr(server, "ip_address", None)
-            or not server.xui_panel.username
-            or not server.xui_panel.password_encrypted
-        ):
+        if not server.xui_panel:
             raise XUIError(
                 "Server credentials not configured or missing XUI panel. Please setup services first."
             )
 
-        password = self._decrypt_password(server.xui_panel.password_encrypted)
-        # Use verify_ssl from server model, default to True for existing servers
-        verify_ssl = getattr(server.xui_panel, "verify_ssl", True)
+        panel = server.xui_panel
+        auth_mode = getattr(panel, "auth_mode", "credentials")
 
-        # Build full URL for API requests using server URL + panel path
-        panel_path = getattr(server.xui_panel, "panel_path", "/")
+        api_token: str | None = None
+        if getattr(panel, "api_token_encrypted", None):
+            try:
+                api_token = self._decrypt_password(panel.api_token_encrypted)
+            except Exception as e:
+                logger.warning("Failed to decrypt API token for server {}: {}", server.id, e)
+
+        if auth_mode == "token" and not api_token:
+            raise XUIError(
+                f"Server {server.id} is in token auth mode but no API token is configured."
+            )
+
+        password = ""
+        two_factor_code: str | None = None
+        if auth_mode == "credentials":
+            if not panel.username or not panel.password_encrypted:
+                raise XUIError(
+                    "Server credentials not configured. Please setup services first."
+                )
+            password = self._decrypt_password(panel.password_encrypted)
+            if getattr(panel, "two_factor_code_encrypted", None):
+                try:
+                    two_factor_code = self._decrypt_password(panel.two_factor_code_encrypted)
+                except Exception as e:
+                    logger.warning("Failed to decrypt 2FA code for server {}: {}", server.id, e)
+
+        verify_ssl = getattr(panel, "verify_ssl", True)
+
+        panel_path = getattr(panel, "panel_path", "/")
         from urllib.parse import urljoin
 
-        # Build base url
-        if getattr(server.xui_panel, "url", None):
-            base_url = server.xui_panel.url
+        if getattr(panel, "url", None):
+            base_url = panel.url
             if not base_url.endswith(panel_path) and panel_path != "/":
                 base_url = urljoin(base_url, panel_path)
         else:
@@ -109,12 +137,11 @@ class XUIService:
             url = ip if ip.startswith("http") else f"https://{ip}" if verify_ssl else f"http://{ip}"
             base_url = urljoin(url, panel_path)
 
-        # Try to load saved cookies
         saved_cookies = None
-        if getattr(server.xui_panel, "session_cookies_encrypted", None):
+        if auth_mode == "credentials" and getattr(panel, "session_cookies_encrypted", None):
             try:
                 saved_cookies = json.loads(
-                    self._decrypt_password(server.xui_panel.session_cookies_encrypted)
+                    self._decrypt_password(panel.session_cookies_encrypted)
                 )
                 logger.debug("Loaded saved cookies for server {}", server.id)
             except Exception as e:
@@ -122,11 +149,13 @@ class XUIService:
 
         client = XUIClient(
             base_url=base_url,
-            username=server.xui_panel.username,
+            username=panel.username or "",
             password=password,
             timeout=self._timeout,
             verify_ssl=verify_ssl,
             saved_cookies=saved_cookies,
+            two_factor_code=two_factor_code,
+            api_token=api_token,
         )
         try:
             await client.connect()
@@ -134,8 +163,8 @@ class XUIService:
             self._failed_clients[server.id] = datetime.now(UTC)
             raise
 
-        # Save cookies after successful connection
-        self._save_session_cookies(server, client)
+        if auth_mode == "credentials":
+            self._save_session_cookies(server, client)
 
         self._clients[server.id] = client
         self._failed_clients.pop(server.id, None)
@@ -159,6 +188,29 @@ class XUIService:
                 logger.debug("Saved session cookies for server {}", server.id)
         except Exception as e:
             logger.warning("Failed to save session cookies for server {}: {}", server.id, e)
+
+    async def create_and_save_api_token(self, server: Server) -> str:
+        """Create an API token on the panel and save it to DB.
+
+        Args:
+            server: Server with xui_panel configured
+
+        Returns:
+            The created token string
+
+        Raises:
+            XUIError: If token creation fails
+        """
+        client = await self._get_client(server)
+        token = await client.create_api_token()
+
+        server.xui_panel.api_token_encrypted = self._encrypt_password(token)
+
+        client.api_token = token
+        self._save_session_cookies(server, client)
+
+        logger.info("Created and saved API token for server {}", server.id)
+        return token
 
     async def close_client(self, server_id: int) -> None:
         """Close XUI client for server.
@@ -297,6 +349,8 @@ class XUIService:
         ssh_port: int | None = None,
         ssh_password: str | None = None,
         ssh_key: str | None = None,
+        auth_mode: str | None = None,
+        api_token: str | None = None,
     ) -> Server | None:
         """Update server.
 
@@ -344,17 +398,11 @@ class XUIService:
             server.ssh_key_encrypted = self._encrypt_password(ssh_key)
 
         # Handle XUI Panel
-        if any(
-            v is not None
-            for v in [
-                username,
-                password,
-                verify_ssl,
-                panel_path,
-                subscription_path,
-                subscription_json_path,
-            ]
-        ):
+        panel_fields = [
+            username, password, verify_ssl, panel_path,
+            subscription_path, subscription_json_path, auth_mode, api_token,
+        ]
+        if any(v is not None for v in panel_fields):
             if not getattr(server, "xui_panel", None):
                 server.xui_panel = XUIPanel(server_id=server.id)
                 self.session.add(server.xui_panel)
@@ -373,6 +421,10 @@ class XUIService:
                 server.xui_panel.subscription_path = subscription_path
             if subscription_json_path is not None:
                 server.xui_panel.subscription_json_path = subscription_json_path
+            if auth_mode is not None:
+                server.xui_panel.auth_mode = auth_mode
+            if api_token is not None:
+                server.xui_panel.api_token_encrypted = self._encrypt_password(api_token)
 
         # Close existing client to force reconnection
         await self.close_client(server_id)
@@ -453,17 +505,16 @@ class XUIService:
                 inbound.remark = xui_inbound.remark
                 inbound.protocol = xui_inbound.protocol
                 inbound.port = xui_inbound.port
-                inbound.settings_json = xui_inbound.settings or "{}"
+                inbound.settings_json = _settings_to_str(xui_inbound.settings)
                 inbound.is_active = xui_inbound.enable
             else:
-                # Create new
                 inbound = XUIInbound(
                     server_id=server_id,
                     xui_id=xui_inbound.id,
                     remark=xui_inbound.remark,
                     protocol=xui_inbound.protocol,
                     port=xui_inbound.port,
-                    settings_json=xui_inbound.settings or "{}",
+                    settings_json=_settings_to_str(xui_inbound.settings),
                     is_active=xui_inbound.enable,
                 )
                 self.session.add(inbound)
