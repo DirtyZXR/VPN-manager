@@ -39,7 +39,8 @@ class ServerManagement(StatesGroup):
     waiting_for_edit_username = State()
     waiting_for_edit_password = State()
     waiting_for_edit_verify_ssl = State()
-    
+    waiting_for_edit_api_token = State()
+
     # Desync restore
     waiting_for_restore_file = State()
 
@@ -195,6 +196,8 @@ class XUIInstall(StatesGroup):
     waiting_for_web_path = State()
     waiting_for_sub_path = State()
     waiting_for_sub_json_path = State()
+    waiting_for_auth_mode = State()
+    waiting_for_api_token = State()
     waiting_for_credentials_mode = State()
     waiting_for_username = State()
     waiting_for_password = State()

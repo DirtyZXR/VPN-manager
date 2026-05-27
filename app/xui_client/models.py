@@ -1,9 +1,21 @@
 """Pydantic models for XUI API."""
 
+import json
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+def ensure_settings_dict(val: dict | str | None) -> dict:
+    if val is None:
+        return {}
+    if isinstance(val, dict):
+        return val
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 class XUILoginRequest(BaseModel):
@@ -38,16 +50,18 @@ class XUIStreamSettings(BaseModel):
 class XUIInbound(BaseModel):
     """Inbound model from XUI API."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     id: int
     enable: bool = True
     remark: str
     listen: str | None = None
     port: int
     protocol: str
-    settings: str | None = None  # JSON string
-    stream_settings: str | None = None  # JSON string
+    settings: dict | str | None = None
+    stream_settings: dict | str | None = Field(None, alias="streamSettings")
     tag: str | None = None
-    sniffing: str | None = None
+    sniffing: dict | str | None = None
 
 
 class XUIClient(BaseModel):
