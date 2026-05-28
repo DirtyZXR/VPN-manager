@@ -18,6 +18,7 @@ from app.xui_client.exceptions import (
 from app.xui_client.models import (
     XUIAddClientRequest,
     XUIInbound,
+    ensure_settings_dict,
 )
 
 
@@ -27,27 +28,21 @@ class XUIClient:
     def __init__(
         self,
         base_url: str,
-        username: str,
-        password: str,
+        username: str = "",
+        password: str = "",
         timeout: int = 30,
         verify_ssl: bool = True,
         saved_cookies: dict[str, Any] | None = None,
+        two_factor_code: str | None = None,
+        api_token: str | None = None,
     ) -> None:
-        """Initialize XUI client.
-
-        Args:
-            base_url: Base URL of 3x-ui panel (e.g., https://panel.example.com)
-            username: Panel username
-            password: Panel password
-            timeout: Request timeout in seconds
-            verify_ssl: Whether to verify SSL certificates (default: True)
-            saved_cookies: Saved session cookies to reuse (optional)
-        """
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.verify_ssl = verify_ssl
+        self.two_factor_code = two_factor_code
+        self.api_token = api_token
         self._session: aiohttp.ClientSession | None = None
         self._cookies: dict[str, Any] = saved_cookies or {}
         self._session_created_at: datetime | None = None
@@ -110,12 +105,16 @@ class XUIClient:
 
         logger.info("Attempting to connect to {}", self.base_url)
 
-        # Try to use saved cookies first
+        if self.api_token:
+            if await self._test_bearer_token():
+                logger.info("Connected via API token to {}", self.base_url)
+                return
+            logger.warning("API token invalid for {}, falling back to login", self.base_url)
+
         if self._cookies and await self._test_session():
             logger.info("Successfully reusing saved session for {}", self.base_url)
             return
 
-        # Fall back to login
         try:
             await self.login()
             logger.info("Successfully connected to {}", self.base_url)
@@ -179,8 +178,14 @@ class XUIClient:
             request_cookies = dict(self._cookies)
             session.cookie_jar.update_cookies(self._cookies)
 
+        headers = kwargs.pop("headers", {})
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
+
         try:
-            async with session.request(method, url, cookies=request_cookies or None, **kwargs) as response:
+            async with session.request(
+                method, url, cookies=request_cookies or None, headers=headers or None, **kwargs
+            ) as response:
                 if response.status == 401:
                     raise XUIAuthError("Authentication failed")
 
@@ -224,11 +229,15 @@ class XUIClient:
         logger.info(f"Login attempt to: {url}")
         logger.info(f"Username: {self.username}, SSL verify: {self.verify_ssl}")
 
+        login_payload: dict[str, Any] = {
+            "username": self.username,
+            "password": self.password,
+        }
+        if self.two_factor_code:
+            login_payload["twoFactorCode"] = self.two_factor_code
+
         try:
-            async with session.post(
-                url,
-                data={"username": self.username, "password": self.password},
-            ) as response:
+            async with session.post(url, json=login_payload) as response:
                 if response.status != 200:
                     raise XUIAuthError(f"Login failed: HTTP {response.status}")
 
@@ -255,11 +264,9 @@ class XUIClient:
         session = self._get_session()
 
         try:
-            # Load saved cookies into session
             for key, value in self._cookies.items():
                 session.cookie_jar.update_cookies({key: value})
 
-            # Test with a simple API call
             async with session.get(f"{self.base_url.rstrip('/')}/panel/api/inbounds/list") as response:
                 if response.status == 200:
                     data = await response.json()
@@ -267,14 +274,26 @@ class XUIClient:
                         logger.info(f"Saved session is valid for {self.base_url}")
                         return True
 
-            # Session is invalid, clear cookies
             self._cookies = {}
             return False
 
         except Exception:
-            # Any error means session is invalid
             self._cookies = {}
             return False
+
+    async def _test_bearer_token(self) -> bool:
+        """Test if API token is valid.
+
+        Returns:
+            True if token works
+        """
+        try:
+            data = await self._request("GET", "/panel/api/inbounds/list")
+            if data.get("success", False):
+                return True
+        except Exception:
+            pass
+        return False
 
     def get_session_cookies(self) -> dict[str, Any]:
         """Get current session cookies.
@@ -452,10 +471,9 @@ class XUIClient:
         Returns:
             True if successful
         """
-        # First get current client data from inbound
         inbound = await self.get_inbound(inbound_id)
 
-        settings_data = json.loads(inbound.settings or "{}")
+        settings_data = ensure_settings_dict(inbound.settings)
         clients_list = settings_data.get("clients", [])
 
         client_data = None
@@ -467,10 +485,8 @@ class XUIClient:
         if not client_data:
             raise XUINotFoundError(f"Client {client_uuid} not found in inbound {inbound_id}")
 
-        # Update enable flag
         client_data["enable"] = enable
 
-        # Build update request
         client = XUIAddClientRequest(**client_data)
         return await self.update_client(inbound_id, client)
 
@@ -490,10 +506,9 @@ class XUIClient:
         Returns:
             True if successful
         """
-        # First get current client data from inbound
         inbound = await self.get_inbound(inbound_id)
 
-        settings_data = json.loads(inbound.settings or "{}")
+        settings_data = ensure_settings_dict(inbound.settings)
         clients_list = settings_data.get("clients", [])
 
         client_data = None
@@ -564,3 +579,34 @@ class XUIClient:
 
         logger.info(f"Reset traffic for client {client_email}")
         return True
+
+    async def create_api_token(self, name: str = "vpnbot") -> str:
+        """Create a Bearer API token on the panel.
+
+        Requires an active session (cookie or existing token).
+
+        Args:
+            name: Token name (must be unique, 1-64 chars)
+
+        Returns:
+            The created token string
+
+        Raises:
+            XUIError: If token creation fails
+        """
+        data = await self._request(
+            "POST",
+            "/panel/setting/apiTokens/create",
+            json={"name": name},
+        )
+
+        if not data.get("success", False):
+            raise XUIError(f"Failed to create API token: {data.get('msg', 'Unknown error')}")
+
+        token_obj = data.get("obj", {})
+        token = token_obj.get("token", "")
+        if not token:
+            raise XUIError("API token creation returned empty token")
+
+        logger.info("Created API token '{}' for {}", name, self.base_url)
+        return token

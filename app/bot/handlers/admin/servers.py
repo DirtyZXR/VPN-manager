@@ -430,7 +430,6 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
             )
             return
 
-        # Get inbounds from database
         inbounds = await service.get_server_inbounds_all_status(server_id)
 
         if not inbounds:
@@ -442,7 +441,51 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
                 ),
                 reply_markup=get_back_keyboard(f"server_select_{server_id}"),
             )
-    await callback.answer()
+            await callback.answer()
+            return
+
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+        text = t(
+            "admin.servers.inbounds.title",
+            "📊 Inbounds сервера <b>{name}</b>\n\n",
+            name=server.name,
+        )
+
+        for ib in inbounds:
+            status = "✅" if ib.is_active else "❌"
+            line = f"{status} <b>{ib.remark}</b> ({ib.protocol})"
+            if ib.port:
+                line += f"\n   Порт: {ib.port}"
+            if hasattr(ib, "client_count"):
+                line += f"\n   Клиентов: {ib.client_count}"
+            text += line + "\n\n"
+
+        kb = InlineKeyboardBuilder()
+        kb.button(
+            text=t("admin.servers.buttons.stats", "📊 Статистика"),
+            callback_data=f"inbound_stats_{server_id}",
+        )
+        kb.button(
+            text=t("admin.servers.buttons.cleanup_inbounds", "🧹 Очистить неактивные"),
+            callback_data=f"cleanup_inbounds_{server_id}",
+        )
+        kb.button(
+            text=t("admin.servers.buttons.sync", "🔄 Синхронизировать"),
+            callback_data=f"server_sync_{server_id}",
+        )
+        kb.button(
+            text=t("admin.servers.buttons.back", "🔙 Назад"),
+            callback_data=f"server_select_{server_id}",
+        )
+        kb.adjust(1)
+
+        await callback.message.edit_text(
+            text,
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+        )
+        await callback.answer()
 
 
 # ── 3x-ui Installation Flow ────────────────────────────────────────────
@@ -873,7 +916,7 @@ async def xui_paths_auto(callback: CallbackQuery, state: FSMContext) -> None:
         sub_path=f"/{r(6)}/",
         sub_json_path=f"/{r(6)}/",
     )
-    await _xui_ask_credentials_mode(callback.message, state)
+    await _xui_ask_auth_mode(callback.message, state)
 
 
 @router.callback_query(XUIInstall.waiting_for_paths_mode, F.data == "xui_paths_manual")
@@ -930,7 +973,76 @@ async def xui_sub_json_path(message: TgMessage, state: FSMContext) -> None:
     if not path.endswith("/"):
         path += "/"
     await state.update_data(sub_json_path=path)
-    await _xui_ask_credentials_mode(message, state)
+    await _xui_ask_auth_mode(message, state)
+
+
+async def _xui_ask_auth_mode(message_or_callback, state: FSMContext) -> None:
+    """Ask auth mode: API Token or Username+Password."""
+    await state.set_state(XUIInstall.waiting_for_auth_mode)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="👤 Логин и пароль", callback_data="xui_auth_credentials")
+    kb.button(text="🔑 API Токен", callback_data="xui_auth_token")
+    kb.button(text="🔙 Отмена", callback_data="cancel")
+    kb.adjust(1)
+
+    target = message_or_callback if isinstance(message_or_callback, TgMessage) else message_or_callback.message
+    await target.edit_text(
+        "🔐 <b>Способ авторизации</b>\n\n"
+        "👤 <b>Логин и пароль</b> — бот создаст API-токен автоматически\n"
+        "🔑 <b>API Токен</b> — вставьте готовый токен из панели 3x-ui\n\n"
+        "<i>Токен можно получить в 3x-ui: Settings → Security → API Tokens</i>",
+        reply_markup=kb.as_markup(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(XUIInstall.waiting_for_auth_mode, F.data == "xui_auth_credentials")
+async def xui_auth_credentials(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(auth_mode="credentials")
+    await _xui_ask_credentials_mode(callback, state)
+
+
+@router.callback_query(XUIInstall.waiting_for_auth_mode, F.data == "xui_auth_token")
+async def xui_auth_token_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(XUIInstall.waiting_for_api_token)
+    await callback.message.edit_text(
+        "🔑 <b>Введите API-токен</b>\n\n"
+        "Скопируйте токен из панели 3x-ui:\n"
+        "<code>Settings → Security → API Tokens</code>\n\n"
+        "Или создайте новый токен в панели.",
+        reply_markup=get_back_keyboard("cancel"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(XUIInstall.waiting_for_api_token)
+async def xui_api_token(message: TgMessage, state: FSMContext) -> None:
+    token = message.text.strip()
+    if not token or len(token) < 10:
+        await message.answer("❌ Токен слишком короткий. Введите корректный API-токен.")
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    await state.update_data(
+        auth_mode="token",
+        api_token=token,
+        username="",
+        password="",
+    )
+
+    if data.get("connect_existing"):
+        await state.update_data(inbound_ranges=[(10000, 10100)])
+        await _xui_show_confirm(message, state)
+    else:
+        await _xui_ask_inbound_range(message, state)
 
 
 async def _xui_ask_credentials_mode(message_or_callback, state: FSMContext) -> None:
@@ -1119,11 +1231,13 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
     web_path = data["web_path"]
     sub_path = data["sub_path"]
     sub_json_path = data["sub_json_path"]
-    username = data["username"]
-    password = data["password"]
+    username = data.get("username", "")
+    password = data.get("password", "")
     inbound_ranges = data["inbound_ranges"]
     force = data.get("force_reinstall", False)
     connect_existing = data.get("connect_existing", False)
+    auth_mode = data.get("auth_mode", "credentials")
+    api_token = data.get("api_token")
 
     await state.clear()
 
@@ -1188,8 +1302,9 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             from app.database.models.services import XUIPanel
             from app.utils import encrypt_password
 
-            encrypted_pwd = encrypt_password(password)
             panel_url = f"https://{domain}:{caddy_port}"
+            encrypted_pwd = encrypt_password(password) if password else None
+            encrypted_token = encrypt_password(api_token) if api_token else None
 
             existing = await session.execute(
                 select(XUIPanel).where(XUIPanel.server_id == server.id)
@@ -1197,25 +1312,33 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
             existing_panel = existing.scalar_one_or_none()
             if existing_panel:
                 existing_panel.url = panel_url
-                existing_panel.username = username
-                existing_panel.password_encrypted = encrypted_pwd
                 existing_panel.panel_path = web_path
                 existing_panel.subscription_path = sub_path
                 existing_panel.subscription_json_path = sub_json_path
                 existing_panel.caddy_port = caddy_port
                 existing_panel.inbound_ranges = inbound_ranges
+                existing_panel.auth_mode = auth_mode
+                if auth_mode == "token":
+                    existing_panel.api_token_encrypted = encrypted_token
+                    existing_panel.username = None
+                    existing_panel.password_encrypted = None
+                else:
+                    existing_panel.username = username
+                    existing_panel.password_encrypted = encrypted_pwd
             else:
                 panel = XUIPanel(
                     server_id=server.id,
                     url=panel_url,
-                    username=username,
-                    password_encrypted=encrypted_pwd,
+                    username=username if auth_mode == "credentials" else None,
+                    password_encrypted=encrypted_pwd if auth_mode == "credentials" else None,
                     panel_path=web_path,
                     subscription_path=sub_path,
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
                     inbound_ranges=inbound_ranges,
                     verify_ssl=False,
+                    auth_mode=auth_mode,
+                    api_token_encrypted=encrypted_token,
                 )
                 session.add(panel)
             await session.commit()
@@ -1226,14 +1349,26 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
         clean_web = web_path.strip("/")
         panel_full_url = f"{panel_url}/{clean_web}/" if clean_web else f"{panel_url}/"
         action = "подключена" if connect_existing else ("переустановлен" if force else "установлен")
+
+        auth_info = ""
+        if auth_mode == "token":
+            auth_info = "🔑 Авторизация: API-токен\n"
+        else:
+            auth_info = (
+                f"Логин: <code>{username}</code>\n"
+                f"Пароль: <code>{password}</code>\n"
+            )
+
         await msg.edit_text(
             f"✅ <b>3x-ui {action}!</b>\n\n"
             f"Панель: <code>{panel_full_url}</code>\n"
-            f"Логин: <code>{username}</code>\n"
-            f"Пароль: <code>{password}</code>\n"
+            f"{auth_info}"
             f"Inbound порты: <code>{ranges_str}</code>\n\n"
-            "⚠️ <b>Сохраните пароль!</b> Он больше не будет показан.\n\n"
-            "Выполните синхронизацию для загрузки inbounds.",
+            + (
+                "⚠️ <b>Сохраните пароль!</b> Он больше не будет показан.\n\n"
+                if auth_mode == "credentials" else ""
+            )
+            + "Выполните синхронизацию для загрузки inbounds.",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
             parse_mode="HTML",
         )
@@ -2222,19 +2357,33 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
         return
 
     panel = server.xui_panel
+    auth_mode = getattr(panel, "auth_mode", "credentials")
+    has_token = bool(getattr(panel, "api_token_encrypted", None))
+
+    if auth_mode == "token":
+        auth_text = "🔑 API-токен"
+        cred_lines = f"API Token: {'✅ Задан' if has_token else '❌ Не задан'}\n"
+    else:
+        auth_text = "👤 Логин и пароль"
+        cred_lines = (
+            f"Логин: {panel.username or 'Не задан'}\n"
+            f"Пароль: {'***' if panel.password_encrypted else 'Не задан'}\n"
+            f"API Token: {'✅ Есть' if has_token else '❌ Нет'}\n"
+        )
+
     text = t(
         "admin.servers.xui.edit_menu",
         "⚙️ Редактирование 3x-ui для сервера: <b>{name}</b>\n\n"
-        "Логин: {username}\n"
-        "Пароль: {password}\n"
+        "Авторизация: {auth_text}\n"
+        "{cred_lines}"
         "webBasePath: {web_base_path}\n"
         "subPath: {sub_path}\n"
         "subJsonPath: {sub_json_path}\n"
         "SSL проверка: {ssl}\n\n"
         "Выберите, что изменить:",
         name=server.name,
-        username=panel.username or "Не задан",
-        password="***" if panel.password_encrypted else "Не задан",
+        auth_text=auth_text,
+        cred_lines=cred_lines,
         web_base_path=panel.panel_path or "Не задан",
         sub_path=panel.subscription_path or "Не задан",
         sub_json_path=panel.subscription_json_path or "Не задан",
@@ -2244,8 +2393,11 @@ async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin:
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="Изменить логин", callback_data=f"edit_xui_username_{server_id}")
-    kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
+    kb.button(text="🔑 Задать/Изменить API Токен", callback_data=f"edit_xui_api_token_{server_id}")
+    if auth_mode == "credentials":
+        kb.button(text="🔄 Пересоздать API Токен", callback_data=f"xui_regenerate_token_{server_id}")
+        kb.button(text="Изменить логин", callback_data=f"edit_xui_username_{server_id}")
+        kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
     kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
     kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
     kb.button(text="Изменить subJsonPath", callback_data=f"xui_edit_jsonpath_{server_id}")
@@ -2491,6 +2643,104 @@ async def process_edit_xui_password(message: TgMessage, state: FSMContext) -> No
     await _show_xui_edit_menu(message, server_id)
 
 
+@router.callback_query(F.data.startswith("edit_xui_api_token_"))
+async def start_edit_xui_api_token(callback: CallbackQuery, state: FSMContext) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    await state.update_data(server_id=server_id)
+    await state.set_state(ServerManagement.waiting_for_edit_api_token)
+    await callback.message.edit_text(
+        "🔑 <b>Введите API-токен</b>\n\n"
+        "Получите токен в 3x-ui: Settings → Security → API Tokens\n\n"
+        "Отправьте /skip для отмены.",
+        reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(ServerManagement.waiting_for_edit_api_token)
+async def process_edit_xui_api_token(message: TgMessage, state: FSMContext) -> None:
+    data = await state.get_data()
+    server_id = data["server_id"]
+    await state.clear()
+
+    token = message.text.strip()
+    if token == "/skip":
+        await _show_xui_edit_menu(message, server_id)
+        return
+
+    if len(token) < 10:
+        await message.answer("❌ Токен слишком короткий. Введите корректный API-токен.")
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    async with async_session_factory() as session:
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+        from app.database.models import Server
+
+        result = await session.execute(
+            select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id)
+        )
+        server = result.scalar_one_or_none()
+        if not server or not server.xui_panel:
+            await message.answer("❌ Сервер не найден.")
+            return
+
+        service = XUIService(session)
+        await service.update_server(
+            server_id,
+            auth_mode="token",
+            api_token=token,
+        )
+        await session.commit()
+        await message.answer("✅ API-токен сохранён.")
+
+    await _show_xui_edit_menu(message, server_id)
+
+
+@router.callback_query(F.data.startswith("xui_regenerate_token_"))
+async def xui_regenerate_token(callback: CallbackQuery) -> None:
+    server_id = int(callback.data.split("_")[-1])
+    msg = await callback.message.edit_text("🔄 Создание нового API-токена...")
+
+    try:
+        async with async_session_factory() as session:
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.database.models import Server
+
+            result = await session.execute(
+                select(Server).options(selectinload(Server.xui_panel)).where(Server.id == server_id)
+            )
+            server = result.scalar_one_or_none()
+            if not server or not server.xui_panel:
+                await msg.edit_text("❌ Сервер не найден.")
+                return
+
+            service = XUIService(session)
+            token = await service.create_and_save_api_token(server)
+            await session.commit()
+
+            await msg.edit_text(
+                f"✅ <b>API-токен создан!</b>\n\n"
+                f"Токен: <code>{token}</code>\n\n"
+                f"⚠️ Сохраните токен — он больше не будет показан.",
+                reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Ошибка создания токена: <code>{e}</code>",
+            reply_markup=get_back_keyboard(f"server_edit_xui_{server_id}"),
+            parse_mode="HTML",
+        )
+
+
 @router.callback_query(F.data.startswith("edit_xui_panel_path_"))
 async def start_edit_xui_panel_path(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
@@ -2613,31 +2863,54 @@ async def _show_xui_edit_menu(message: TgMessage, server_id: int) -> None:
         return
 
     panel = server.xui_panel
+    auth_mode = getattr(panel, "auth_mode", "credentials")
+    has_token = bool(getattr(panel, "api_token_encrypted", None))
+
+    if auth_mode == "token":
+        auth_text = "🔑 API-токен"
+        cred_lines = f"API Token: {'✅ Задан' if has_token else '❌ Не задан'}\n"
+    else:
+        auth_text = "👤 Логин и пароль"
+        cred_lines = (
+            f"Логин: {panel.username or 'Не задан'}\n"
+            f"Пароль: {'***' if panel.password_encrypted else 'Не задан'}\n"
+            f"API Token: {'✅ Есть' if has_token else '❌ Нет'}\n"
+        )
+
     text = t(
         "admin.servers.xui.edit_menu",
         "⚙️ Редактирование 3x-ui для сервера: <b>{name}</b>\n\n"
-        "Логин: {username}\n"
-        "Пароль: {password}\n"
+        "Авторизация: {auth_text}\n"
+        "{cred_lines}"
         "webBasePath: {web_base_path}\n"
         "subPath: {sub_path}\n"
-        "subJsonPath: {sub_json_path}\n\n"
+        "subJsonPath: {sub_json_path}\n"
+        "SSL проверка: {ssl}\n\n"
         "Выберите, что изменить:",
         name=server.name,
-        username=panel.username or "Не задан",
-        password="***" if panel.password_encrypted else "Не задан",
+        auth_text=auth_text,
+        cred_lines=cred_lines,
         web_base_path=panel.panel_path or "Не задан",
         sub_path=panel.subscription_path or "Не задан",
         sub_json_path=panel.subscription_json_path or "Не задан",
+        ssl="Включена 🔒" if panel.verify_ssl else "Отключена 🔓",
     )
 
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="Изменить логин", callback_data=f"edit_xui_username_{server_id}")
-    kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
+    kb.button(text="🔑 Задать/Изменить API Токен", callback_data=f"edit_xui_api_token_{server_id}")
+    if auth_mode == "credentials":
+        kb.button(text="🔄 Пересоздать API Токен", callback_data=f"xui_regenerate_token_{server_id}")
+        kb.button(text="Изменить логин", callback_data=f"edit_xui_username_{server_id}")
+        kb.button(text="Изменить пароль", callback_data=f"edit_xui_password_{server_id}")
     kb.button(text="Изменить webBasePath", callback_data=f"edit_xui_panel_path_{server_id}")
     kb.button(text="Изменить subPath", callback_data=f"edit_xui_sub_path_{server_id}")
     kb.button(text="Изменить subJsonPath", callback_data=f"xui_edit_jsonpath_{server_id}")
+    kb.button(
+        text="🔏 Включить SSL" if not panel.verify_ssl else "🔏 Отключить SSL",
+        callback_data=f"xui_toggle_ssl_{server_id}",
+    )
     kb.button(text="🔙 Назад", callback_data=f"server_services_{server_id}")
     kb.adjust(1)
 
@@ -4871,13 +5144,11 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
             
             async with XUIClient(
-                url=panel.url,
-                username=panel.username,
+                base_url=panel.url,
+                username=panel.username or "",
                 password=pwd,
-                panel_path=panel.panel_path,
+                api_token=None,
             ) as client:
-                await client.login()
-                
                 inbounds = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol.in_(("vless", "vmess", "trojan", "shadowsocks", "wireguard", "socks", "http"))))).scalars().all()
                 for ib in inbounds:
                     payload = {
@@ -5255,13 +5526,11 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
             
             async with XUIClient(
-                url=panel.url,
-                username=panel.username,
+                base_url=panel.url,
+                username=panel.username or "",
                 password=pwd,
-                panel_path=panel.panel_path,
+                api_token=None,
             ) as client:
-                await client.login()
-                
                 inbounds = (await session.execute(select(Inbound).where(Inbound.server_id == server_id, Inbound.protocol.in_(("vless", "vmess", "trojan", "shadowsocks", "wireguard", "socks", "http"))))).scalars().all()
                 for ib in inbounds:
                     payload = {

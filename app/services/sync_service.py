@@ -1,6 +1,7 @@
 """Service for synchronizing data between bot database and XUI panels."""
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -17,6 +18,7 @@ from app.database.models import (
 from app.services.protocol_sync import for_inbound
 from app.services.xui_service import XUIService
 from app.xui_client import XUIConnectionError, XUIError
+from app.xui_client.models import ensure_settings_dict
 
 # Глобальная блокировка для предотвращения конфликтов между всеми экземплярами SyncService
 _global_sync_lock = asyncio.Lock()
@@ -505,21 +507,15 @@ class SyncService:
             xui_id = xui_ib.id
 
             # Parse settings JSON to get client count
-            import json
+            settings_dict = ensure_settings_dict(xui_ib.settings)
+            client_count = len(settings_dict.get("clients", []))
 
-            client_count = 0
-            if xui_ib.settings:
-                try:
-                    settings_dict = json.loads(xui_ib.settings)
-                    client_count = len(settings_dict.get("clients", []))
-                except (json.JSONDecodeError, TypeError):
-                    client_count = 0
+            settings_str = xui_ib.settings if isinstance(xui_ib.settings, str) else json.dumps(xui_ib.settings or {})
 
             if xui_id in existing_map:
-                # Обновить существующий
                 db_ib = existing_map[xui_id]
-                if xui_ib.settings != db_ib.settings_json or xui_ib.remark != db_ib.remark:
-                    db_ib.settings_json = xui_ib.settings or "{}"
+                if settings_str != db_ib.settings_json or xui_ib.remark != db_ib.remark:
+                    db_ib.settings_json = settings_str
                     db_ib.remark = xui_ib.remark
                     db_ib.client_count = client_count
                     db_ib.updated_at = datetime.now(UTC)

@@ -48,11 +48,27 @@ class XUIProvider(BaseVPNProvider):
             if xui_panel.password_encrypted:
                 password = cipher.decrypt(xui_panel.password_encrypted.encode()).decode()
 
+            two_factor_code: str | None = None
+            if getattr(xui_panel, "two_factor_code_encrypted", None):
+                try:
+                    two_factor_code = cipher.decrypt(xui_panel.two_factor_code_encrypted.encode()).decode()
+                except Exception:
+                    two_factor_code = None
+
+            api_token: str | None = None
+            if getattr(xui_panel, "api_token_encrypted", None):
+                try:
+                    api_token = cipher.decrypt(xui_panel.api_token_encrypted.encode()).decode()
+                except Exception:
+                    api_token = None
+
             self._client = XUIClient(
                 base_url=base_url,
                 username=xui_panel.username or "",
                 password=password,
                 verify_ssl=xui_panel.verify_ssl,
+                two_factor_code=two_factor_code,
+                api_token=api_token,
             )
             await self._client.__aenter__()
         return self._client
