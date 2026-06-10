@@ -1,231 +1,168 @@
-"""Test email uniqueness in subscription inbound connections."""
+"""Test email uniqueness dedup logic in XUIProvider.add_client."""
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.database.models import (
-    Client,
-    Inbound,
-    InboundConnection,
-    Subscription,
-    XUIInbound,
-    XUIInboundConnection,
-)
-from app.services.new_subscription_service import NewSubscriptionService
+from app.services.vpn_providers.xui_provider import XUIProvider
 from app.xui_client import XUIError
 
 
-@pytest.mark.asyncio
-async def test_generate_unique_email_first_attempt(test_session, mock_settings):
-    """Test generating unique email on first attempt."""
-    service = NewSubscriptionService(test_session)
-
-    inbound_id = 1
-    base_email = "client_subscription_inbound@vpn.local"
-
-    # Email doesn't exist yet
-    email = await service._generate_unique_email(inbound_id, base_email)
-    assert email == base_email
+def _make_inbound(xui_id: int = 5, internal_id: int = 1) -> SimpleNamespace:
+    """Return a minimal Inbound stub that XUIProvider.add_client accesses."""
+    return SimpleNamespace(id=internal_id, xui_id=xui_id)
 
 
-@pytest.mark.asyncio
-async def test_generate_unique_email_with_duplicate(test_session, mock_settings):
-    """Test generating unique email when duplicate exists."""
-    service = NewSubscriptionService(test_session)
-
-    # Create test data
-    client = Client(
-        id=1,
-        name="TestClient",
-        email="test@client.com",
-        telegram_id=123456789,
-        is_admin=False,
-        is_active=True,
+def _make_subscription(
+    name: str = "TestSub",
+    client_name: str = "TestClient",
+    telegram_id: int = 123456789,
+    total_gb: int = 10,
+    subscription_token: str = "tok_abc",
+    expiry_date: datetime | None = None,
+) -> SimpleNamespace:
+    """Return a minimal Subscription stub."""
+    if expiry_date is None:
+        expiry_date = datetime.now(UTC) + timedelta(days=30)
+    client = SimpleNamespace(name=client_name, telegram_id=telegram_id)
+    return SimpleNamespace(
+        name=name,
+        client=client,
+        total_gb=total_gb,
+        subscription_token=subscription_token,
+        expiry_date=expiry_date,
     )
-    test_session.add(client)
 
-    subscription = Subscription(
-        id=1,
-        client_id=1,
-        name="TestSub",
-        subscription_token="test_token",
-        total_gb=100,
-        expiry_date=datetime.now(UTC) + timedelta(days=30),
-        is_active=True,
-    )
-    test_session.add(subscription)
 
-    inbound = XUIInbound(
-        id=1,
-        server_id=1,
-        xui_id=1,
-        port=443,
-        protocol="vless",
-        remark="TestInbound",
-        settings_json='{"clients": []}',
-        client_count=1,
-        is_active=True,
-    )
-    test_session.add(inbound)
+def _make_provider_with_mock_client(mock_add_client_coro) -> tuple[XUIProvider, AsyncMock]:
+    """
+    Build an XUIProvider with a pre-injected mock XUIClient.
 
-    # Create existing inbound connection with the base email
-    existing_connection = XUIInboundConnection(
-        id=1,
-        subscription_id=1,
-        inbound_id=1,
-        xui_client_id="uuid-1",
-        email="TestClient_TestSub_TestInbound@vpn.local",
-        uuid="uuid-1",
-        is_enabled=True,
-    )
-    test_session.add(existing_connection)
-    await test_session.flush()
+    *mock_add_client_coro* is the side_effect for mock_client.add_client.
+    Returns (provider, mock_client).
+    """
+    server = MagicMock()
+    provider = XUIProvider(server)
 
-    # Now try to generate unique email - should get suffix _1
-    base_email = "TestClient_TestSub_TestInbound@vpn.local"
-    email = await service._generate_unique_email(1, base_email)
-    assert email == "TestClient_TestSub_TestInbound_1@vpn.local"
+    mock_client = AsyncMock()
+    mock_client.add_client = AsyncMock(side_effect=mock_add_client_coro)
+    # Inject directly so _get_client() is never called (avoids real network / encryption)
+    provider._client = mock_client
+
+    return provider, mock_client
+
+
+# ---------------------------------------------------------------------------
+# Test 1 – success on first attempt (no duplicate at all)
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_generate_unique_email_multiple_duplicates(test_session, mock_settings):
-    """Test generating unique email with multiple duplicates."""
-    service = NewSubscriptionService(test_session)
+async def test_add_client_no_collision():
+    """When XUI accepts the email on the first call, the returned email has no suffix."""
+    inbound = _make_inbound(xui_id=3)
+    subscription = _make_subscription(name="Sub", client_name="Alice")
 
-    # Create test data
-    client = Client(
-        id=1,
-        name="TestClient",
-        email="test@client.com",
-        telegram_id=123456789,
-        is_admin=False,
-        is_active=True,
-    )
-    test_session.add(client)
+    provider, mock_client = _make_provider_with_mock_client(None)
+    # add_client succeeds immediately (returns None by default for AsyncMock)
 
-    inbound = XUIInbound(
-        id=1,
-        server_id=1,
-        xui_id=1,
-        port=443,
-        protocol="vless",
-        remark="TestInbound",
-        settings_json='{"clients": []}',
-        client_count=3,
-        is_active=True,
-    )
-    test_session.add(inbound)
+    result = await provider.add_client(inbound, subscription, email="Alice-Sub")
 
-    # Create multiple existing inbound connections with different subscriptions
-    for i in range(3):
-        subscription = Subscription(
-            id=i + 1,
-            client_id=1,
-            name=f"TestSub{i}",
-            subscription_token=f"test_token_{i}",
-            total_gb=100,
-            expiry_date=datetime.now(UTC) + timedelta(days=30),
-            is_active=True,
-        )
-        test_session.add(subscription)
+    assert result["email"] == "Alice-Sub"
+    mock_client.add_client.assert_called_once()
 
-        if i == 0:
-            email = "TestClient_TestSub_TestInbound@vpn.local"
-        else:
-            email = f"TestClient_TestSub_TestInbound_{i}@vpn.local"
 
-        existing_connection = XUIInboundConnection(
-            id=i + 1,
-            subscription_id=i + 1,
-            inbound_id=1,
-            xui_client_id=f"uuid-{i}",
-            email=email,
-            uuid=f"uuid-{i}",
-            is_enabled=True,
-        )
-        test_session.add(existing_connection)
-    await test_session.flush()
-
-    # Should get _3 suffix (attempts 0,1,2 are taken, next is 3)
-    base_email = "TestClient_TestSub_TestInbound@vpn.local"
-    email = await service._generate_unique_email(1, base_email)
-    assert email == "TestClient_TestSub_TestInbound_3@vpn.local"
+# ---------------------------------------------------------------------------
+# Test 2 – success after exactly 1 duplicate
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_generate_unique_email_max_attempts_exceeded(test_session, mock_settings):
-    """Test that error is raised when max attempts exceeded."""
-    service = NewSubscriptionService(test_session)
+async def test_add_client_one_duplicate_then_success():
+    """When the first call raises a duplicate-email XUIError the provider retries with '-1' suffix."""
+    inbound = _make_inbound(xui_id=3)
+    subscription = _make_subscription(name="Sub", client_name="Alice")
+    base_email = "Alice-Sub"
 
-    # Create test data
-    client = Client(
-        id=1,
-        name="TestClient",
-        email="test@client.com",
-        telegram_id=123456789,
-        is_admin=False,
-        is_active=True,
-    )
-    test_session.add(client)
+    call_count = 0
 
-    inbound = XUIInbound(
-        id=1,
-        server_id=1,
-        xui_id=1,
-        port=443,
-        protocol="vless",
-        remark="TestInbound",
-        settings_json='{"clients": []}',
-        client_count=100,
-        is_active=True,
-    )
-    test_session.add(inbound)
+    async def side_effect(x_id, req):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise XUIError("Failed to add client: duplicate email")
+        # second call succeeds
 
-    # Create 100 existing connections with different subscriptions
-    for i in range(100):
-        subscription = Subscription(
-            id=i + 1,
-            client_id=1,
-            name=f"TestSub{i}",
-            subscription_token=f"test_token_{i}",
-            total_gb=100,
-            expiry_date=datetime.now(UTC) + timedelta(days=30),
-            is_active=True,
-        )
-        test_session.add(subscription)
+    provider, mock_client = _make_provider_with_mock_client(side_effect)
 
-        if i == 0:
-            email = "TestClient_TestSub_TestInbound@vpn.local"
-        else:
-            email = f"TestClient_TestSub_TestInbound_{i}@vpn.local"
+    result = await provider.add_client(inbound, subscription, email=base_email)
 
-        existing_connection = XUIInboundConnection(
-            id=i + 1,
-            subscription_id=i + 1,
-            inbound_id=1,
-            xui_client_id=f"uuid-{i}",
-            email=email,
-            uuid=f"uuid-{i}",
-            is_enabled=True,
-        )
-        test_session.add(existing_connection)
-    await test_session.flush()
+    assert result["email"] == f"{base_email}-1"
+    assert mock_client.add_client.call_count == 2
 
-    # Should raise XUIError because all 100 attempts are exhausted
-    base_email = "TestClient_TestSub_TestInbound@vpn.local"
-    with pytest.raises(XUIError) as exc_info:
-        await service._generate_unique_email(1, base_email, max_attempts=100)
 
-    assert "Unable to generate unique email" in str(exc_info.value)
-    assert "inbound 1" in str(exc_info.value)
-    assert "100 attempts" in str(exc_info.value)
+# ---------------------------------------------------------------------------
+# Test 3 – success after multiple duplicates
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_add_inbound_creates_unique_email(test_session, mock_settings):
-    """Test that add_inbound_to_subscription creates unique email with XUI mock."""
+async def test_add_client_multiple_duplicates_then_success():
+    """After N duplicate errors the provider accepts the email with '-N' suffix."""
+    inbound = _make_inbound(xui_id=7)
+    subscription = _make_subscription(name="MySub", client_name="Bob")
+    base_email = "Bob-MySub"
+    fail_times = 5
 
-    # Skip this test as it requires proper encryption setup
-    # The core functionality is tested in the other tests
-    pytest.skip("Requires XUI client mocking with proper encryption")
+    call_count = 0
+
+    async def side_effect(x_id, req):
+        nonlocal call_count
+        call_count += 1
+        if call_count <= fail_times:
+            raise XUIError("duplicate email detected")
+        # succeeds on attempt fail_times+1
+
+    provider, mock_client = _make_provider_with_mock_client(side_effect)
+
+    result = await provider.add_client(inbound, subscription, email=base_email)
+
+    assert result["email"] == f"{base_email}-{fail_times}"
+    assert mock_client.add_client.call_count == fail_times + 1
+
+
+# ---------------------------------------------------------------------------
+# Test 4 – all 100 attempts exhausted → ValueError
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_client_exhausts_all_attempts_raises_value_error():
+    """When every attempt raises a duplicate-email error the provider raises ValueError."""
+    inbound = _make_inbound(xui_id=2, internal_id=9)
+    subscription = _make_subscription(name="ExhSub", client_name="Carol")
+    base_email = "Carol-ExhSub"
+
+    async def always_duplicate(x_id, req):
+        raise XUIError("duplicate email conflict")
+
+    provider, mock_client = _make_provider_with_mock_client(always_duplicate)
+
+    with pytest.raises(ValueError, match="Unable to find an email accepted by XUI panel"):
+        await provider.add_client(inbound, subscription, email=base_email)
+
+    # The loop runs exactly 100 times
+    assert mock_client.add_client.call_count == 100
+
+
+# ---------------------------------------------------------------------------
+# (kept skipped) integration smoke-test stub
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_inbound_creates_unique_email():
+    """Placeholder kept for future integration test with a real XUI panel."""
+    pytest.skip("Requires a running XUI panel — integration test only")
