@@ -46,6 +46,7 @@ class XUIClient:
         self._session: aiohttp.ClientSession | None = None
         self._cookies: dict[str, Any] = saved_cookies or {}
         self._session_created_at: datetime | None = None
+        self._csrf_token: str | None = None
 
     async def __aenter__(self) -> "XUIClient":
         """Async context manager entry."""
@@ -140,6 +141,20 @@ class XUIClient:
             raise XUIConnectionError("Not connected. Call connect() first.")
         return self._session
 
+    async def _get_csrf_token(self) -> str | None:
+        """Fetch a fresh CSRF token from the panel.
+
+        Returns:
+            CSRF token string, or None if the endpoint is unavailable / returns failure.
+        """
+        try:
+            data = await self._request("GET", "/csrf-token")
+            if data.get("success"):
+                return data.get("obj")
+        except Exception:
+            pass
+        return None
+
     async def _request(
         self,
         method: str,
@@ -182,12 +197,46 @@ class XUIClient:
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
 
+        # CSRF: only for unsafe methods on the cookie path (Bearer skips CSRF entirely)
+        _unsafe = method.upper() in {"POST", "PUT", "DELETE"}
+        _use_csrf = _unsafe and not self.api_token and path != "/csrf-token"
+
+        if _use_csrf:
+            if self._csrf_token is None:
+                self._csrf_token = await self._get_csrf_token()
+            if self._csrf_token:
+                headers["X-CSRF-Token"] = self._csrf_token
+
         try:
             async with session.request(
                 method, url, cookies=request_cookies or None, headers=headers or None, **kwargs
             ) as response:
                 if response.status == 401:
                     raise XUIAuthError("Authentication failed")
+
+                if response.status == 403 and _use_csrf:
+                    # Refresh token once and retry
+                    self._csrf_token = await self._get_csrf_token()
+                    if self._csrf_token:
+                        headers["X-CSRF-Token"] = self._csrf_token
+                    else:
+                        headers.pop("X-CSRF-Token", None)
+                    async with session.request(
+                        method,
+                        url,
+                        cookies=request_cookies or None,
+                        headers=headers or None,
+                        **kwargs,
+                    ) as retry_response:
+                        if retry_response.status == 403:
+                            raise XUIAuthError("Authentication failed after CSRF token refresh")
+                        if retry_response.status == 404:
+                            raise XUINotFoundError(f"Resource not found: {path}")
+                        if retry_response.status >= 500:
+                            text = await retry_response.text()
+                            raise XUIConnectionError(f"Server error: {retry_response.status} - {text}")
+                        data = await retry_response.json()
+                        return data
 
                 if response.status == 404:
                     location = response.headers.get("Location", "none")
@@ -208,6 +257,8 @@ class XUIClient:
             raise XUIConnectionError(f"Connection error: {e}") from e
         except json.JSONDecodeError as e:
             raise XUIError(f"Invalid JSON response: {e}") from e
+        except (XUIAuthError, XUINotFoundError, XUIConnectionError, XUIError):
+            raise
         except Exception as e:
             # Catch any other exceptions to prevent session leaks
             logger.warning("Unexpected error in XUI request: {}", e)
