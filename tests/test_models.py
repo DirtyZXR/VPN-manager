@@ -4,7 +4,13 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.database.models import Client, Inbound, InboundConnection, Server, Subscription
+from app.database.models import (
+    Client,
+    Server,
+    Subscription,
+    XUIInbound,
+    XUIInboundConnection,
+)
 
 
 @pytest.mark.asyncio
@@ -50,9 +56,7 @@ async def test_server_model(test_session):
     """Test Server model."""
     server = Server(
         name="Test Server",
-        url="https://test.example.com",
-        username="admin",
-        password_encrypted="encrypted_password",
+        ip_address="1.2.3.4",
         is_active=True,
     )
     test_session.add(server)
@@ -60,7 +64,7 @@ async def test_server_model(test_session):
 
     assert server.id is not None
     assert isinstance(server.created_at, datetime)
-    assert str(server) == "<Server(id=1, name='Test Server', url='https://test.example.com')>"
+    assert str(server) == "<Server(id=1, name='Test Server')>"
 
 
 @pytest.mark.asyncio
@@ -116,14 +120,12 @@ async def test_inbound_model(test_session):
     """Test Inbound model."""
     server = Server(
         name="Test Server",
-        url="https://test.example.com",
-        username="admin",
-        password_encrypted="encrypted_password",
+        ip_address="1.2.3.4",
     )
     test_session.add(server)
     await test_session.flush()
 
-    inbound = Inbound(
+    inbound = XUIInbound(
         server_id=server.id,
         xui_id=1,
         remark="Test Inbound",
@@ -139,7 +141,7 @@ async def test_inbound_model(test_session):
     assert inbound.id is not None
     assert inbound.server_id == server.id
     assert inbound.client_count == 5
-    assert str(inbound) == "<Inbound(id=1, remark='Test Inbound', protocol='vless', clients=5)>"
+    assert str(inbound) == "<XUIInbound(id=1, remark='Test Inbound', protocol='vless')>"
 
 
 @pytest.mark.asyncio
@@ -161,14 +163,12 @@ async def test_inbound_connection_model(test_session):
 
     server = Server(
         name="Test Server",
-        url="https://test.example.com",
-        username="admin",
-        password_encrypted="encrypted_password",
+        ip_address="1.2.3.4",
     )
     test_session.add(server)
     await test_session.flush()
 
-    inbound = Inbound(
+    inbound = XUIInbound(
         server_id=server.id,
         xui_id=1,
         remark="Test Inbound",
@@ -181,7 +181,7 @@ async def test_inbound_connection_model(test_session):
     test_session.add(inbound)
     await test_session.flush()
 
-    connection = InboundConnection(
+    connection = XUIInboundConnection(
         subscription_id=subscription.id,
         inbound_id=inbound.id,
         xui_client_id="test-uuid",
@@ -196,7 +196,7 @@ async def test_inbound_connection_model(test_session):
     assert connection.subscription_id == subscription.id
     assert connection.inbound_id == inbound.id
     assert connection.is_enabled is True
-    assert str(connection) == "<InboundConnection(id=1, uuid='test-uuid-123', enabled=True)>"
+    assert str(connection) == "<XUIInboundConnection(id=1, enabled=True)>"
 
 
 @pytest.mark.asyncio
