@@ -67,6 +67,7 @@ dmypy.json
 # Dev/process docs и AI-тулинг — НЕ в репозитории (трекаем только README.md)
 .dev/
 .kilo/
+*.old
 *.md
 !README.md
 
