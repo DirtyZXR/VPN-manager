@@ -81,7 +81,10 @@ class TestPhantomReconciliation:
 
     @pytest.mark.asyncio
     async def test_phantom_deleted_when_absent_from_panel(self, mock_settings):
-        """Соединение error + email отсутствует в снимке get_clients() → session.delete вызван."""
+        """Соединение error + email отсутствует в снимке get_clients() → session.delete вызван.
+
+        Снимок НЕПУСТОЙ: содержит другого клиента, ghost@vpn отсутствует → фантом удалён.
+        """
         session = _make_session()
 
         conn = _make_xui_connection(conn_id=42, email="ghost@vpn", sync_status="error")
@@ -93,8 +96,10 @@ class TestPhantomReconciliation:
         svc._xui_service = MagicMock()
 
         xui_client = MagicMock()
-        # get_clients() snapshot: ghost@vpn is NOT present
-        xui_client.get_clients = AsyncMock(return_value=[])
+        # get_clients() snapshot НЕПУСТОЙ: ghost@vpn is NOT present, но другой клиент есть
+        xui_client.get_clients = AsyncMock(
+            return_value=[{"email": "other@vpn", "subId": "", "inboundIds": []}]
+        )
 
         server = _make_server()
 
@@ -537,7 +542,11 @@ class TestMissingOnPanelReconciliation:
 
     @pytest.mark.asyncio
     async def test_synced_absent_old_marked_error_not_deleted(self, mock_settings):
-        """synced + email НЕ в снимке + старше grace → sync_status='error', НЕ удалён, уведомление отправлено."""
+        """synced + email НЕ в снимке + старше grace → sync_status='error', НЕ удалён, уведомление отправлено.
+
+        Снимок НЕПУСТОЙ: содержит другого клиента, но НЕ removed@vpn.
+        Тестирует сценарий ручного удаления клиента на панели при живых других клиентах.
+        """
         from unittest.mock import AsyncMock, MagicMock, patch
 
         session = _make_session()
@@ -551,8 +560,11 @@ class TestMissingOnPanelReconciliation:
         svc._xui_service = MagicMock()
 
         xui_client = MagicMock()
-        # Снимок панели: removed@vpn ОТСУТСТВУЕТ
-        xui_client.get_clients = AsyncMock(return_value=[])
+        # Снимок панели НЕПУСТОЙ: другой клиент есть, removed@vpn ОТСУТСТВУЕТ.
+        # Это сценарий ручного удаления (не soft-fail API).
+        xui_client.get_clients = AsyncMock(
+            return_value=[{"email": "other@vpn", "subId": "", "inboundIds": []}]
+        )
 
         server = _make_server()
 
@@ -678,7 +690,10 @@ class TestMissingOnPanelReconciliation:
 
     @pytest.mark.asyncio
     async def test_second_pass_error_absent_deleted(self, mock_settings):
-        """Второй проход: соединение уже 'error' + email всё ещё отсутствует → step 2a удаляет из БД."""
+        """Второй проход: соединение уже 'error' + email всё ещё отсутствует → step 2a удаляет из БД.
+
+        Снимок НЕПУСТОЙ: другой клиент присутствует, removed@vpn — нет (реальный сценарий).
+        """
         from unittest.mock import AsyncMock, MagicMock
 
         session = _make_session()
@@ -693,8 +708,10 @@ class TestMissingOnPanelReconciliation:
         svc._xui_service = MagicMock()
 
         xui_client = MagicMock()
-        # Снимок: removed@vpn всё ещё отсутствует
-        xui_client.get_clients = AsyncMock(return_value=[])
+        # Снимок НЕПУСТОЙ: removed@vpn всё ещё отсутствует, но другой клиент есть
+        xui_client.get_clients = AsyncMock(
+            return_value=[{"email": "active@vpn", "subId": "", "inboundIds": []}]
+        )
 
         server = _make_server()
 
@@ -741,6 +758,98 @@ class TestMissingOnPanelReconciliation:
         session.delete.assert_not_called()
         session.execute.assert_not_called()
         notify_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_snapshot_skips_all_destructive_steps(self, mock_settings):
+        """CRITICAL guard: get_clients() → [] (пустой снимок) → ни одно соединение не помечается
+        и ничего не удаляется. Защищает от soft-fail панели (истёкший токен / rate-limit)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        session = _make_session()
+
+        # Живое synced-соединение (старше grace-period) — должно остаться нетронутым
+        conn = _make_synced_connection(conn_id=40, email="live@vpn")
+
+        # Error-соединение — тоже не должно быть удалено при пустом снимке
+        error_conn = _make_xui_connection(conn_id=41, email="ghost@vpn", sync_status="error")
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        xui_client = MagicMock()
+        # Пустой снимок — имитирует soft-fail панели (success:false → [])
+        xui_client.get_clients = AsyncMock(return_value=[])
+        xui_client.delete_client = AsyncMock()
+
+        server = _make_server()
+        session.execute = AsyncMock()
+
+        notify_mock = AsyncMock()
+        with patch(
+            "app.services.notification_service.NotificationService.notify_admins_missing_on_panel",
+            new=notify_mock,
+        ):
+            await svc._reconcile_xui_server(server, xui_client)
+
+        # Ранний выход: session.execute не вызывается (нет деструктивных шагов)
+        session.execute.assert_not_called()
+        # Ни одно соединение не удалено из БД
+        session.delete.assert_not_called()
+        # Ни одно соединение на панели не удалено
+        xui_client.delete_client.assert_not_called()
+        # Уведомлений нет
+        notify_mock.assert_not_awaited()
+        # Статусы соединений не изменены
+        assert conn.sync_status == "synced"
+        assert error_conn.sync_status == "error"
+
+    @pytest.mark.asyncio
+    async def test_error_connection_self_heals_when_present_on_panel(self, mock_settings):
+        """Self-heal: соединение со sync_status='error', email ПРИСУТСТВУЕТ в непустом снимке
+        → восстанавливается в sync_status='synced', НЕ удаляется (шаг 2a present-error → synced)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        session = _make_session()
+
+        # Соединение в статусе error (было помечено на прошлом проходе)
+        conn = _make_xui_connection(conn_id=50, email="recovering@vpn", sync_status="error")
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        xui_client = MagicMock()
+        # Непустой снимок: recovering@vpn ПРИСУТСТВУЕТ — клиент вернулся на панель
+        xui_client.get_clients = AsyncMock(
+            return_value=[
+                {"email": "recovering@vpn", "subId": "", "inboundIds": []},
+                {"email": "other@vpn", "subId": "", "inboundIds": []},
+            ]
+        )
+        xui_client.delete_client = AsyncMock()
+
+        server = _make_server()
+
+        execute_results = [
+            _make_scalars_result([conn]),   # 2a: находим error-соединение
+            _make_rows_result([]),          # 2b: нет токенов
+            _make_rows_result([]),          # 2b: нет xui inbounds
+            _make_rows_result([]),          # 2b: нет пар
+            _make_scalars_result([]),       # 2c: нет synced-соединений
+        ]
+        session.execute = AsyncMock(side_effect=execute_results)
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        # Восстановлено в synced — НЕ удалено
+        assert conn.sync_status == "synced"
+        session.delete.assert_not_called()
+        xui_client.delete_client.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
