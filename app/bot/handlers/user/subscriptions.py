@@ -62,7 +62,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
         per_page = 5
         total_count = len(subscriptions)
         total_pages = max(1, -(-total_count // per_page))
-        
+
         if page < 0:
             page = 0
         elif page >= total_pages:
@@ -74,8 +74,8 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
 
         if total_pages > 1:
             text = t(
-                "user.subs.list_header_paginated", 
-                "📝 Ваши подписки ({count}) | Страница {current} из {total}:\n\n", 
+                "user.subs.list_header_paginated",
+                "📝 Ваши подписки ({count}) | Страница {current} из {total}:\n\n",
                 count=total_count,
                 current=page + 1,
                 total=total_pages
@@ -112,7 +112,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
                 pagination_row.append(
                     InlineKeyboardButton(
                         text=t(
-                            "keyboards.pagination.prev", 
+                            "keyboards.pagination.prev",
                             "⬅️ Назад ({page}/{total_pages})",
                             page=page,
                             total_pages=total_pages
@@ -135,7 +135,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
                 pagination_row.append(
                     InlineKeyboardButton(
                         text=t(
-                            "keyboards.pagination.next", 
+                            "keyboards.pagination.next",
                             "Вперед ➡️ ({next_page}/{total_pages})",
                             next_page=page + 2,
                             total_pages=total_pages

@@ -4,10 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.database.models import Client, InboundConnection, Server, Subscription
-from app.database.models.services import XUIPanel
-from app.database.models.inbound_connection import XUIInboundConnection
+from app.database.models import Client, Server, Subscription
 from app.database.models.inbound import XUIInbound
+from app.database.models.inbound_connection import XUIInboundConnection
+from app.database.models.services import XUIPanel
 from app.services.sync_service import SyncService
 
 
