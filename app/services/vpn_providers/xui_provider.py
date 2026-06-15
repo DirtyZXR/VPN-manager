@@ -123,7 +123,17 @@ class XUIProvider(BaseVPNProvider):
         )
         await client.add_client(req, [x_id])
 
-        return {"uuid": client_uuid, "email": final_email, "xui_client_id": client_uuid}
+        # The panel generates its own UUID server-side and ignores the one we sent.
+        # Fetch the real UUID by querying traffic for the now-created email.
+        real_uuid = client_uuid  # fallback if the fetch fails
+        try:
+            traffic = await client.get_client_traffic(final_email)
+            if traffic and traffic.get("uuid"):
+                real_uuid = traffic["uuid"]
+        except Exception:
+            pass
+
+        return {"uuid": real_uuid, "email": final_email, "xui_client_id": real_uuid}
 
     async def update_client(
         self,

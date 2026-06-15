@@ -76,16 +76,30 @@ async def test_add_client_no_collision():
     inbound = _make_inbound(xui_id=3)
     subscription = _make_subscription(name="Sub", client_name="Alice")
 
-    # get_client_traffic always returns None → email is free on first probe
+    # get_client_traffic is called twice for the chosen email:
+    #   call 1 (pre-add existence check) → None (email free)
+    #   call 2 (post-add real-uuid fetch) → dict with panel-assigned uuid
+    traffic_calls: dict[str, int] = {}
+
+    async def probe_side_effect(email: str):
+        traffic_calls[email] = traffic_calls.get(email, 0) + 1
+        if traffic_calls[email] == 1:
+            # First call: existence check — email is free
+            return None
+        # Second call: post-add fetch — return panel-assigned uuid
+        return {"uuid": "real-panel-uuid", "email": email}
+
     provider, mock_client = _make_provider_with_mock_client(
-        get_traffic_side_effect=AsyncMock(return_value=None)
+        get_traffic_side_effect=probe_side_effect
     )
 
     result = await provider.add_client(inbound, subscription, email="Alice-Sub")
 
     assert result["email"] == "Alice-Sub"
-    # Traffic probed exactly once (for the base email)
-    mock_client.get_client_traffic.assert_called_once_with("Alice-Sub")
+    assert result["uuid"] == "real-panel-uuid"
+    assert result["xui_client_id"] == "real-panel-uuid"
+    # Traffic probed twice: existence check + post-add uuid fetch
+    assert mock_client.get_client_traffic.call_count == 2
     # add_client called exactly once
     mock_client.add_client.assert_called_once()
     # Verify the call used the new signature: (req, [xui_id])
@@ -104,17 +118,22 @@ async def test_add_client_one_collision_then_success():
     inbound = _make_inbound(xui_id=3)
     subscription = _make_subscription(name="Sub", client_name="Alice")
     base_email = "Alice-Sub"
+    chosen_email = f"{base_email}-1"
 
-    traffic_call_count = 0
+    # Per-email call counters: the chosen email (suffix -1) is called twice:
+    #   call 1: pre-add existence check → None (free)
+    #   call 2: post-add uuid fetch → dict with panel uuid
+    traffic_calls: dict[str, int] = {}
 
     async def probe_side_effect(email: str):
-        nonlocal traffic_call_count
-        traffic_call_count += 1
+        traffic_calls[email] = traffic_calls.get(email, 0) + 1
         if email == base_email:
-            # Email taken
+            # Base email is always taken (only one call expected here)
             return {"uuid": "existing-uuid", "email": email}
-        # All suffixed emails are free
-        return None
+        # Chosen (suffixed) email: free on first probe, panel data on second
+        if traffic_calls[email] == 1:
+            return None
+        return {"uuid": "real-panel-uuid", "email": email}
 
     provider, mock_client = _make_provider_with_mock_client(
         get_traffic_side_effect=probe_side_effect
@@ -122,9 +141,11 @@ async def test_add_client_one_collision_then_success():
 
     result = await provider.add_client(inbound, subscription, email=base_email)
 
-    assert result["email"] == f"{base_email}-1"
-    # Probed base + suffix-1 = 2 calls
-    assert mock_client.get_client_traffic.call_count == 2
+    assert result["email"] == chosen_email
+    assert result["uuid"] == "real-panel-uuid"
+    assert result["xui_client_id"] == "real-panel-uuid"
+    # Probed base (taken) + suffix-1 (free) + suffix-1 (post-add fetch) = 3 calls
+    assert mock_client.get_client_traffic.call_count == 3
     mock_client.add_client.assert_called_once()
 
 
@@ -140,16 +161,26 @@ async def test_add_client_multiple_collisions_then_success():
     subscription = _make_subscription(name="MySub", client_name="Bob")
     base_email = "Bob-MySub"
     taken_count = 5  # base + suffixes 1..4 are taken; suffix-5 is free
+    chosen_email = f"{base_email}-{taken_count}"
+
+    # Per-email call counters: the chosen email (suffix-5) is called twice:
+    #   call 1: pre-add existence check → None (free)
+    #   call 2: post-add uuid fetch → dict with panel uuid
+    traffic_calls: dict[str, int] = {}
 
     async def probe_side_effect(email: str):
-        # base → i=0, suffix-1 → i=1, ..., suffix-4 → i=4 are taken
-        # suffix-5 is free
+        traffic_calls[email] = traffic_calls.get(email, 0) + 1
+        # base → taken
         if email == base_email:
             return {"email": email}
         suffix = int(email.rsplit("-", 1)[-1])
+        # suffixes 1..taken_count-1 are always taken
         if suffix < taken_count:
             return {"email": email}
-        return None
+        # The chosen email (suffix == taken_count): free on first call, panel data on second
+        if traffic_calls[email] == 1:
+            return None
+        return {"uuid": "real-panel-uuid", "email": email}
 
     provider, mock_client = _make_provider_with_mock_client(
         get_traffic_side_effect=probe_side_effect
@@ -157,9 +188,12 @@ async def test_add_client_multiple_collisions_then_success():
 
     result = await provider.add_client(inbound, subscription, email=base_email)
 
-    assert result["email"] == f"{base_email}-{taken_count}"
-    # Probed taken_count+1 times (base + suffixes 1..taken_count)
-    assert mock_client.get_client_traffic.call_count == taken_count + 1
+    assert result["email"] == chosen_email
+    assert result["uuid"] == "real-panel-uuid"
+    assert result["xui_client_id"] == "real-panel-uuid"
+    # Probed taken_count+1 times (pre-add: base + suffixes 1..taken_count)
+    # plus 1 post-add fetch = taken_count + 2 total
+    assert mock_client.get_client_traffic.call_count == taken_count + 2
     mock_client.add_client.assert_called_once()
 
 
