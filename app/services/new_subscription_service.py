@@ -219,9 +219,18 @@ class NewSubscriptionService:
         added_ids = new_inbound_ids_set - current_inbound_ids
         kept_ids = current_inbound_ids & new_inbound_ids_set
 
+        failed: list[tuple[int, str]] = []
+
         # Process removed
         for ib_id in removed_ids:
-            await self.remove_inbound_from_subscription(subscription_id, ib_id)
+            try:
+                await self.remove_inbound_from_subscription(subscription_id, ib_id)
+            except Exception as e:
+                logger.error(
+                    f"rebuild_subscription: failed to remove inbound {ib_id} "
+                    f"for sub {subscription_id}: {e}"
+                )
+                failed.append((ib_id, str(e)))
 
         # Process kept (reset traffic, update limits and expiry)
         for conn in current_connections:
@@ -239,17 +248,34 @@ class NewSubscriptionService:
                     await provider.update_client(inbound, conn, new_total_gb, expiry_date)
                 except Exception as e:
                     logger.error(
-                        f"Failed to update kept inbound {conn.inbound_id} for sub {subscription_id}: {e}"
+                        f"rebuild_subscription: failed to update kept inbound {conn.inbound_id} "
+                        f"for sub {subscription_id}: {e}"
                     )
+                    conn.sync_status = "error"
+                    failed.append((conn.inbound_id, str(e)))
 
         # Process added
         for ib_id in added_ids:
-            await self.add_inbound_to_subscription(subscription_id, ib_id, client_uuid=client_uuid)
+            try:
+                await self.add_inbound_to_subscription(subscription_id, ib_id, client_uuid=client_uuid)
+            except Exception as e:
+                logger.error(
+                    f"rebuild_subscription: failed to add inbound {ib_id} "
+                    f"for sub {subscription_id}: {e}"
+                )
+                failed.append((ib_id, str(e)))
 
         await self.session.flush()
 
         # Reload to get fresh connections
         reloaded_subscription = await self.get_subscription(subscription.id)
+
+        if failed:
+            raise XUIError(
+                f"Rebuild partially failed for subscription {subscription_id}. "
+                f"Failed inbounds (id, error): {failed}"
+            )
+
         return reloaded_subscription, list(reloaded_subscription.inbound_connections)
 
     # Inbound Connection methods
@@ -644,8 +670,14 @@ class NewSubscriptionService:
                     await provider.remove_client(inbound, connection)
                     deleted_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to delete client from provider: {e}")
-                # Always remove the DB record to prevent orphan rows
+                    logger.warning(
+                        f"delete_client_all_connections: panel removal failed for connection "
+                        f"{connection.id} (email={getattr(connection, 'email', '?')}, "
+                        f"inbound_id={connection.inbound_id}): {e}. "
+                        f"Panel client may remain as zombie — will be cleaned by reconciliation."
+                    )
+                # Always remove the DB record to prevent orphan rows,
+                # even if the panel removal above failed.
                 await self.session.delete(connection)
 
         await self.session.flush()
@@ -1192,9 +1224,14 @@ class NewSubscriptionService:
                     if hasattr(inbound, "client_count"):
                         inbound.client_count -= 1
             except Exception as e:
-                logger.warning(f"Failed to delete VPN client for connection {connection.id}: {e}")
+                logger.warning(
+                    f"delete_subscription: panel removal failed for connection {connection.id} "
+                    f"(email={getattr(connection, 'email', '?')}, "
+                    f"inbound_id={connection.inbound_id}): {e}. "
+                    f"Panel client may remain as zombie — will be cleaned by reconciliation."
+                )
 
-        # Delete from database
+        # Delete from database regardless of panel errors to keep the bot state consistent.
         await self.session.delete(subscription)
         await self.session.flush()
         return True
