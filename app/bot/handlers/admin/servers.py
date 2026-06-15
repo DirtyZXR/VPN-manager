@@ -5138,7 +5138,7 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             )
             
             # Now restore inbounds and connections
-            from app.xui_client import XUIClient
+            from app.xui_client import XUIClient, XUIAddClientRequest
             from app.database.models import Inbound, XUIInboundConnection
 
             await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
@@ -5178,9 +5178,20 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
                     # Add clients to this inbound
                     connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
                     for conn in connections:
-                        if conn.provider_payload and conn.is_enabled:
+                        if conn.is_enabled:
                             try:
-                                await client.add_client(ib.id, [conn.provider_payload])
+                                p = conn.provider_payload or {}
+                                req = XUIAddClientRequest(
+                                    id=conn.uuid or p.get("uuid", ""),
+                                    email=conn.email or p.get("email", f"conn-{conn.id}"),
+                                    enable=True,
+                                    flow=p.get("flow", "xtls-rprx-vision"),
+                                    totalGB=p.get("totalGB", 0),
+                                    expiryTime=p.get("expiryTime", 0),
+                                    subId=p.get("subId", ""),
+                                    tgId=p.get("tgId", 0),
+                                )
+                                await client.add_client(req, [ib.xui_id])
                             except Exception as e:
                                 import logging
                                 logging.getLogger(__name__).warning(f"Failed to recreate client {conn.id}: {e}")
@@ -5531,7 +5542,7 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             )
             
             # Now restore inbounds and connections
-            from app.xui_client import XUIClient
+            from app.xui_client import XUIClient, XUIAddClientRequest
             from app.database.models import Inbound, XUIInboundConnection
 
             await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
@@ -5571,9 +5582,20 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
                     # Add clients to this inbound
                     connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
                     for conn in connections:
-                        if conn.provider_payload and conn.is_enabled:
+                        if conn.is_enabled:
                             try:
-                                await client.add_client(ib.id, [conn.provider_payload])
+                                p = conn.provider_payload or {}
+                                req = XUIAddClientRequest(
+                                    id=conn.uuid or p.get("uuid", ""),
+                                    email=conn.email or p.get("email", f"conn-{conn.id}"),
+                                    enable=True,
+                                    flow=p.get("flow", "xtls-rprx-vision"),
+                                    totalGB=p.get("totalGB", 0),
+                                    expiryTime=p.get("expiryTime", 0),
+                                    subId=p.get("subId", ""),
+                                    tgId=p.get("tgId", 0),
+                                )
+                                await client.add_client(req, [ib.xui_id])
                             except Exception as e:
                                 import logging
                                 logging.getLogger(__name__).warning(f"Failed to recreate client {conn.id}: {e}")

@@ -5,6 +5,7 @@ import json
 import ssl
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from loguru import logger
@@ -506,7 +507,7 @@ class XUIClient:
         """
         data = await self._request(
             "POST",
-            f"/panel/api/clients/update/{email}",
+            f"/panel/api/clients/update/{quote(email, safe='')}",
             json=client.model_dump(by_alias=True),
         )
 
@@ -539,7 +540,7 @@ class XUIClient:
 
         data = await self._request(
             "POST",
-            f"/panel/api/clients/del/{email}",
+            f"/panel/api/clients/del/{quote(email, safe='')}",
             **kwargs,
         )
 
@@ -586,7 +587,7 @@ class XUIClient:
         try:
             data = await self._request(
                 "GET",
-                f"/panel/api/clients/traffic/{email}",
+                f"/panel/api/clients/traffic/{quote(email, safe='')}",
             )
         except Exception:
             return None
@@ -624,7 +625,7 @@ class XUIClient:
         """
         data = await self._request(
             "POST",
-            f"/panel/api/clients/resetTraffic/{email}",
+            f"/panel/api/clients/resetTraffic/{quote(email, safe='')}",
         )
 
         if not data.get("success", False):
@@ -633,7 +634,7 @@ class XUIClient:
         logger.info(f"Reset traffic for client {email}")
         return True
 
-    async def add_inbound(self, payload: dict) -> dict:
+    async def add_inbound(self, payload: dict[str, Any]) -> dict:
         """Create a new inbound on the panel. Returns the API response obj."""
         data = await self._request("POST", "/panel/api/inbounds/add", json=payload)
         if not data.get("success", False):

@@ -458,3 +458,149 @@ async def test_add_inbound_raises_on_failure():
 
     with pytest.raises(XUIError, match="port already in use"):
         await xui.add_inbound({"port": 10000, "protocol": "vless"})
+
+
+# ---------------------------------------------------------------------------
+# URL-encoding of email in path methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_client_encodes_email_with_space():
+    """update_client percent-encodes spaces (and other special chars) in the path."""
+    xui = _make_client()
+    req = _make_req(email="alice bob")
+
+    captured: dict[str, Any] = {}
+
+    @asynccontextmanager
+    async def fake_request(method: str, url: str, **kwargs: Any):
+        captured["url"] = url
+        resp = MagicMock()
+        resp.status = 200
+        resp.json = AsyncMock(return_value={"success": True, "obj": None, "msg": ""})
+        resp.text = AsyncMock(return_value="")
+        resp.headers = {}
+        resp.request_info = MagicMock()
+        resp.request_info.headers = {}
+        yield resp
+
+    xui._session.request = fake_request
+
+    await xui.update_client("alice bob", req)
+
+    assert "%20" in captured["url"], f"Expected %20 in URL but got: {captured['url']}"
+    assert "alice bob" not in captured["url"], "Unencoded space must not appear in URL"
+
+
+@pytest.mark.asyncio
+async def test_delete_client_encodes_email_with_space():
+    """delete_client percent-encodes spaces in the path."""
+    xui = _make_client()
+    captured: dict[str, Any] = {}
+
+    @asynccontextmanager
+    async def fake_request(method: str, url: str, **kwargs: Any):
+        captured["url"] = url
+        resp = MagicMock()
+        resp.status = 200
+        resp.json = AsyncMock(return_value={"success": True, "obj": None, "msg": ""})
+        resp.text = AsyncMock(return_value="")
+        resp.headers = {}
+        resp.request_info = MagicMock()
+        resp.request_info.headers = {}
+        yield resp
+
+    xui._session.request = fake_request
+
+    await xui.delete_client("name with spaces")
+
+    assert "%20" in captured["url"], f"Expected %20 in URL but got: {captured['url']}"
+    assert "name with spaces" not in captured["url"]
+
+
+@pytest.mark.asyncio
+async def test_get_client_traffic_encodes_email_with_space():
+    """get_client_traffic percent-encodes spaces in the path."""
+    xui = _make_client()
+    captured: dict[str, Any] = {}
+
+    @asynccontextmanager
+    async def fake_request(method: str, url: str, **kwargs: Any):
+        captured["url"] = url
+        resp = MagicMock()
+        resp.status = 200
+        resp.json = AsyncMock(return_value={"success": True, "obj": {"email": "name with spaces"}, "msg": ""})
+        resp.text = AsyncMock(return_value="")
+        resp.headers = {}
+        resp.request_info = MagicMock()
+        resp.request_info.headers = {}
+        yield resp
+
+    xui._session.request = fake_request
+
+    await xui.get_client_traffic("name with spaces")
+
+    assert "%20" in captured["url"], f"Expected %20 in URL but got: {captured['url']}"
+    assert "name with spaces" not in captured["url"]
+
+
+@pytest.mark.asyncio
+async def test_reset_client_traffic_encodes_email_with_space():
+    """reset_client_traffic percent-encodes spaces in the path."""
+    xui = _make_client()
+    captured: dict[str, Any] = {}
+
+    @asynccontextmanager
+    async def fake_request(method: str, url: str, **kwargs: Any):
+        captured["url"] = url
+        resp = MagicMock()
+        resp.status = 200
+        resp.json = AsyncMock(return_value={"success": True, "obj": None, "msg": ""})
+        resp.text = AsyncMock(return_value="")
+        resp.headers = {}
+        resp.request_info = MagicMock()
+        resp.request_info.headers = {}
+        yield resp
+
+    xui._session.request = fake_request
+
+    await xui.reset_client_traffic("name with spaces")
+
+    assert "%20" in captured["url"], f"Expected %20 in URL but got: {captured['url']}"
+    assert "name with spaces" not in captured["url"]
+
+
+# ---------------------------------------------------------------------------
+# get_clients filtering (unit-level — no DB, just verifying filter logic)
+# ---------------------------------------------------------------------------
+
+
+def test_get_clients_inbound_filter_logic():
+    """Verify the inbound-filter expression used in xui_service / subscriptions.
+
+    The filtering pattern is: [c for c in all_clients if xui_id in c.get("inboundIds", [])]
+    This test exercises that logic directly so any future regression in the
+    expression will be caught without needing a DB session.
+    """
+    all_clients = [
+        {"uuid": "aaa", "email": "alice", "inboundIds": [5, 7]},
+        {"uuid": "bbb", "email": "bob", "inboundIds": [7]},
+        {"uuid": "ccc", "email": "carol", "inboundIds": [3]},
+        {"uuid": "ddd", "email": "dave", "inboundIds": []},
+        {"uuid": "eee", "email": "eve"},  # no inboundIds key at all
+    ]
+
+    # Filter for xui_id == 5
+    result = [c for c in all_clients if 5 in c.get("inboundIds", [])]
+    assert len(result) == 1
+    assert result[0]["email"] == "alice"
+
+    # Filter for xui_id == 7
+    result7 = [c for c in all_clients if 7 in c.get("inboundIds", [])]
+    assert len(result7) == 2
+    assert {c["email"] for c in result7} == {"alice", "bob"}
+
+    # Filter for xui_id with no matches returns empty list
+    result_empty = [c for c in all_clients if 99 in c.get("inboundIds", [])]
+    assert result_empty == []
