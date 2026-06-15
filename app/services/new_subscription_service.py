@@ -574,7 +574,10 @@ class NewSubscriptionService:
                     deleted_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to delete client from provider: {e}")
+                # Always remove the DB record to prevent orphan rows
+                await self.session.delete(connection)
 
+        await self.session.flush()
         return deleted_count
 
     async def sync_client_telegram_id(self, client_id: int) -> int:
