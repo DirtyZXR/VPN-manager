@@ -35,6 +35,8 @@ class Server(Base, TimestampMixin, SyncMixin):
     )
     ssh_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # TOFU host-key: stored public key string e.g. "ssh-ed25519 AAAA..."
+    ssh_host_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     inbounds: Mapped[list["Inbound"]] = relationship(

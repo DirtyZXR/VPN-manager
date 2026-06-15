@@ -153,7 +153,6 @@ class NewSubscriptionService:
 
         # Reload with relationships
         reloaded_subscription = await self.get_subscription(subscription.id)
-        assert reloaded_subscription is not None
         if not reloaded_subscription:
             raise XUIError("Subscription not found after creation")
 
@@ -575,7 +574,10 @@ class NewSubscriptionService:
                     deleted_count += 1
                 except Exception as e:
                     logger.warning(f"Failed to delete client from provider: {e}")
+                # Always remove the DB record to prevent orphan rows
+                await self.session.delete(connection)
 
+        await self.session.flush()
         return deleted_count
 
     async def sync_client_telegram_id(self, client_id: int) -> int:

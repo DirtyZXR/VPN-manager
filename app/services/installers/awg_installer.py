@@ -304,7 +304,8 @@ tail -f /dev/null
             f"docker exec -i {name} awg genkey"
         )
         public_key = await self._cmd(
-            f"docker exec -i {name} bash -c 'echo \"{private_key}\" | awg pubkey'"
+            f"docker exec -i {name} awg pubkey",
+            input_data=private_key.strip(),
         )
         psk = await self._cmd(
             f"docker exec -i {name} awg genpsk"

@@ -219,7 +219,7 @@ class SyncService:
                 xui_client = await self._xui_service._get_client(server)
                 # Синхронизировать inbounds
                 await self._sync_server_inbounds(server, xui_client)
-                
+
                 # Фиксируем inbounds, чтобы освободить SQLite перед запросами клиентов
                 await self.session.commit()
             else:
@@ -255,7 +255,7 @@ class SyncService:
                     synced = await self._sync_inbound_clients(inbound)
                     clients_synced += synced
                     logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
-                    
+
                     # Фиксируем каждого inbound, чтобы не держать SQLite write lock
                     await self.session.commit()
                 except Exception as e:
@@ -349,7 +349,7 @@ class SyncService:
                 try:
                     synced = await self._sync_inbound_clients(inbound)
                     total_synced += synced
-                    
+
                     # Фиксируем каждого inbound
                     await self.session.commit()
 
@@ -418,7 +418,7 @@ class SyncService:
                 try:
                     synced = await self._sync_inbound_clients(inbound)
                     total_synced += synced
-                    
+
                     # Фиксируем каждого inbound
                     await self.session.commit()
                 except Exception as e:

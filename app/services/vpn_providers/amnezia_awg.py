@@ -147,17 +147,6 @@ class AmneziaAWGProvider(BaseVPNProvider):
         config_text = await self._cmd(
             f"docker exec -i {self.container_name} cat {self.config_path}"
         )
-        await self._cmd(sync_cmd)
-
-    async def _add_peer_to_config(self, public_key: str, psk: str, client_ip: str) -> None:
-        peer_block = f"\n[Peer]\nPublicKey = {public_key}\nPresharedKey = {psk}\nAllowedIPs = {client_ip}/32\n"
-        append_cmd = f"docker exec -i {self.container_name} bash -c 'echo -e \"{peer_block}\" >> {self.config_path}'"
-        await self._cmd(append_cmd)
-
-    async def _remove_peer_from_config(self, public_key: str) -> None:
-        config_text = await self._cmd(
-            f"docker exec -i {self.container_name} cat {self.config_path}"
-        )
 
         blocks = config_text.split("[Peer]")
         new_blocks = [blocks[0]]
@@ -192,10 +181,10 @@ class AmneziaAWGProvider(BaseVPNProvider):
         priv_key_cmd = f"docker exec -i {self.container_name} awg genkey"
         private_key = (await self._cmd(priv_key_cmd)).strip()
 
-        pub_key_cmd = (
-            f"docker exec -i {self.container_name} bash -c 'echo \"{private_key}\" | awg pubkey'"
-        )
-        public_key = (await self._cmd(pub_key_cmd)).strip()
+        public_key = (await self._cmd(
+            f"docker exec -i {self.container_name} awg pubkey",
+            input_data=private_key,
+        )).strip()
 
         psk = (await self._get_server_psk()).strip()
         next_ip = await self._find_next_free_ip(inbound)

@@ -22,7 +22,7 @@ commands into single bash scripts sent via one run_command() call.
 """
 
 import logging
-import random
+import secrets
 import string
 import time
 from collections.abc import Awaitable, Callable
@@ -484,7 +484,7 @@ class BaseInstaller:
     @staticmethod
     def generate_random_string(length: int = 16) -> str:
         chars = string.ascii_letters + string.digits
-        return "".join(random.choices(chars, k=length))
+        return "".join(secrets.choice(chars) for _ in range(length))
 
     async def check_port_free(self, port: int) -> bool:
         """Check if a specific port is free on the server (TCP + UDP)."""

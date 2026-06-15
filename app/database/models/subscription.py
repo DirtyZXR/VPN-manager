@@ -51,9 +51,7 @@ class Subscription(Base, TimestampMixin):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Subscription(id={self.id}, name='{self.name}', token='{self.subscription_token}')>"
-        )
+        return f"<Subscription(id={self.id}, name='{self.name}')>"
 
     @property
     def is_expired(self) -> bool:

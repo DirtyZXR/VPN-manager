@@ -167,7 +167,7 @@ async def show_full_instruction(callback: CallbackQuery) -> None:
     text = instructions.get(os_name, {}).get(
         "full_instruction", t("instruction.not_found", "❌ Текст инструкции не найден.")
     )
-    
+
     if os_name in ["awg", "mtproxy"]:
         reply_markup = get_back_keyboard("instruction_menu")
     else:

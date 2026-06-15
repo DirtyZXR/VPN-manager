@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import DateTime as SADateTime
 
 from app.database.models.base import Base, TimestampMixin
+from app.utils import decrypt_password, encrypt_password
 
 if TYPE_CHECKING:
     from app.database.models.server import Server
@@ -60,7 +61,11 @@ class XUIPanel(Base, TimestampMixin):
 
 
 class AWGService(Base, TimestampMixin):
-    """AmneziaWG service configuration."""
+    """AmneziaWG service configuration.
+
+    ``server_private_key`` is stored encrypted (Fernet) in the DB.
+    The Python property transparently encrypts on write and decrypts on read.
+    """
 
     __tablename__ = "awg_services"
 
@@ -75,7 +80,28 @@ class AWGService(Base, TimestampMixin):
     subnet_cidr: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
     obfuscation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     server_public_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    server_private_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    _server_private_key_encrypted: Mapped[str | None] = mapped_column(
+        "server_private_key", String(250), nullable=True
+    )
+
+    @property
+    def server_private_key(self) -> str | None:
+        """Return decrypted server private key."""
+        if self._server_private_key_encrypted is None:
+            return None
+        try:
+            return decrypt_password(self._server_private_key_encrypted)
+        except Exception:
+            # Already plaintext (pre-migration rows) — return as-is
+            return self._server_private_key_encrypted
+
+    @server_private_key.setter
+    def server_private_key(self, value: str | None) -> None:
+        """Encrypt and store server private key."""
+        if value is None:
+            self._server_private_key_encrypted = None
+        else:
+            self._server_private_key_encrypted = encrypt_password(value)
 
 
 class MTProxyService(Base, TimestampMixin):

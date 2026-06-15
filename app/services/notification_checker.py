@@ -696,9 +696,9 @@ class NotificationChecker:
         # notification_type is already a string
         notification_type_str = notification_type
 
-        if notification_type_str == NotificationType.EXPIRY_24H:
+        if notification_type_str == NotificationType.EXPIRY_24H.value:
             time_text = "через 24 часа"
-        elif notification_type_str == NotificationType.EXPIRY_12H:
+        elif notification_type_str == NotificationType.EXPIRY_12H.value:
             time_text = "через 12 часов"
         else:  # EXPIRY_1H
             time_text = "через 1 час"

@@ -304,10 +304,10 @@ async def show_client_subscriptions(
         return
 
     await state.clear()
-    
+
     # Parse client_id and page
     parts = callback.data.split("_")
-    
+
     # Format can be: client_subscriptions_123 or client_subscriptions_p_0_123
     page = 0
     if "_p_" in callback.data:
@@ -332,7 +332,7 @@ async def show_client_subscriptions(
         per_page = 5
         total_count = len(subscriptions)
         total_pages = max(1, -(-total_count // per_page))
-        
+
         if page < 0:
             page = 0
         elif page >= total_pages:
@@ -344,7 +344,7 @@ async def show_client_subscriptions(
 
         if total_pages > 1:
             text = t(
-                "admin.clients.subscriptions.title_paginated", 
+                "admin.clients.subscriptions.title_paginated",
                 "📝 Подписки клиента ({count}) | Страница {current} из {total}:\n\n",
                 count=total_count,
                 current=page + 1,
@@ -352,7 +352,7 @@ async def show_client_subscriptions(
             )
         else:
             text = t(
-                "admin.clients.subscriptions.title", 
+                "admin.clients.subscriptions.title",
                 "📝 Подписки клиента ({count}):\n\n",
                 count=total_count
             )
@@ -392,7 +392,7 @@ async def show_client_subscriptions(
                 pagination_row.append(
                     InlineKeyboardButton(
                         text=t(
-                            "keyboards.pagination.prev", 
+                            "keyboards.pagination.prev",
                             "⬅️ Назад ({page}/{total_pages})",
                             page=page,
                             total_pages=total_pages
@@ -415,7 +415,7 @@ async def show_client_subscriptions(
                 pagination_row.append(
                     InlineKeyboardButton(
                         text=t(
-                            "keyboards.pagination.next", 
+                            "keyboards.pagination.next",
                             "Вперед ➡️ ({next_page}/{total_pages})",
                             next_page=page + 2,
                             total_pages=total_pages

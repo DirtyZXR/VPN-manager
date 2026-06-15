@@ -638,7 +638,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
             from app.services.new_subscription_service import NewSubscriptionService
             sub_service = NewSubscriptionService(session)
             subscription = await sub_service.get_subscription_by_id(subscription.id)
-            
+
             connections = list(subscription.inbound_connections)
 
             # Get client for notification
@@ -655,7 +655,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
                     subscription=subscription,
                     connections=connections,
                 )
-                
+
             # Extract properties needed for message before committing (which expires objects)
             sub_total_gb = subscription.total_gb
             sub_expiry_date = subscription.expiry_date
@@ -2449,7 +2449,7 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
                     logger.info(f"🚀 [TOTAL LOG] Starting background task run_bg for template_id={template_id}. Added: {inbounds_to_add}")
                     async with async_session_factory() as bg_session:
                         bg_service = SubscriptionTemplateService(bg_session)
-                        logger.info(f"🚀 [TOTAL LOG] Calling _apply_template_inbounds_change...")
+                        logger.info("🚀 [TOTAL LOG] Calling _apply_template_inbounds_change...")
                         await bg_service._apply_template_inbounds_change(
                             template_id,
                             added_inbound_ids=set(inbounds_to_add),
