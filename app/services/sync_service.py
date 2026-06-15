@@ -608,6 +608,14 @@ class SyncService:
             - Клиент без subId → не трогать (debug-лог).
             - Пустой email → пропустить.
 
+        2c. Вручную удалённые на панели (mirror-step):
+            - XUIInboundConnection этого сервера со sync_status='synced', чей email
+              отсутствует в снимке get_clients() И старше ZOMBIE_GRACE_PERIOD
+              (по last_sync_at если есть, иначе created_at) → помечаем sync_status='error'.
+              НЕ удаляем в этом проходе — удалит шаг 2a на следующем проходе.
+            - Свежие соединения (внутри grace-period) не трогаем.
+            - Если что-то помечено — отправляем сводное уведомление администраторам.
+
         AWG/MTProxy: нет надёжной enumeration всех клиентов — только лог.
         Автоудаление не производится.
 
@@ -697,7 +705,6 @@ class SyncService:
         # -----------------------------------------------------------------------
         if not panel_clients:
             logger.debug(f"[RECONCILE] Панель сервера {server.id} вернула пустой список клиентов")
-            return
 
         # Загружаем все subscription_token из БД (для быстрого поиска)
         sub_result = await self.session.execute(
@@ -805,6 +812,99 @@ class SyncService:
             f"[RECONCILE] Сервер {server.id}: удалено зомби={orphans_deleted}, "
             f"предупреждений о неизвестных клиентах={warnings_logged}"
         )
+
+        # -----------------------------------------------------------------------
+        # 2c. Вручную удалённые на панели: synced-соединения, отсутствующие в снимке.
+        # Помечаем sync_status='error' (не удаляем — удалит шаг 2a на след. проходе).
+        # Grace-period: возраст по last_sync_at (если задан), иначе по created_at.
+        # -----------------------------------------------------------------------
+        now_utc = datetime.now(UTC)
+        grace = ZOMBIE_GRACE_PERIOD
+
+        synced_result = await self.session.execute(
+            select(conn_poly)
+            .join(XUIInbound, conn_poly.inbound_id == XUIInbound.id)
+            .where(
+                XUIInbound.server_id == server.id,
+                conn_poly.sync_status == "synced",
+            )
+        )
+        synced_connections = synced_result.scalars().all()
+
+        marked_for_notify: list[dict] = []
+
+        for conn in synced_connections:
+            c_email = getattr(conn, "email", None)
+            if not c_email:
+                continue
+            if c_email.lower() in panel_emails:
+                # Клиент присутствует на панели — всё в порядке
+                continue
+
+            # Клиент отсутствует на панели — проверяем возраст соединения
+            ref_ts: datetime | None = getattr(conn, "last_sync_at", None) or getattr(conn, "created_at", None)
+            if ref_ts is None:
+                # Нет временной метки — пропускаем (безопаснее не трогать)
+                logger.debug(
+                    f"[RECONCILE] Соединение {conn.id} (email={c_email}) без временной метки — пропуск"
+                )
+                continue
+
+            # Нормализуем timezone
+            if ref_ts.tzinfo is None:
+                ref_ts = ref_ts.replace(tzinfo=UTC)
+
+            age = now_utc - ref_ts
+            if age < grace:
+                # Соединение слишком свежее — могло ещё не синхронизироваться
+                logger.debug(
+                    f"[RECONCILE] Соединение {conn.id} (email={c_email}) "
+                    f"моложе grace-period ({age.total_seconds():.0f}s < {grace.total_seconds():.0f}s) — пропуск"
+                )
+                continue
+
+            # Помечаем как error (удалит шаг 2a на следующем проходе реконсилятора)
+            logger.info(
+                f"[RECONCILE] Зеркало: соединение {conn.id} (email={c_email}) "
+                f"отсутствует на панели сервера {server.id}, возраст {age.total_seconds():.0f}s "
+                f"→ sync_status='error' (удаление — на следующем проходе)"
+            )
+            conn.sync_status = "error"
+
+            # Собираем информацию для уведомления (email + имя пользователя)
+            user_label = "—"
+            try:
+                sub = getattr(conn, "subscription", None)
+                if sub is not None:
+                    client = getattr(sub, "client", None)
+                    if client is not None:
+                        user_label = getattr(client, "name", None) or str(getattr(client, "telegram_id", "—"))
+            except Exception:
+                pass
+            marked_for_notify.append({"email": c_email, "user": user_label})
+
+        if marked_for_notify:
+            await self.session.flush()
+            logger.info(
+                f"[RECONCILE] Сервер {server.id}: помечено как missing-on-panel={len(marked_for_notify)}, "
+                f"отправка уведомления администраторам"
+            )
+            try:
+                from app.services.notification_service import NotificationService
+                notif = NotificationService(self.session)
+                await notif.notify_admins_missing_on_panel(
+                    server_name=server.name,
+                    marked_connections=marked_for_notify,
+                )
+            except Exception as e:
+                logger.error(
+                    f"[RECONCILE] Не удалось отправить уведомление администраторам "
+                    f"о пропавших клиентах на сервере {server.id}: {e}"
+                )
+        else:
+            logger.debug(
+                f"[RECONCILE] Сервер {server.id}: все synced-соединения присутствуют на панели"
+            )
 
     async def _sync_inbound_clients(self, inbound: Inbound, xui_client: object | None = None) -> int:
         """Dispatch client sync to the appropriate protocol handler.

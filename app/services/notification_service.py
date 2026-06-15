@@ -768,3 +768,66 @@ class NotificationService:
         except Exception as e:
             logger.error(f"Failed to send request decision notification to {telegram_id}: {e}")
             return False
+
+    async def notify_admins_missing_on_panel(
+        self,
+        server_name: str,
+        marked_connections: list[dict],
+    ) -> None:
+        """Уведомить администраторов о клиентах, пропавших с панели (вручную удалённых).
+
+        Args:
+            server_name: Имя сервера, на котором обнаружены пропавшие клиенты.
+            marked_connections: Список словарей с ключами 'email' и 'user'.
+        """
+        settings = get_settings()
+        admin_ids = settings.admin_ids
+        if not admin_ids:
+            logger.warning(
+                "[RECONCILE] Нет admin_ids — пропуск уведомления об удалённых клиентах."
+            )
+            return
+
+        if not marked_connections:
+            return
+
+        lines = []
+        for entry in marked_connections:
+            email = html.escape(entry.get("email") or "—")
+            user = html.escape(entry.get("user") or "—")
+            lines.append(f"• <code>{email}</code> (пользователь: {user})")
+
+        safe_server = html.escape(server_name)
+        body = "\n".join(lines)
+        message = (
+            f"⚠️ <b>Клиенты удалены с панели вручную</b>\n\n"
+            f"<b>Сервер:</b> {safe_server}\n\n"
+            f"Следующие соединения отсутствуют в снимке панели и помечены "
+            f"как <code>error</code> для последующей очистки:\n\n"
+            f"{body}"
+        )
+
+        try:
+            async with await self._get_bot() as bot:
+                for admin_id in admin_ids:
+                    try:
+                        await bot.send_message(
+                            chat_id=admin_id,
+                            text=message,
+                            parse_mode="HTML",
+                        )
+                        logger.info(
+                            f"[RECONCILE] Уведомление об удалённых клиентах отправлено "
+                            f"администратору {admin_id} (сервер {server_name})"
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[RECONCILE] Не удалось отправить уведомление "
+                            f"администратору {admin_id}: {e}"
+                        )
+        except Exception as e:
+            logger.error(
+                f"[RECONCILE] Ошибка отправки уведомлений об удалённых клиентах "
+                f"(сервер {server_name}): {e}",
+                exc_info=True,
+            )
