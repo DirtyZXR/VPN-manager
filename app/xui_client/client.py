@@ -264,8 +264,79 @@ class XUIClient:
             logger.warning("Unexpected error in XUI request: {}", e)
             raise XUIError(f"Request failed: {e}") from e
 
+    def _build_login_payload(self) -> dict[str, Any]:
+        """Build the login payload dict."""
+        payload: dict[str, Any] = {
+            "username": self.username,
+            "password": self.password,
+        }
+        if self.two_factor_code:
+            payload["twoFactorCode"] = self.two_factor_code
+        return payload
+
+    async def _do_login_post(self, *, use_form: bool) -> bool:
+        """Perform a single login POST (JSON or form-encoded) with CSRF + 403-retry.
+
+        Args:
+            use_form: If True, send as form-data; otherwise send as JSON.
+
+        Returns:
+            True on success.
+
+        Raises:
+            XUIAuthError: Auth failed (non-200 status or success=False in body).
+            XUIConnectionError: aiohttp connection error.
+        """
+        session = self._get_session()
+        url = f"{self.base_url.rstrip('/')}/login"
+        payload = self._build_login_payload()
+        post_kwargs: dict[str, Any] = {"data": payload} if use_form else {"json": payload}
+
+        if self._csrf_token is None:
+            self._csrf_token = await self._get_csrf_token()
+
+        async def _attempt() -> Any:
+            headers: dict[str, str] = {}
+            if self._csrf_token:
+                headers["X-CSRF-Token"] = self._csrf_token
+            try:
+                async with session.post(url, headers=headers or None, **post_kwargs) as resp:
+                    return resp.status, await resp.json()
+            except aiohttp.ClientError as e:
+                raise XUIConnectionError(f"Connection error during login: {e}") from e
+
+        status, data = await _attempt()
+
+        if status == 403:
+            self._csrf_token = await self._get_csrf_token()
+            status, data = await _attempt()
+
+        if status != 200:
+            raise XUIAuthError(f"Login failed: HTTP {status}")
+
+        if not data.get("success", False):
+            raise XUIAuthError(f"Login failed: {data.get('msg', 'Unknown error')}")
+
+        self._cookies = {cookie.key: cookie.value for cookie in session.cookie_jar}
+        logger.info(
+            f"Logged in to {self.base_url}, "
+            f"cookies={list(self._cookies.keys())}"
+        )
+        return True
+
+    async def _login_json(self) -> bool:
+        """Login using JSON body."""
+        return await self._do_login_post(use_form=False)
+
+    async def _login_form(self) -> bool:
+        """Login using form-encoded body (legacy fallback)."""
+        return await self._do_login_post(use_form=True)
+
     async def login(self) -> bool:
         """Login to panel and store session cookie.
+
+        Tries JSON body first; on XUIAuthError or XUIConnectionError falls back
+        to form-encoded body. If both fail, re-raises the last error.
 
         Returns:
             True if login successful
@@ -274,37 +345,18 @@ class XUIClient:
             XUIAuthError: Authentication failed
             XUIConnectionError: Connection failed
         """
-        session = self._get_session()
+        self._get_session()  # validate session is open
         url = f"{self.base_url.rstrip('/')}/login"
 
         logger.info(f"Login attempt to: {url}")
         logger.info(f"Username: {self.username}, SSL verify: {self.verify_ssl}")
 
-        login_payload: dict[str, Any] = {
-            "username": self.username,
-            "password": self.password,
-        }
-        if self.two_factor_code:
-            login_payload["twoFactorCode"] = self.two_factor_code
-
         try:
-            async with session.post(url, json=login_payload) as response:
-                if response.status != 200:
-                    raise XUIAuthError(f"Login failed: HTTP {response.status}")
+            return await self._login_json()
+        except (XUIAuthError, XUIConnectionError):
+            logger.info("JSON login failed, retrying with form-data for {}", self.base_url)
 
-                data = await response.json()
-                if not data.get("success", False):
-                    raise XUIAuthError(f"Login failed: {data.get('msg', 'Unknown error')}")
-
-                self._cookies = {cookie.key: cookie.value for cookie in session.cookie_jar}
-                logger.info(
-                    f"Logged in to {self.base_url}, "
-                    f"cookies={list(self._cookies.keys())}"
-                )
-                return True
-
-        except aiohttp.ClientError as e:
-            raise XUIConnectionError(f"Connection error during login: {e}") from e
+        return await self._login_form()
 
     async def _test_session(self) -> bool:
         """Test if saved cookies are still valid.
