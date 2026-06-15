@@ -18,7 +18,6 @@ from app.xui_client.exceptions import (
 from app.xui_client.models import (
     XUIAddClientRequest,
     XUIInbound,
-    ensure_settings_dict,
 )
 
 
@@ -442,33 +441,30 @@ class XUIClient:
 
         return XUIInbound(**data["obj"])
 
-    async def get_clients(self, inbound_id: int) -> list[dict[str, Any]]:
-        """Get list of clients for inbound.
-
-        Args:
-            inbound_id: Inbound ID
+    async def get_clients(self) -> list[dict[str, Any]]:
+        """Get panel-wide list of all clients.
 
         Returns:
-            List of client configurations
+            List of client dicts; each has ``inboundIds``, ``email``, ``uuid``,
+            ``traffic``, etc.
         """
-        data = await self._request("GET", f"/panel/api/inbounds/getClientTraffics/{inbound_id}")
+        data = await self._request("GET", "/panel/api/clients/list")
 
         if not data.get("success", False):
-            # May return empty if no clients
             return []
 
         return data.get("obj", [])
 
     async def add_client(
         self,
-        inbound_id: int,
         client: XUIAddClientRequest,
+        inbound_ids: list[int],
     ) -> bool:
-        """Add client to inbound.
+        """Add client to one or more inbounds.
 
         Args:
-            inbound_id: Inbound ID
-            client: Client configuration
+            client: Client configuration (camelCase fields via ``by_alias=True``).
+            inbound_ids: List of inbound IDs to attach the client to.
 
         Returns:
             True if successful
@@ -476,35 +472,31 @@ class XUIClient:
         Raises:
             XUIError: Failed to add client
         """
-        # Build settings JSON string
-        settings = {
-            "clients": [client.model_dump()],
-            "decryption": "none",
-            "fallbacks": [],
-        }
-
         data = await self._request(
             "POST",
-            "/panel/api/inbounds/addClient",
-            data={"id": str(inbound_id), "settings": json.dumps(settings)},
+            "/panel/api/clients/add",
+            json={"client": client.model_dump(by_alias=True), "inboundIds": inbound_ids},
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to add client: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to add client"))
 
-        logger.info(f"Added client {client.email} to inbound {inbound_id}")
+        logger.info(f"Added client {client.email} to inbounds {inbound_ids}")
         return True
 
     async def update_client(
         self,
-        inbound_id: int,
+        email: str,
         client: XUIAddClientRequest,
     ) -> bool:
-        """Update client in inbound.
+        """Update client identified by email.
+
+        The server replaces the entire client row, so *client* must carry the
+        full field set (not just the changed fields).
 
         Args:
-            inbound_id: Inbound ID
-            client: Client configuration (must include UUID)
+            email: Current client email (used as the URL key).
+            client: Full client configuration.
 
         Returns:
             True if successful
@@ -512,34 +504,28 @@ class XUIClient:
         Raises:
             XUIError: Failed to update client
         """
-        settings = {
-            "clients": [client.model_dump()],
-            "decryption": "none",
-            "fallbacks": [],
-        }
-
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/updateClient/{client.id}",
-            data={"id": inbound_id, "settings": json.dumps(settings)},
+            f"/panel/api/clients/update/{email}",
+            json=client.model_dump(by_alias=True),
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to update client: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to update client"))
 
-        logger.info(f"Updated client {client.email} in inbound {inbound_id}")
+        logger.info(f"Updated client {email}")
         return True
 
     async def delete_client(
         self,
-        inbound_id: int,
-        client_uuid: str,
+        email: str,
+        keep_traffic: bool = False,
     ) -> bool:
-        """Delete client from inbound.
+        """Delete client by email.
 
         Args:
-            inbound_id: Inbound ID
-            client_uuid: Client UUID
+            email: Client email.
+            keep_traffic: When True, preserves traffic counters on the panel.
 
         Returns:
             True if successful
@@ -547,140 +533,104 @@ class XUIClient:
         Raises:
             XUIError: Failed to delete client
         """
+        kwargs: dict[str, Any] = {}
+        if keep_traffic:
+            kwargs["params"] = {"keepTraffic": 1}
+
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
+            f"/panel/api/clients/del/{email}",
+            **kwargs,
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to delete client: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to delete client"))
 
-        logger.info(f"Deleted client {client_uuid} from inbound {inbound_id}")
+        logger.info(f"Deleted client {email}")
         return True
 
     async def enable_client(
         self,
-        inbound_id: int,
-        client_uuid: str,
+        email: str,
+        client: XUIAddClientRequest,
         enable: bool = True,
     ) -> bool:
-        """Enable or disable client.
+        """Enable or disable a client.
+
+        Sets ``client.enable`` and delegates to :meth:`update_client`.  The
+        caller must supply the full client payload (update replaces the row).
 
         Args:
-            inbound_id: Inbound ID
-            client_uuid: Client UUID
-            enable: True to enable, False to disable
+            email: Client email (URL key for the update endpoint).
+            client: Full client configuration.
+            enable: True to enable, False to disable.
 
         Returns:
             True if successful
         """
-        inbound = await self.get_inbound(inbound_id)
-
-        settings_data = ensure_settings_dict(inbound.settings)
-        clients_list = settings_data.get("clients", [])
-
-        client_data = None
-        for c in clients_list:
-            if c.get("id") == client_uuid:
-                client_data = c
-                break
-
-        if not client_data:
-            raise XUINotFoundError(f"Client {client_uuid} not found in inbound {inbound_id}")
-
-        client_data["enable"] = enable
-
-        client = XUIAddClientRequest(**client_data)
-        return await self.update_client(inbound_id, client)
-
-    async def update_client_email(
-        self,
-        inbound_id: int,
-        client_uuid: str,
-        new_email: str,
-    ) -> bool:
-        """Update client email.
-
-        Args:
-            inbound_id: Inbound ID
-            client_uuid: Client UUID
-            new_email: New client email
-
-        Returns:
-            True if successful
-        """
-        inbound = await self.get_inbound(inbound_id)
-
-        settings_data = ensure_settings_dict(inbound.settings)
-        clients_list = settings_data.get("clients", [])
-
-        client_data = None
-        for c in clients_list:
-            if c.get("id") == client_uuid:
-                client_data = c
-                break
-
-        if not client_data:
-            raise XUINotFoundError(f"Client {client_uuid} not found in inbound {inbound_id}")
-
-        # Update email
-        client_data["email"] = new_email
-
-        # Build update request
-        client = XUIAddClientRequest(**client_data)
-        return await self.update_client(inbound_id, client)
+        client.enable = enable
+        return await self.update_client(email, client)
 
     async def get_client_traffic(
         self,
-        inbound_id: int,
         email: str,
     ) -> dict[str, Any] | None:
-        """Get client traffic statistics.
+        """Get traffic statistics for a single client by email.
 
         Args:
-            inbound_id: Inbound ID
-            email: Client email
+            email: Client email.
 
         Returns:
-            Traffic statistics or None if not found
+            Traffic dict on success, or None if not found / on error.
         """
-        data = await self._request(
-            "GET",
-            f"/panel/api/inbounds/getClientTraffics/{inbound_id}",
-        )
+        try:
+            data = await self._request(
+                "GET",
+                f"/panel/api/clients/traffic/{email}",
+            )
+        except Exception:
+            return None
 
         if not data.get("success", False):
             return None
 
-        for client in data.get("obj", []):
-            if client.get("email") == email:
-                return client
+        return data.get("obj") or None
 
-        return None
+    async def get_client(
+        self,
+        email: str,
+    ) -> dict[str, Any] | None:
+        """Get a single client by email (alias for :meth:`get_client_traffic`).
+
+        Args:
+            email: Client email.
+
+        Returns:
+            Client dict on success, or None if not found.
+        """
+        return await self.get_client_traffic(email)
 
     async def reset_client_traffic(
         self,
-        inbound_id: int,
-        client_email: str,
+        email: str,
     ) -> bool:
-        """Reset client traffic statistics.
+        """Reset traffic counters for a client.
 
         Args:
-            inbound_id: Inbound ID
-            client_email: Client email
+            email: Client email.
 
         Returns:
             True if successful
         """
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/{inbound_id}/resetClientTraffic/{client_email}",
+            f"/panel/api/clients/resetTraffic/{email}",
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to reset traffic: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to reset traffic"))
 
-        logger.info(f"Reset traffic for client {client_email}")
+        logger.info(f"Reset traffic for client {email}")
         return True
 
     async def create_api_token(self, name: str = "vpnbot") -> str:

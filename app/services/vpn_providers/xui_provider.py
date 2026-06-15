@@ -5,7 +5,7 @@ from typing import Any
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.vpn_providers.base import BaseVPNProvider
-from app.xui_client import XUIAddClientRequest, XUIClient, XUIError
+from app.xui_client import XUIAddClientRequest, XUIClient
 
 
 class XUIProvider(BaseVPNProvider):
@@ -91,40 +91,37 @@ class XUIProvider(BaseVPNProvider):
             expiry_time = int(subscription.expiry_date.timestamp() * 1000)
 
         tg_id = int(subscription.client.telegram_id) if subscription.client.telegram_id else 0
+        x_id = getattr(inbound, "xui_id", inbound.id)
 
+        # Proactive uniqueness check: the new clients/add endpoint does NOT error
+        # on duplicate email, so reactive retry won't catch collisions.  We probe
+        # get_client_traffic before each attempt; a non-None result means the email
+        # is already taken on the panel.
         final_email = base_email
         for i in range(100):
-            if i > 0:
-                final_email = f"{base_email}-{i}"
-
-            req = XUIAddClientRequest(
-                id=client_uuid,
-                email=final_email,
-                enable=True,
-                flow="xtls-rprx-vision",
-                totalGB=subscription.total_gb * 1024 * 1024 * 1024,
-                expiryTime=expiry_time,
-                subId=subscription.subscription_token,
-                tgId=tg_id,
-            )
-            try:
-                # XUI inbound_id can be in inbound.xui_id or payload
-                # wait, currently DB has inbound.xui_id? No, inbound.id is internal, inbound.xui_id is for XUI
-                # let's assume inbound has xui_id (legacy)
-                # check if inbound has xui_id attribute
-                x_id = getattr(inbound, "xui_id", inbound.id)
-
-                await client.add_client(x_id, req)
-                break
-            except XUIError as e:
-                error_msg = str(e).lower()
-                if "duplicate" in error_msg and "email" in error_msg:
-                    continue
-                raise ValueError(f"Failed to create XUI client: {str(e)}") from e
+            candidate = base_email if i == 0 else f"{base_email}-{i}"
+            existing = await client.get_client_traffic(candidate)
+            if existing is not None:
+                # Email taken — try next suffix
+                continue
+            final_email = candidate
+            break
         else:
             raise ValueError(
                 f"Unable to find an email accepted by XUI panel for inbound {inbound.id}"
             )
+
+        req = XUIAddClientRequest(
+            id=client_uuid,
+            email=final_email,
+            enable=True,
+            flow="xtls-rprx-vision",
+            totalGB=subscription.total_gb * 1024 * 1024 * 1024,
+            expiryTime=expiry_time,
+            subId=subscription.subscription_token,
+            tgId=tg_id,
+        )
+        await client.add_client(req, [x_id])
 
         return {"uuid": client_uuid, "email": final_email, "xui_client_id": client_uuid}
 
@@ -162,8 +159,7 @@ class XUIProvider(BaseVPNProvider):
             else 0,
         )
 
-        x_id = getattr(inbound, "xui_id", inbound.id)
-        await client.update_client(x_id, req)
+        await client.update_client(req.email, req)
         return True
 
     async def _set_client_enable_status(
@@ -200,8 +196,7 @@ class XUIProvider(BaseVPNProvider):
             else 0,
         )
 
-        x_id = getattr(inbound, "xui_id", inbound.id)
-        await client.update_client(x_id, req)
+        await client.update_client(req.email, req)
         return True
 
     async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
@@ -213,13 +208,12 @@ class XUIProvider(BaseVPNProvider):
     async def remove_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
         client = await self._get_client()
         payload = connection.provider_payload or {}
-        c_uuid = connection.uuid or payload.get("uuid")
+        c_email = connection.email or payload.get("email")
 
-        if not c_uuid:
+        if not c_email:
             return False
 
-        x_id = getattr(inbound, "xui_id", inbound.id)
-        await client.delete_client(x_id, c_uuid)
+        await client.delete_client(c_email)
         return True
 
     async def reset_client_traffic(self, inbound: Inbound, connection: InboundConnection) -> bool:
@@ -230,8 +224,7 @@ class XUIProvider(BaseVPNProvider):
         if not c_email:
             return False
 
-        x_id = getattr(inbound, "xui_id", inbound.id)
-        await client.reset_client_traffic(x_id, c_email)
+        await client.reset_client_traffic(c_email)
         return True
 
     async def get_client_traffic(
@@ -244,9 +237,7 @@ class XUIProvider(BaseVPNProvider):
         if not c_email:
             return None
 
-        x_id = getattr(inbound, "xui_id", inbound.id)
-        traffic_data = await client.get_client_traffic(x_id, c_email)
-        return traffic_data
+        return await client.get_client_traffic(c_email)
 
     async def get_client_config(
         self, inbound: Inbound, connection: InboundConnection, prefer_json: bool = True

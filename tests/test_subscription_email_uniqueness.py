@@ -1,4 +1,11 @@
-"""Test email uniqueness dedup logic in XUIProvider.add_client."""
+"""Test email uniqueness dedup logic in XUIProvider.add_client (proactive approach).
+
+With the v3.1.0 /panel/api/clients/add endpoint, duplicate email does NOT produce
+an error.  The provider now proactively checks existence via get_client_traffic()
+before each add attempt:
+  - non-None return → email taken, try next suffix
+  - None return     → email free, proceed with add_client
+"""
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -7,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.services.vpn_providers.xui_provider import XUIProvider
-from app.xui_client import XUIError
 
 
 def _make_inbound(xui_id: int = 5, internal_id: int = 1) -> SimpleNamespace:
@@ -36,101 +42,125 @@ def _make_subscription(
     )
 
 
-def _make_provider_with_mock_client(mock_add_client_coro) -> tuple[XUIProvider, AsyncMock]:
+def _make_provider_with_mock_client(
+    get_traffic_side_effect,
+    add_client_side_effect=None,
+) -> tuple[XUIProvider, AsyncMock]:
     """
     Build an XUIProvider with a pre-injected mock XUIClient.
 
-    *mock_add_client_coro* is the side_effect for mock_client.add_client.
+    *get_traffic_side_effect* is the side_effect for mock_client.get_client_traffic.
+    *add_client_side_effect* is the side_effect for mock_client.add_client
+      (defaults to None, i.e. always succeeds).
     Returns (provider, mock_client).
     """
     server = MagicMock()
     provider = XUIProvider(server)
 
     mock_client = AsyncMock()
-    mock_client.add_client = AsyncMock(side_effect=mock_add_client_coro)
-    # Inject directly so _get_client() is never called (avoids real network / encryption)
+    mock_client.get_client_traffic = AsyncMock(side_effect=get_traffic_side_effect)
+    mock_client.add_client = AsyncMock(side_effect=add_client_side_effect)
     provider._client = mock_client
 
     return provider, mock_client
 
 
 # ---------------------------------------------------------------------------
-# Test 1 – success on first attempt (no duplicate at all)
+# Test 1 – success on first attempt (email is free)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_add_client_no_collision():
-    """When XUI accepts the email on the first call, the returned email has no suffix."""
+    """When the base email is free, add_client is called once with the unsuffixed email."""
     inbound = _make_inbound(xui_id=3)
     subscription = _make_subscription(name="Sub", client_name="Alice")
 
-    provider, mock_client = _make_provider_with_mock_client(None)
-    # add_client succeeds immediately (returns None by default for AsyncMock)
+    # get_client_traffic always returns None → email is free on first probe
+    provider, mock_client = _make_provider_with_mock_client(
+        get_traffic_side_effect=AsyncMock(return_value=None)
+    )
 
     result = await provider.add_client(inbound, subscription, email="Alice-Sub")
 
     assert result["email"] == "Alice-Sub"
+    # Traffic probed exactly once (for the base email)
+    mock_client.get_client_traffic.assert_called_once_with("Alice-Sub")
+    # add_client called exactly once
     mock_client.add_client.assert_called_once()
+    # Verify the call used the new signature: (req, [xui_id])
+    call_args = mock_client.add_client.call_args
+    assert call_args[0][1] == [3]  # inbound_ids positional arg
 
 
 # ---------------------------------------------------------------------------
-# Test 2 – success after exactly 1 duplicate
+# Test 2 – success after exactly 1 collision (suffix -1)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_add_client_one_duplicate_then_success():
-    """When the first call raises a duplicate-email XUIError the provider retries with '-1' suffix."""
+async def test_add_client_one_collision_then_success():
+    """When the base email is taken, the provider retries with '-1' suffix."""
     inbound = _make_inbound(xui_id=3)
     subscription = _make_subscription(name="Sub", client_name="Alice")
     base_email = "Alice-Sub"
 
-    call_count = 0
+    traffic_call_count = 0
 
-    async def side_effect(x_id, req):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise XUIError("Failed to add client: duplicate email")
-        # second call succeeds
+    async def probe_side_effect(email: str):
+        nonlocal traffic_call_count
+        traffic_call_count += 1
+        if email == base_email:
+            # Email taken
+            return {"uuid": "existing-uuid", "email": email}
+        # All suffixed emails are free
+        return None
 
-    provider, mock_client = _make_provider_with_mock_client(side_effect)
+    provider, mock_client = _make_provider_with_mock_client(
+        get_traffic_side_effect=probe_side_effect
+    )
 
     result = await provider.add_client(inbound, subscription, email=base_email)
 
     assert result["email"] == f"{base_email}-1"
-    assert mock_client.add_client.call_count == 2
+    # Probed base + suffix-1 = 2 calls
+    assert mock_client.get_client_traffic.call_count == 2
+    mock_client.add_client.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
-# Test 3 – success after multiple duplicates
+# Test 3 – success after multiple collisions (suffix -N)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_add_client_multiple_duplicates_then_success():
-    """After N duplicate errors the provider accepts the email with '-N' suffix."""
+async def test_add_client_multiple_collisions_then_success():
+    """After N taken emails the provider uses the '-N' suffix."""
     inbound = _make_inbound(xui_id=7)
     subscription = _make_subscription(name="MySub", client_name="Bob")
     base_email = "Bob-MySub"
-    fail_times = 5
+    taken_count = 5  # base + suffixes 1..4 are taken; suffix-5 is free
 
-    call_count = 0
+    async def probe_side_effect(email: str):
+        # base → i=0, suffix-1 → i=1, ..., suffix-4 → i=4 are taken
+        # suffix-5 is free
+        if email == base_email:
+            return {"email": email}
+        suffix = int(email.rsplit("-", 1)[-1])
+        if suffix < taken_count:
+            return {"email": email}
+        return None
 
-    async def side_effect(x_id, req):
-        nonlocal call_count
-        call_count += 1
-        if call_count <= fail_times:
-            raise XUIError("duplicate email detected")
-        # succeeds on attempt fail_times+1
-
-    provider, mock_client = _make_provider_with_mock_client(side_effect)
+    provider, mock_client = _make_provider_with_mock_client(
+        get_traffic_side_effect=probe_side_effect
+    )
 
     result = await provider.add_client(inbound, subscription, email=base_email)
 
-    assert result["email"] == f"{base_email}-{fail_times}"
-    assert mock_client.add_client.call_count == fail_times + 1
+    assert result["email"] == f"{base_email}-{taken_count}"
+    # Probed taken_count+1 times (base + suffixes 1..taken_count)
+    assert mock_client.get_client_traffic.call_count == taken_count + 1
+    mock_client.add_client.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -140,21 +170,24 @@ async def test_add_client_multiple_duplicates_then_success():
 
 @pytest.mark.asyncio
 async def test_add_client_exhausts_all_attempts_raises_value_error():
-    """When every attempt raises a duplicate-email error the provider raises ValueError."""
+    """When every candidate email is taken the provider raises ValueError."""
     inbound = _make_inbound(xui_id=2, internal_id=9)
     subscription = _make_subscription(name="ExhSub", client_name="Carol")
     base_email = "Carol-ExhSub"
 
-    async def always_duplicate(x_id, req):
-        raise XUIError("duplicate email conflict")
+    async def always_taken(email: str):
+        return {"email": email, "uuid": "x"}
 
-    provider, mock_client = _make_provider_with_mock_client(always_duplicate)
+    provider, mock_client = _make_provider_with_mock_client(
+        get_traffic_side_effect=always_taken
+    )
 
     with pytest.raises(ValueError, match="Unable to find an email accepted by XUI panel"):
         await provider.add_client(inbound, subscription, email=base_email)
 
-    # The loop runs exactly 100 times
-    assert mock_client.add_client.call_count == 100
+    # 100 probes (i=0..99), add_client never called
+    assert mock_client.get_client_traffic.call_count == 100
+    mock_client.add_client.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
