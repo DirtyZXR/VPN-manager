@@ -10,6 +10,22 @@ from app.database.models import Server
 logger = logging.getLogger(__name__)
 
 
+class SSHHostKeyMismatchError(Exception):
+    """Raised when the server host key does not match the stored (trusted) key.
+
+    This is a potential MITM-attack indicator; the caller must NOT continue
+    the connection and should alert the administrator.
+    """
+
+    def __init__(self, host: str, message: str) -> None:
+        self.host = host
+        super().__init__(f"SSH host-key mismatch for {host}: {message}")
+
+
+# Backward-compatible alias so external code / tests can import either name.
+SSHHostKeyMismatch = SSHHostKeyMismatchError
+
+
 class SSHManager:
     """Manages SSH connections to servers."""
 
@@ -53,7 +69,12 @@ class SSHManager:
     async def _connect(
         self, override_password: str | None = None, override_key: str | None = None
     ) -> asyncssh.SSHClientConnection:
-        """Establish SSH connection.
+        """Establish SSH connection with TOFU host-key verification.
+
+        On the first connection (no stored key) the server's public host key is
+        accepted and returned via ``self._discovered_host_key`` so the caller can
+        persist it.  On subsequent connections only the previously stored key is
+        trusted; a mismatch raises :class:`SSHHostKeyMismatch`.
 
         Args:
             override_password: Use this password instead of the one in DB
@@ -61,25 +82,86 @@ class SSHManager:
 
         Returns:
             SSHClientConnection
+
+        Raises:
+            SSHHostKeyMismatch: When the server presents a different key than stored.
         """
         password = override_password or self.get_ssh_password()
         key_data = override_key or self.get_ssh_key()
 
         client_keys = None
         if key_data:
-            # Load the private key from string
             client_keys = [asyncssh.import_private_key(key_data)]
 
-        # Use known_hosts=None for now, to bypass strict host key checking
-        # like original script which connects to fresh servers.
-        return await asyncssh.connect(
-            self.host,
-            port=self.port,
-            username=self.username,
-            password=password,
-            client_keys=client_keys,
-            known_hosts=None,
-        )
+        stored_key: str | None = self.server.ssh_host_key
+
+        if stored_key:
+            # Verify: accept ONLY the stored key (TOFU enforcement)
+            try:
+                known = asyncssh.import_known_hosts(f"{self.host} {stored_key}\n")
+            except Exception as exc:
+                raise SSHHostKeyMismatchError(
+                    self.host, f"stored key is unparseable: {exc}"
+                ) from exc
+
+            try:
+                conn = await asyncssh.connect(
+                    self.host,
+                    port=self.port,
+                    username=self.username,
+                    password=password,
+                    client_keys=client_keys,
+                    known_hosts=known,
+                )
+            except (asyncssh.HostKeyNotVerifiable, asyncssh.PermissionDenied) as exc:
+                logger.warning(
+                    "SSH host-key mismatch on %s:%s — possible MITM. "
+                    "Admin action required.",
+                    self.host,
+                    self.port,
+                )
+                raise SSHHostKeyMismatchError(self.host, str(exc)) from exc
+
+            self._discovered_host_key: str | None = None
+            return conn
+
+        else:
+            # First connection (TOFU): trust and capture the key
+            conn = await asyncssh.connect(
+                self.host,
+                port=self.port,
+                username=self.username,
+                password=password,
+                client_keys=client_keys,
+                known_hosts=None,
+            )
+            host_key = conn.get_server_host_key()
+            if host_key is not None:
+                discovered = host_key.export_public_key().decode().strip()
+                self._discovered_host_key = discovered
+                logger.info(
+                    "TOFU: captured host key for %s (type=%s); will persist.",
+                    self.host,
+                    discovered.split()[0] if discovered else "unknown",
+                )
+            else:
+                self._discovered_host_key = None
+
+            return conn
+
+    async def _persist_host_key(self, session) -> None:  # type: ignore[type-arg]
+        """Persist the discovered host key to the Server row.
+
+        Must be called AFTER :meth:`_connect` while the session is still open.
+        No-op if no key was discovered (e.g. on subsequent connections where the
+        key was already stored).
+        """
+        discovered = getattr(self, "_discovered_host_key", None)
+        if discovered and not self.server.ssh_host_key:
+            self.server.ssh_host_key = discovered
+            session.add(self.server)
+            await session.commit()
+            logger.info("TOFU: host key persisted for %s.", self.host)
 
     async def test_connection(self, password: str | None = None, key: str | None = None) -> bool:
         """Test SSH connection without executing a command.
@@ -94,6 +176,8 @@ class SSHManager:
         try:
             async with await self._connect(override_password=password, override_key=key):
                 return True
+        except SSHHostKeyMismatchError:
+            raise
         except Exception as e:
             logger.error(f"SSH test connection failed: {e}")
             return False
@@ -109,7 +193,8 @@ class SSHManager:
             Stdout string
 
         Raises:
-            Exception: If command fails
+            SSHHostKeyMismatch: On host key mismatch.
+            Exception: If command fails.
         """
         async with await self._connect() as conn:
             result = await conn.run(command, input=input_data)
