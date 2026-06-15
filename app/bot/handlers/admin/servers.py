@@ -1272,7 +1272,7 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 from app.services.installers.xui_installer import XUIInstaller
                 from app.services.ssh_service import SSHManager
 
-                ssh = SSHManager(server)
+                ssh = SSHManager(server, session=session)
                 installer = XUIInstaller(
                     ssh,
                     progress_callback=lambda text: msg.edit_text(
@@ -1450,7 +1450,7 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             )
             server = result.scalar_one()
 
-            ssh = SSHManager(server)
+            ssh = SSHManager(server, session=session)
             installer = XUIInstaller(
                 ssh,
                 progress_callback=lambda text: msg.edit_text(
@@ -3924,7 +3924,7 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 from app.services.installers.awg_installer import AWGInstaller
                 from app.services.ssh_service import SSHManager
 
-                ssh = SSHManager(server)
+                ssh = SSHManager(server, session=session)
                 installer = AWGInstaller(
                     ssh,
                     progress_callback=lambda text: msg.edit_text(
@@ -4068,7 +4068,7 @@ async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             )
             server = result.scalar_one()
 
-            ssh = SSHManager(server)
+            ssh = SSHManager(server, session=session)
             installer = AWGInstaller(
                 ssh,
                 progress_callback=lambda text: msg.edit_text(
@@ -4721,7 +4721,7 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                 from app.services.installers.mtproxy_installer import MTProxyInstaller
                 from app.services.ssh_service import SSHManager
 
-                ssh = SSHManager(server)
+                ssh = SSHManager(server, session=session)
                 installer = MTProxyInstaller(
                     ssh,
                     progress_callback=lambda text: msg.edit_text(
@@ -5008,7 +5008,7 @@ async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             from app.services.installers.awg_installer import AWGInstaller
             from app.services.ssh_service import SSHManager
 
-            installer = AWGInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление AWG</b>\n\n{text}", parse_mode="HTML"))
+            installer = AWGInstaller(SSHManager(server, session=session), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление AWG</b>\n\n{text}", parse_mode="HTML"))
 
             # Need to initialize sudo if needed
             ok, err_msg = await installer.preflight_check()
@@ -5063,7 +5063,7 @@ async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             from app.services.installers.mtproxy_installer import MTProxyInstaller
             from app.services.ssh_service import SSHManager
 
-            installer = MTProxyInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление MTProxy</b>\n\n{text}", parse_mode="HTML"))
+            installer = MTProxyInstaller(SSHManager(server, session=session), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление MTProxy</b>\n\n{text}", parse_mode="HTML"))
 
             # Need to initialize sudo if needed
             ok, err_msg = await installer.preflight_check()
@@ -5120,7 +5120,7 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             from app.services.ssh_service import SSHManager
             from app.utils import decrypt_password
 
-            installer = XUIInstaller(SSHManager(server), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Аварийное восстановление 3x-ui</b>\n\n{text}", parse_mode="HTML"))
+            installer = XUIInstaller(SSHManager(server, session=session), progress_callback=lambda text: msg.edit_text(f"🔄 <b>Аварийное восстановление 3x-ui</b>\n\n{text}", parse_mode="HTML"))
 
             # Need to initialize sudo if needed
             ok, err_msg = await installer.preflight_check()
@@ -5275,7 +5275,7 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
             from app.services.ssh_service import SSHManager
             from app.utils import decrypt_password
 
-            ssh = SSHManager(server)
+            ssh = SSHManager(server, session=session)
             installer = XUIInstaller(ssh, progress_callback=lambda text: msg.edit_text(f"🔄 <b>Восстановление 3x-ui (Файл)</b>\n\n{text}", parse_mode="HTML"))
 
             ok, err_msg = await installer.preflight_check()

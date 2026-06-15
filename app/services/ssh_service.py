@@ -1,11 +1,17 @@
 """SSH Service for executing commands on servers."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import asyncssh
 
 from app.config import get_settings
 from app.database.models import Server
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +35,18 @@ SSHHostKeyMismatch = SSHHostKeyMismatchError
 class SSHManager:
     """Manages SSH connections to servers."""
 
-    def __init__(self, server: Server) -> None:
+    def __init__(self, server: Server, session: AsyncSession | None = None) -> None:
         """Initialize SSH Manager with server credentials.
 
         Args:
             server: Server model instance containing ssh details
+            session: Optional AsyncSession for auto-persisting the TOFU host key
+                on first connect.  When provided and a key is discovered for the
+                first time, it is committed immediately.  When omitted a new
+                short-lived session is opened just for that commit.
         """
         self.server = server
+        self._session = session
 
         if server.ip_address:
             self.host = server.ip_address
@@ -140,16 +151,40 @@ class SSHManager:
                 discovered = host_key.export_public_key().decode().strip()
                 self._discovered_host_key = discovered
                 logger.info(
-                    "TOFU: captured host key for %s (type=%s); will persist.",
+                    "TOFU: captured host key for %s (type=%s); persisting.",
                     self.host,
                     discovered.split()[0] if discovered else "unknown",
                 )
+                # Auto-persist: use provided session or open a short-lived one.
+                await self._auto_persist_host_key()
             else:
                 self._discovered_host_key = None
 
             return conn
 
-    async def _persist_host_key(self, session) -> None:  # type: ignore[type-arg]
+    async def _auto_persist_host_key(self) -> None:
+        """Persist host key using the stored session or a fresh one.
+
+        Opens its own session when ``self._session`` is *None* so that callers
+        that don't have an active session (providers, background tasks) still
+        benefit from automatic TOFU persistence.
+        """
+        if self._session is not None:
+            await self._persist_host_key(self._session)
+        else:
+            from app.database import async_session_factory
+
+            try:
+                async with async_session_factory() as session:
+                    await self._persist_host_key(session)
+            except Exception as exc:
+                logger.debug(
+                    "TOFU: could not persist host key for %s (no session available): %s",
+                    self.host,
+                    exc,
+                )
+
+    async def _persist_host_key(self, session: AsyncSession) -> None:
         """Persist the discovered host key to the Server row.
 
         Must be called AFTER :meth:`_connect` while the session is still open.
