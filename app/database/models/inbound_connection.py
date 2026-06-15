@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, SyncMixin, TimestampMixin
 from app.utils import decrypt_password, encrypt_password
+from app.utils.date_utils import ensure_utc
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound
@@ -42,7 +43,7 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
 
     # Per-connection traffic and expiry settings (can differ per inbound)
     total_gb: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0 = unlimited
-    expiry_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __mapper_args__ = {
         "polymorphic_on": "type",
@@ -68,26 +69,19 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
     @property
     def is_expired(self) -> bool:
         """Check if connection has expired."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return False
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
-
         return datetime.now(UTC) > expiry
 
     @property
     def remaining_days(self) -> int | None:
         """Calculate remaining days until expiry."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return None
 
         import math
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
 
         now = datetime.now(UTC)
         delta = expiry - now
@@ -101,14 +95,11 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
     @property
     def remaining_days_with_sign(self) -> int | None:
         """Calculate remaining days until expiry (can be negative)."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return None
 
         import math
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
 
         now = datetime.now(UTC)
         delta = expiry - now

@@ -23,6 +23,7 @@ from app.database.models.notification_log import (
     NotificationType,
 )
 from app.services import NotificationService
+from app.utils.date_utils import ensure_utc
 
 if TYPE_CHECKING:
     from app.xui_client import XUIClient
@@ -219,10 +220,8 @@ class NotificationChecker:
             if not subscription.expiry_date:
                 continue
 
-            # Handle timezone-aware vs naive datetimes
-            expiry_date = subscription.expiry_date
-            if expiry_date.tzinfo is None:
-                expiry_date = expiry_date.replace(tzinfo=UTC)
+            # Normalise timezone (legacy naive rows treated as UTC)
+            expiry_date = ensure_utc(subscription.expiry_date)
 
             # Check if within threshold window
             if expiry_date <= now + window_min or expiry_date > now + window_max:

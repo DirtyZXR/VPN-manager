@@ -21,6 +21,7 @@ from app.database.models import (
 )
 from app.services.vpn_providers import BaseVPNProvider, get_vpn_provider
 from app.utils import generate_subscription_token
+from app.utils.date_utils import ensure_utc
 from app.xui_client.exceptions import XUIError
 
 
@@ -1035,9 +1036,7 @@ class NewSubscriptionService:
             raise XUIError("Subscription not found")
 
         now = datetime.now(UTC)
-        expiry = subscription.expiry_date
-        if expiry is not None and expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
+        expiry = ensure_utc(subscription.expiry_date)
 
         if expiry is None or expiry < now:
             subscription.expiry_date = now + timedelta(days=days)
@@ -1121,12 +1120,8 @@ class NewSubscriptionService:
         else:
             if subscription.expiry_date:
                 # Calculate original duration
-                expiry = subscription.expiry_date
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=UTC)
-                created = subscription.created_at
-                if created.tzinfo is None:
-                    created = created.replace(tzinfo=UTC)
+                expiry = ensure_utc(subscription.expiry_date)
+                created = ensure_utc(subscription.created_at)
 
                 base_days = (expiry - created).days
                 if base_days < 0:
