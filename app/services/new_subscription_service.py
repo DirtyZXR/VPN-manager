@@ -153,7 +153,6 @@ class NewSubscriptionService:
 
         # Reload with relationships
         reloaded_subscription = await self.get_subscription(subscription.id)
-        assert reloaded_subscription is not None
         if not reloaded_subscription:
             raise XUIError("Subscription not found after creation")
 
