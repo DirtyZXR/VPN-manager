@@ -792,7 +792,6 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
                     subscription_path=sub_path,
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
-                    verify_ssl=False,
                 )
                 session.add(panel)
             await session.commit()
@@ -1336,7 +1335,6 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
                     inbound_ranges=inbound_ranges,
-                    verify_ssl=False,
                     auth_mode=auth_mode,
                     api_token_encrypted=encrypted_token,
                 )
@@ -1505,7 +1503,6 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
                     subscription_json_path=sub_json_path,
                     caddy_port=caddy_port,
                     inbound_ranges=inbound_ranges,
-                    verify_ssl=False,
                 )
                 session.add(panel)
             await session.commit()
@@ -3010,7 +3007,6 @@ async def run_server_autodiscover(
                     subscription_path=details.get("sub_path", "/sub/"),
                     subscription_json_path=details.get("sub_json_path", "/json/"),
                     caddy_port=details.get("caddy_port", 8443),
-                    verify_ssl=False,
                 )
                 session.add(panel)
                 discovered_list.append(
