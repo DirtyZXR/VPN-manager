@@ -658,10 +658,14 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                                 xui_clients[server.id] = await xui_service._get_client(server)
 
                             xui_client = xui_clients[server.id]
-                            clients = await xui_client.get_clients(inbound.xui_id)
+                            all_clients = await xui_client.get_clients()
+                            clients = [
+                                c for c in all_clients
+                                if inbound.xui_id in c.get("inboundIds", [])
+                            ]
 
                             for xui_conn in clients:
-                                if xui_conn.get("id") == conn.uuid:
+                                if xui_conn.get("uuid") == conn.uuid or xui_conn.get("id") == conn.uuid:
                                     used_gb = (xui_conn.get("up", 0) + xui_conn.get("down", 0)) / (
                                         1024**3
                                     )

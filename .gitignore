@@ -64,6 +64,13 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# Dev/process docs и AI-тулинг — НЕ в репозитории (трекаем только README.md)
+.dev/
+.kilo/
+*.old
+*.md
+!README.md
+
 # Alembic
 #alembic/versions/*.py
 !alembic/versions/.gitkeep

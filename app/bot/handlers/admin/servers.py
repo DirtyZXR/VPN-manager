@@ -5138,13 +5138,24 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             )
             
             # Now restore inbounds and connections
-            from app.xui_client import XUIClient
+            from app.xui_client import XUIClient, XUIAddClientRequest
             from app.database.models import Inbound, XUIInboundConnection
-            
+
             await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
-            
+
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(panel.url or "")
+            _scheme = _parsed.scheme or "http"
+            _hostname = _parsed.hostname or panel.url or ""
+            _port = _parsed.port
+            _base_path = panel.panel_path or "/"
+            if _parsed.path and _parsed.path != "/" and not panel.panel_path:
+                _base_path = _parsed.path
+            _port_part = f":{_port}" if _port else ""
+            _base_url = f"{_scheme}://{_hostname}{_port_part}{_base_path}"
+
             async with XUIClient(
-                base_url=panel.url,
+                base_url=_base_url,
                 username=panel.username or "",
                 password=pwd,
                 api_token=None,
@@ -5154,8 +5165,8 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
                     payload = {
                         "up": 0, "down": 0, "total": 0, "remark": ib.remark or f"Inbound_{ib.port}",
                         "enable": True, "expiryTime": 0, "listen": "", "port": ib.port, "protocol": ib.protocol,
-                        "settings": '{"clients": [], "fallbacks": []}', 
-                        "streamSettings": '{"network": "tcp", "security": "none", "tcpSettings": {"header": {"type": "none"}}}', 
+                        "settings": '{"clients": [], "fallbacks": []}',
+                        "streamSettings": '{"network": "tcp", "security": "none", "tcpSettings": {"header": {"type": "none"}}}',
                         "sniffing": '{"enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false, "routeOnly": false}'
                     }
                     try:
@@ -5163,13 +5174,24 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).warning(f"Failed to recreate inbound {ib.id} port {ib.port}: {e}")
-                    
+
                     # Add clients to this inbound
                     connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
                     for conn in connections:
-                        if conn.provider_payload and conn.is_enabled:
+                        if conn.is_enabled:
                             try:
-                                await client.add_client(ib.id, [conn.provider_payload])
+                                p = conn.provider_payload or {}
+                                req = XUIAddClientRequest(
+                                    id=conn.uuid or p.get("uuid", ""),
+                                    email=conn.email or p.get("email", f"conn-{conn.id}"),
+                                    enable=True,
+                                    flow=p.get("flow", "xtls-rprx-vision"),
+                                    totalGB=p.get("totalGB", 0),
+                                    expiryTime=p.get("expiryTime", 0),
+                                    subId=p.get("subId", ""),
+                                    tgId=p.get("tgId", 0),
+                                )
+                                await client.add_client(req, [ib.xui_id])
                             except Exception as e:
                                 import logging
                                 logging.getLogger(__name__).warning(f"Failed to recreate client {conn.id}: {e}")
@@ -5520,13 +5542,24 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
             )
             
             # Now restore inbounds and connections
-            from app.xui_client import XUIClient
+            from app.xui_client import XUIClient, XUIAddClientRequest
             from app.database.models import Inbound, XUIInboundConnection
-            
+
             await msg.edit_text("🔄 <b>Аварийное восстановление 3x-ui</b>\n\nВосстановление Inbound'ов и пользователей...", parse_mode="HTML")
-            
+
+            from urllib.parse import urlparse as _urlparse
+            _parsed = _urlparse(panel.url or "")
+            _scheme = _parsed.scheme or "http"
+            _hostname = _parsed.hostname or panel.url or ""
+            _port = _parsed.port
+            _base_path = panel.panel_path or "/"
+            if _parsed.path and _parsed.path != "/" and not panel.panel_path:
+                _base_path = _parsed.path
+            _port_part = f":{_port}" if _port else ""
+            _base_url = f"{_scheme}://{_hostname}{_port_part}{_base_path}"
+
             async with XUIClient(
-                base_url=panel.url,
+                base_url=_base_url,
                 username=panel.username or "",
                 password=pwd,
                 api_token=None,
@@ -5536,8 +5569,8 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
                     payload = {
                         "up": 0, "down": 0, "total": 0, "remark": ib.remark or f"Inbound_{ib.port}",
                         "enable": True, "expiryTime": 0, "listen": "", "port": ib.port, "protocol": ib.protocol,
-                        "settings": '{"clients": [], "fallbacks": []}', 
-                        "streamSettings": '{"network": "tcp", "security": "none", "tcpSettings": {"header": {"type": "none"}}}', 
+                        "settings": '{"clients": [], "fallbacks": []}',
+                        "streamSettings": '{"network": "tcp", "security": "none", "tcpSettings": {"header": {"type": "none"}}}',
                         "sniffing": '{"enabled": true, "destOverride": ["http", "tls", "quic"], "metadataOnly": false, "routeOnly": false}'
                     }
                     try:
@@ -5545,13 +5578,24 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).warning(f"Failed to recreate inbound {ib.id} port {ib.port}: {e}")
-                    
+
                     # Add clients to this inbound
                     connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
                     for conn in connections:
-                        if conn.provider_payload and conn.is_enabled:
+                        if conn.is_enabled:
                             try:
-                                await client.add_client(ib.id, [conn.provider_payload])
+                                p = conn.provider_payload or {}
+                                req = XUIAddClientRequest(
+                                    id=conn.uuid or p.get("uuid", ""),
+                                    email=conn.email or p.get("email", f"conn-{conn.id}"),
+                                    enable=True,
+                                    flow=p.get("flow", "xtls-rprx-vision"),
+                                    totalGB=p.get("totalGB", 0),
+                                    expiryTime=p.get("expiryTime", 0),
+                                    subId=p.get("subId", ""),
+                                    tgId=p.get("tgId", 0),
+                                )
+                                await client.add_client(req, [ib.xui_id])
                             except Exception as e:
                                 import logging
                                 logging.getLogger(__name__).warning(f"Failed to recreate client {conn.id}: {e}")

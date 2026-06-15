@@ -181,7 +181,13 @@ class XUIProtocolSync(ProtocolSyncBase):
 
         try:
             xui_client = await xui_service._get_client(inbound.server)
-            xui_data = await xui_client.get_client(inbound.xui_id, connection.uuid)
+            c_email = getattr(connection, "email", None)
+            if not c_email and isinstance(getattr(connection, "provider_payload", None), dict):
+                c_email = connection.provider_payload.get("email")
+            if not c_email:
+                # Cannot verify without email; skip silently
+                return True
+            xui_data = await xui_client.get_client(c_email)
 
             if not xui_data:
                 connection.sync_status = "error"

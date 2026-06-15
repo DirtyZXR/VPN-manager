@@ -437,10 +437,19 @@ class NotificationChecker:
             client = self._xui_clients[server.id]
 
             logger.debug(f"Getting clients from XUI for inbound {inbound.id}, xui_id={getattr(inbound, 'xui_id', 'N/A')}")
-            clients = await client.get_clients(inbound.xui_id)
+            all_clients = await client.get_clients()
+            # Filter panel-wide list to this inbound (each client has inboundIds: list[int])
+            xui_id = getattr(inbound, "xui_id", None)
+            clients = [
+                c for c in all_clients
+                if xui_id is not None and xui_id in c.get("inboundIds", [])
+            ]
             for xui_client in clients:
-                if xui_client.get("id") == conn.uuid:
-                    used_gb = (xui_client.get("up", 0) + xui_client.get("down", 0)) / (1024**3)
+                if xui_client.get("uuid") == conn.uuid or xui_client.get("id") == conn.uuid:
+                    # In the panel-wide list, traffic counters may be under a
+                    # nested "traffic" key or directly on the item.
+                    traffic = xui_client.get("traffic") or xui_client
+                    used_gb = (traffic.get("up", 0) + traffic.get("down", 0)) / (1024**3)
                     logger.debug(f"Traffic for connection {conn.id}: {used_gb:.2f} GB")
                     return {"used_gb": used_gb}
 

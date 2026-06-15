@@ -5,6 +5,7 @@ import json
 import ssl
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 from loguru import logger
@@ -18,7 +19,6 @@ from app.xui_client.exceptions import (
 from app.xui_client.models import (
     XUIAddClientRequest,
     XUIInbound,
-    ensure_settings_dict,
 )
 
 
@@ -46,6 +46,7 @@ class XUIClient:
         self._session: aiohttp.ClientSession | None = None
         self._cookies: dict[str, Any] = saved_cookies or {}
         self._session_created_at: datetime | None = None
+        self._csrf_token: str | None = None
 
     async def __aenter__(self) -> "XUIClient":
         """Async context manager entry."""
@@ -140,6 +141,20 @@ class XUIClient:
             raise XUIConnectionError("Not connected. Call connect() first.")
         return self._session
 
+    async def _get_csrf_token(self) -> str | None:
+        """Fetch a fresh CSRF token from the panel.
+
+        Returns:
+            CSRF token string, or None if the endpoint is unavailable / returns failure.
+        """
+        try:
+            data = await self._request("GET", "/csrf-token")
+            if data.get("success"):
+                return data.get("obj")
+        except Exception:
+            pass
+        return None
+
     async def _request(
         self,
         method: str,
@@ -182,12 +197,46 @@ class XUIClient:
         if self.api_token:
             headers["Authorization"] = f"Bearer {self.api_token}"
 
+        # CSRF: only for unsafe methods on the cookie path (Bearer skips CSRF entirely)
+        _unsafe = method.upper() in {"POST", "PUT", "DELETE"}
+        _use_csrf = _unsafe and not self.api_token and path != "/csrf-token"
+
+        if _use_csrf:
+            if self._csrf_token is None:
+                self._csrf_token = await self._get_csrf_token()
+            if self._csrf_token:
+                headers["X-CSRF-Token"] = self._csrf_token
+
         try:
             async with session.request(
                 method, url, cookies=request_cookies or None, headers=headers or None, **kwargs
             ) as response:
                 if response.status == 401:
                     raise XUIAuthError("Authentication failed")
+
+                if response.status == 403 and _use_csrf:
+                    # Refresh token once and retry
+                    self._csrf_token = await self._get_csrf_token()
+                    if self._csrf_token:
+                        headers["X-CSRF-Token"] = self._csrf_token
+                    else:
+                        headers.pop("X-CSRF-Token", None)
+                    async with session.request(
+                        method,
+                        url,
+                        cookies=request_cookies or None,
+                        headers=headers or None,
+                        **kwargs,
+                    ) as retry_response:
+                        if retry_response.status == 403:
+                            raise XUIAuthError("Authentication failed after CSRF token refresh")
+                        if retry_response.status == 404:
+                            raise XUINotFoundError(f"Resource not found: {path}")
+                        if retry_response.status >= 500:
+                            text = await retry_response.text()
+                            raise XUIConnectionError(f"Server error: {retry_response.status} - {text}")
+                        data = await retry_response.json()
+                        return data
 
                 if response.status == 404:
                     location = response.headers.get("Location", "none")
@@ -208,13 +257,86 @@ class XUIClient:
             raise XUIConnectionError(f"Connection error: {e}") from e
         except json.JSONDecodeError as e:
             raise XUIError(f"Invalid JSON response: {e}") from e
+        except (XUIAuthError, XUINotFoundError, XUIConnectionError, XUIError):
+            raise
         except Exception as e:
             # Catch any other exceptions to prevent session leaks
             logger.warning("Unexpected error in XUI request: {}", e)
             raise XUIError(f"Request failed: {e}") from e
 
+    def _build_login_payload(self) -> dict[str, Any]:
+        """Build the login payload dict."""
+        payload: dict[str, Any] = {
+            "username": self.username,
+            "password": self.password,
+        }
+        if self.two_factor_code:
+            payload["twoFactorCode"] = self.two_factor_code
+        return payload
+
+    async def _do_login_post(self, *, use_form: bool) -> bool:
+        """Perform a single login POST (JSON or form-encoded) with CSRF + 403-retry.
+
+        Args:
+            use_form: If True, send as form-data; otherwise send as JSON.
+
+        Returns:
+            True on success.
+
+        Raises:
+            XUIAuthError: Auth failed (non-200 status or success=False in body).
+            XUIConnectionError: aiohttp connection error.
+        """
+        session = self._get_session()
+        url = f"{self.base_url.rstrip('/')}/login"
+        payload = self._build_login_payload()
+        post_kwargs: dict[str, Any] = {"data": payload} if use_form else {"json": payload}
+
+        if self._csrf_token is None:
+            self._csrf_token = await self._get_csrf_token()
+
+        async def _attempt() -> Any:
+            headers: dict[str, str] = {}
+            if self._csrf_token:
+                headers["X-CSRF-Token"] = self._csrf_token
+            try:
+                async with session.post(url, headers=headers or None, **post_kwargs) as resp:
+                    return resp.status, await resp.json()
+            except aiohttp.ClientError as e:
+                raise XUIConnectionError(f"Connection error during login: {e}") from e
+
+        status, data = await _attempt()
+
+        if status == 403:
+            self._csrf_token = await self._get_csrf_token()
+            status, data = await _attempt()
+
+        if status != 200:
+            raise XUIAuthError(f"Login failed: HTTP {status}")
+
+        if not data.get("success", False):
+            raise XUIAuthError(f"Login failed: {data.get('msg', 'Unknown error')}")
+
+        self._cookies = {cookie.key: cookie.value for cookie in session.cookie_jar}
+        logger.info(
+            f"Logged in to {self.base_url}, "
+            f"cookies={list(self._cookies.keys())}"
+        )
+        return True
+
+    async def _login_json(self) -> bool:
+        """Login using JSON body."""
+        return await self._do_login_post(use_form=False)
+
+    async def _login_form(self) -> bool:
+        """Login using form-encoded body (legacy fallback)."""
+        return await self._do_login_post(use_form=True)
+
     async def login(self) -> bool:
         """Login to panel and store session cookie.
+
+        Tries JSON body first; on XUIAuthError or XUIConnectionError falls back
+        to form-encoded body. If both fail, re-raises the last error.
 
         Returns:
             True if login successful
@@ -223,37 +345,18 @@ class XUIClient:
             XUIAuthError: Authentication failed
             XUIConnectionError: Connection failed
         """
-        session = self._get_session()
+        self._get_session()  # validate session is open
         url = f"{self.base_url.rstrip('/')}/login"
 
         logger.info(f"Login attempt to: {url}")
         logger.info(f"Username: {self.username}, SSL verify: {self.verify_ssl}")
 
-        login_payload: dict[str, Any] = {
-            "username": self.username,
-            "password": self.password,
-        }
-        if self.two_factor_code:
-            login_payload["twoFactorCode"] = self.two_factor_code
-
         try:
-            async with session.post(url, json=login_payload) as response:
-                if response.status != 200:
-                    raise XUIAuthError(f"Login failed: HTTP {response.status}")
+            return await self._login_json()
+        except (XUIAuthError, XUIConnectionError):
+            logger.info("JSON login failed, retrying with form-data for {}", self.base_url)
 
-                data = await response.json()
-                if not data.get("success", False):
-                    raise XUIAuthError(f"Login failed: {data.get('msg', 'Unknown error')}")
-
-                self._cookies = {cookie.key: cookie.value for cookie in session.cookie_jar}
-                logger.info(
-                    f"Logged in to {self.base_url}, "
-                    f"cookies={list(self._cookies.keys())}"
-                )
-                return True
-
-        except aiohttp.ClientError as e:
-            raise XUIConnectionError(f"Connection error during login: {e}") from e
+        return await self._login_form()
 
     async def _test_session(self) -> bool:
         """Test if saved cookies are still valid.
@@ -339,33 +442,30 @@ class XUIClient:
 
         return XUIInbound(**data["obj"])
 
-    async def get_clients(self, inbound_id: int) -> list[dict[str, Any]]:
-        """Get list of clients for inbound.
-
-        Args:
-            inbound_id: Inbound ID
+    async def get_clients(self) -> list[dict[str, Any]]:
+        """Get panel-wide list of all clients.
 
         Returns:
-            List of client configurations
+            List of client dicts; each has ``inboundIds``, ``email``, ``uuid``,
+            ``traffic``, etc.
         """
-        data = await self._request("GET", f"/panel/api/inbounds/getClientTraffics/{inbound_id}")
+        data = await self._request("GET", "/panel/api/clients/list")
 
         if not data.get("success", False):
-            # May return empty if no clients
             return []
 
         return data.get("obj", [])
 
     async def add_client(
         self,
-        inbound_id: int,
         client: XUIAddClientRequest,
+        inbound_ids: list[int],
     ) -> bool:
-        """Add client to inbound.
+        """Add client to one or more inbounds.
 
         Args:
-            inbound_id: Inbound ID
-            client: Client configuration
+            client: Client configuration (camelCase fields via ``by_alias=True``).
+            inbound_ids: List of inbound IDs to attach the client to.
 
         Returns:
             True if successful
@@ -373,35 +473,31 @@ class XUIClient:
         Raises:
             XUIError: Failed to add client
         """
-        # Build settings JSON string
-        settings = {
-            "clients": [client.model_dump()],
-            "decryption": "none",
-            "fallbacks": [],
-        }
-
         data = await self._request(
             "POST",
-            "/panel/api/inbounds/addClient",
-            data={"id": str(inbound_id), "settings": json.dumps(settings)},
+            "/panel/api/clients/add",
+            json={"client": client.model_dump(by_alias=True), "inboundIds": inbound_ids},
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to add client: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to add client"))
 
-        logger.info(f"Added client {client.email} to inbound {inbound_id}")
+        logger.info(f"Added client {client.email} to inbounds {inbound_ids}")
         return True
 
     async def update_client(
         self,
-        inbound_id: int,
+        email: str,
         client: XUIAddClientRequest,
     ) -> bool:
-        """Update client in inbound.
+        """Update client identified by email.
+
+        The server replaces the entire client row, so *client* must carry the
+        full field set (not just the changed fields).
 
         Args:
-            inbound_id: Inbound ID
-            client: Client configuration (must include UUID)
+            email: Current client email (used as the URL key).
+            client: Full client configuration.
 
         Returns:
             True if successful
@@ -409,34 +505,28 @@ class XUIClient:
         Raises:
             XUIError: Failed to update client
         """
-        settings = {
-            "clients": [client.model_dump()],
-            "decryption": "none",
-            "fallbacks": [],
-        }
-
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/updateClient/{client.id}",
-            data={"id": inbound_id, "settings": json.dumps(settings)},
+            f"/panel/api/clients/update/{quote(email, safe='')}",
+            json=client.model_dump(by_alias=True),
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to update client: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to update client"))
 
-        logger.info(f"Updated client {client.email} in inbound {inbound_id}")
+        logger.info(f"Updated client {email}")
         return True
 
     async def delete_client(
         self,
-        inbound_id: int,
-        client_uuid: str,
+        email: str,
+        keep_traffic: bool = False,
     ) -> bool:
-        """Delete client from inbound.
+        """Delete client by email.
 
         Args:
-            inbound_id: Inbound ID
-            client_uuid: Client UUID
+            email: Client email.
+            keep_traffic: When True, preserves traffic counters on the panel.
 
         Returns:
             True if successful
@@ -444,141 +534,112 @@ class XUIClient:
         Raises:
             XUIError: Failed to delete client
         """
+        kwargs: dict[str, Any] = {}
+        if keep_traffic:
+            kwargs["params"] = {"keepTraffic": 1}
+
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
+            f"/panel/api/clients/del/{quote(email, safe='')}",
+            **kwargs,
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to delete client: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to delete client"))
 
-        logger.info(f"Deleted client {client_uuid} from inbound {inbound_id}")
+        logger.info(f"Deleted client {email}")
         return True
 
     async def enable_client(
         self,
-        inbound_id: int,
-        client_uuid: str,
+        email: str,
+        client: XUIAddClientRequest,
         enable: bool = True,
     ) -> bool:
-        """Enable or disable client.
+        """Enable or disable a client.
+
+        Sets ``client.enable`` and delegates to :meth:`update_client`.  The
+        caller must supply the full client payload (update replaces the row).
 
         Args:
-            inbound_id: Inbound ID
-            client_uuid: Client UUID
-            enable: True to enable, False to disable
+            email: Client email (URL key for the update endpoint).
+            client: Full client configuration.
+            enable: True to enable, False to disable.
 
         Returns:
             True if successful
         """
-        inbound = await self.get_inbound(inbound_id)
-
-        settings_data = ensure_settings_dict(inbound.settings)
-        clients_list = settings_data.get("clients", [])
-
-        client_data = None
-        for c in clients_list:
-            if c.get("id") == client_uuid:
-                client_data = c
-                break
-
-        if not client_data:
-            raise XUINotFoundError(f"Client {client_uuid} not found in inbound {inbound_id}")
-
-        client_data["enable"] = enable
-
-        client = XUIAddClientRequest(**client_data)
-        return await self.update_client(inbound_id, client)
-
-    async def update_client_email(
-        self,
-        inbound_id: int,
-        client_uuid: str,
-        new_email: str,
-    ) -> bool:
-        """Update client email.
-
-        Args:
-            inbound_id: Inbound ID
-            client_uuid: Client UUID
-            new_email: New client email
-
-        Returns:
-            True if successful
-        """
-        inbound = await self.get_inbound(inbound_id)
-
-        settings_data = ensure_settings_dict(inbound.settings)
-        clients_list = settings_data.get("clients", [])
-
-        client_data = None
-        for c in clients_list:
-            if c.get("id") == client_uuid:
-                client_data = c
-                break
-
-        if not client_data:
-            raise XUINotFoundError(f"Client {client_uuid} not found in inbound {inbound_id}")
-
-        # Update email
-        client_data["email"] = new_email
-
-        # Build update request
-        client = XUIAddClientRequest(**client_data)
-        return await self.update_client(inbound_id, client)
+        client.enable = enable
+        return await self.update_client(email, client)
 
     async def get_client_traffic(
         self,
-        inbound_id: int,
         email: str,
     ) -> dict[str, Any] | None:
-        """Get client traffic statistics.
+        """Get traffic statistics for a single client by email.
 
         Args:
-            inbound_id: Inbound ID
-            email: Client email
+            email: Client email.
 
         Returns:
-            Traffic statistics or None if not found
+            Traffic dict on success, or None if not found / on error.
         """
-        data = await self._request(
-            "GET",
-            f"/panel/api/inbounds/getClientTraffics/{inbound_id}",
-        )
+        try:
+            data = await self._request(
+                "GET",
+                f"/panel/api/clients/traffic/{quote(email, safe='')}",
+            )
+        except Exception:
+            return None
 
         if not data.get("success", False):
             return None
 
-        for client in data.get("obj", []):
-            if client.get("email") == email:
-                return client
+        return data.get("obj") or None
 
-        return None
+    async def get_client(
+        self,
+        email: str,
+    ) -> dict[str, Any] | None:
+        """Get a single client by email (alias for :meth:`get_client_traffic`).
+
+        Args:
+            email: Client email.
+
+        Returns:
+            Client dict on success, or None if not found.
+        """
+        return await self.get_client_traffic(email)
 
     async def reset_client_traffic(
         self,
-        inbound_id: int,
-        client_email: str,
+        email: str,
     ) -> bool:
-        """Reset client traffic statistics.
+        """Reset traffic counters for a client.
 
         Args:
-            inbound_id: Inbound ID
-            client_email: Client email
+            email: Client email.
 
         Returns:
             True if successful
         """
         data = await self._request(
             "POST",
-            f"/panel/api/inbounds/{inbound_id}/resetClientTraffic/{client_email}",
+            f"/panel/api/clients/resetTraffic/{quote(email, safe='')}",
         )
 
         if not data.get("success", False):
-            raise XUIError(f"Failed to reset traffic: {data.get('msg', 'Unknown error')}")
+            raise XUIError(data.get("msg", "Failed to reset traffic"))
 
-        logger.info(f"Reset traffic for client {client_email}")
+        logger.info(f"Reset traffic for client {email}")
         return True
+
+    async def add_inbound(self, payload: dict[str, Any]) -> dict:
+        """Create a new inbound on the panel. Returns the API response obj."""
+        data = await self._request("POST", "/panel/api/inbounds/add", json=payload)
+        if not data.get("success", False):
+            raise XUIError(f"Failed to add inbound: {data.get('msg', 'Unknown error')}")
+        return data.get("obj", {})
 
     async def create_api_token(self, name: str = "vpnbot") -> str:
         """Create a Bearer API token on the panel.

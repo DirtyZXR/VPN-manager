@@ -609,7 +609,8 @@ class XUIService:
             return []
 
         client = await self._get_client(inbound.server)
-        clients = await client.get_clients(inbound.xui_id)
+        all_clients = await client.get_clients()
+        clients = [c for c in all_clients if inbound.xui_id in c.get("inboundIds", [])]
 
         return clients
 
