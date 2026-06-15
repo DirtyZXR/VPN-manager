@@ -633,6 +633,13 @@ class XUIClient:
         logger.info(f"Reset traffic for client {email}")
         return True
 
+    async def add_inbound(self, payload: dict) -> dict:
+        """Create a new inbound on the panel. Returns the API response obj."""
+        data = await self._request("POST", "/panel/api/inbounds/add", json=payload)
+        if not data.get("success", False):
+            raise XUIError(f"Failed to add inbound: {data.get('msg', 'Unknown error')}")
+        return data.get("obj", {})
+
     async def create_api_token(self, name: str = "vpnbot") -> str:
         """Create a Bearer API token on the panel.
 

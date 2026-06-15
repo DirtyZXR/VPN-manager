@@ -402,3 +402,59 @@ async def test_reset_client_traffic_raises_on_failure():
 
     with pytest.raises(XUIError, match="oops"):
         await xui.reset_client_traffic(_CLIENT_EMAIL)
+
+
+# ---------------------------------------------------------------------------
+# add_inbound
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_inbound_correct_url_and_body():
+    """add_inbound POSTs to /panel/api/inbounds/add with the given payload and returns obj."""
+    xui = _make_client()
+    inbound_payload = {
+        "remark": "test-inbound",
+        "port": 10000,
+        "protocol": "vless",
+        "enable": True,
+    }
+    returned_obj = {"id": 7, "remark": "test-inbound", "port": 10000}
+
+    captured: dict[str, Any] = {}
+
+    @asynccontextmanager
+    async def fake_request(method: str, url: str, **kwargs: Any):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        resp = MagicMock()
+        resp.status = 200
+        resp.json = AsyncMock(return_value={"success": True, "obj": returned_obj, "msg": ""})
+        resp.text = AsyncMock(return_value="")
+        resp.headers = {}
+        resp.request_info = MagicMock()
+        resp.request_info.headers = {}
+        yield resp
+
+    xui._session.request = fake_request
+
+    result = await xui.add_inbound(inbound_payload)
+
+    assert result == returned_obj
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/panel/api/inbounds/add")
+    assert captured["json"] == inbound_payload
+
+
+@pytest.mark.asyncio
+async def test_add_inbound_raises_on_failure():
+    """add_inbound raises XUIError when success=False."""
+    xui = _make_client()
+
+    xui._session.request = _simple_fake(
+        {("POST", "/panel/api/inbounds/add"): {"success": False, "msg": "port already in use", "obj": None}}
+    )
+
+    with pytest.raises(XUIError, match="port already in use"):
+        await xui.add_inbound({"port": 10000, "protocol": "vless"})
