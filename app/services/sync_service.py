@@ -178,6 +178,11 @@ class SyncService:
     async def sync_server(self, server: Server, force: bool = False) -> bool:
         """Синхронизировать отдельный сервер.
 
+        Транзакционные границы (C5):
+        - Один commit() ПОСЛЕ полной успешной синхронизации сервера.
+        - При исключении — rollback(), лог, возврат False (одна ошибка не валит весь цикл).
+        - Нет finally-commit (не фиксируем частичное состояние при ошибке).
+
         Args:
             server: Server model
             force: Принудительная синхронизация
@@ -207,21 +212,12 @@ class SyncService:
                 server.is_online = is_online
                 logger.debug(f"[SYNC] Сервер {server.id} ping: {'Успешно' if is_online else 'Неудачно'}")
 
-                # Зафиксируем изменение статуса (is_online) в БД сразу же.
-                # Это освободит блокировку базы данных (SQLite write lock),
-                # чтобы параллельные запросы от пользователей не падали с ошибкой
-                # "database is locked" во время долгих сетевых запросов ниже.
-                await self.session.commit()
-
             xui_client = None
             if server.is_online and server.xui_panel and server.xui_panel.url and server.xui_panel.username:
                 # Получить XUI клиент
                 xui_client = await self._xui_service._get_client(server)
                 # Синхронизировать inbounds
                 await self._sync_server_inbounds(server, xui_client)
-
-                # Фиксируем inbounds, чтобы освободить SQLite перед запросами клиентов
-                await self.session.commit()
             else:
                 logger.debug(f"Сервер {server.id} не имеет XUI панели (или не настроена), пропуск XUI inbounds синхронизации")
 
@@ -255,15 +251,15 @@ class SyncService:
                     synced = await self._sync_inbound_clients(inbound)
                     clients_synced += synced
                     logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
-
-                    # Фиксируем каждого inbound, чтобы не держать SQLite write lock
-                    await self.session.commit()
                 except Exception as e:
                     logger.error(
                         f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
                         exc_info=True,
                     )
-                    await self.session.commit()
+
+            # Реконсиляция зомби/фантомов для XUI-серверов
+            if server.is_online and server.xui_panel and xui_client is not None:
+                await self._reconcile_xui_server(server, xui_client)
 
             # Обновить статус синхронизации
             server.last_sync_at = datetime.now(UTC)
@@ -271,6 +267,8 @@ class SyncService:
             server.sync_error = None
 
             await self.session.flush()
+            # Единственный commit после полной успешной синхронизации сервера
+            await self.session.commit()
             logger.info(f"[OK] Сервер {server.id} синхронизирован (клиентов: {clients_synced})")
             return True
 
@@ -278,12 +276,14 @@ class SyncService:
             server.sync_status = "offline"
             server.sync_error = f"Connection failed: {str(e)}"
             logger.warning(f"[WARN] Сервер {server.id} недоступен")
+            await self.session.rollback()
             return False
 
         except XUIError as e:
             server.sync_status = "error"
             server.sync_error = str(e)
             logger.error(f"[ERROR] Ошибка XUI сервера {server.id}: {e}")
+            await self.session.rollback()
             return False
 
         except Exception as e:
@@ -292,25 +292,21 @@ class SyncService:
                 server.sync_status = "offline"
                 server.sync_error = f"Connection failed: {str(e)}"
                 logger.warning(f"[WARN] Сервер {server.id} недоступен (Amnezia)")
+                await self.session.rollback()
                 return False
             elif type(e).__name__ == "AmneziaError":
                 server.sync_status = "error"
                 server.sync_error = str(e)
                 logger.error(f"[ERROR] Ошибка Amnezia сервера {server.id}: {e}")
+                await self.session.rollback()
                 return False
 
-            server.sync_status = "error"
-            server.sync_error = f"Unexpected: {type(e).__name__} - {str(e)}"
             logger.error(
                 f"[ERROR] Неожиданная ошибка сервера {server.id}: {type(e).__name__} - {str(e)}",
                 exc_info=True,
             )
+            await self.session.rollback()
             return False
-
-        finally:
-            # Освобождаем блокировку БД (SQLite write lock) после обработки сервера,
-            # независимо от того, успешной была синхронизация или упала с ошибкой.
-            await self.session.commit()
 
         # Don't close clients - keep them cached for reuse
         # finally:
@@ -545,6 +541,179 @@ class SyncService:
                 logger.info(f"➕ Inbound {new_ib.id} создан из XUI")
 
         await self.session.flush()
+
+    async def _reconcile_xui_server(self, server: Server, xui_client: object) -> None:
+        """Реконсиляция зомби/фантомов для одного XUI-сервера.
+
+        2a. Фантомы БД: InboundConnection с sync_status='error'
+            - Если клиента нет на панели → удалить запись из БД (фантом).
+            - Если клиент есть на панели → восстановить sync_status='synced'.
+
+        2b. XUI bot-зомби (авто-удаление только при надёжной bot-подписи):
+            - Получаем panel-wide список клиентов через xui_client.get_clients().
+            - Панельный клиент с непустым subId, совпадающим с subscription_token
+              СУЩЕСТВУЮЩЕЙ подписки в БД, но без InboundConnection для этого
+              inbound → наш орфан → удаляем с панели (высокая уверенность).
+            - subId не совпадает ни с одной подпиской → НЕ удалять,
+              только warning (может быть ручным/чужим клиентом).
+            - Клиент без subId → не трогать (debug-лог).
+
+        AWG/MTProxy: нет надёжной enumeration всех клиентов — только лог.
+        Автоудаление не производится.
+
+        Args:
+            server: Server model
+            xui_client: Подключённый XUIClient для этого сервера
+        """
+        from sqlalchemy import select
+        from sqlalchemy.orm import with_polymorphic
+
+        from app.database.models import Subscription
+        from app.database.models.inbound import XUIInbound
+        from app.database.models.inbound_connection import XUIInboundConnection
+
+        logger.info(f"[RECONCILE] Начало реконсиляции для сервера {server.id} ({server.name})")
+
+        # -----------------------------------------------------------------------
+        # 2a. Фантомы БД: XUIInboundConnection с sync_status='error'
+        # -----------------------------------------------------------------------
+        conn_poly = with_polymorphic(XUIInboundConnection, "*")
+        phantom_result = await self.session.execute(
+            select(conn_poly)
+            .join(XUIInbound, conn_poly.inbound_id == XUIInbound.id)
+            .where(
+                XUIInbound.server_id == server.id,
+                conn_poly.sync_status == "error",
+            )
+        )
+        error_connections = phantom_result.scalars().all()
+
+        logger.info(
+            f"[RECONCILE] Найдено {len(error_connections)} соединений со статусом 'error' для сервера {server.id}"
+        )
+
+        for conn in error_connections:
+            c_email = getattr(conn, "email", None)
+            if not c_email:
+                logger.debug(f"[RECONCILE] Соединение {conn.id} без email, пропуск")
+                continue
+            try:
+                traffic = await xui_client.get_client_traffic(c_email)
+                if traffic is None:
+                    # Клиента нет на панели — фантом, удаляем из БД
+                    logger.info(
+                        f"[RECONCILE] Фантом: соединение {conn.id} (email={c_email}) "
+                        f"отсутствует на панели → удаление из БД"
+                    )
+                    await self.session.delete(conn)
+                else:
+                    # Клиент есть на панели — восстанавливаем статус
+                    logger.info(
+                        f"[RECONCILE] Соединение {conn.id} (email={c_email}) "
+                        f"найдено на панели → sync_status='synced'"
+                    )
+                    conn.sync_status = "synced"
+            except Exception as e:
+                logger.warning(
+                    f"[RECONCILE] Не удалось проверить соединение {conn.id} (email={c_email}): {e}"
+                )
+
+        await self.session.flush()
+
+        # -----------------------------------------------------------------------
+        # 2b. XUI bot-зомби: панельные клиенты без соответствующей InboundConnection
+        # -----------------------------------------------------------------------
+        try:
+            panel_clients = await xui_client.get_clients()
+        except Exception as e:
+            logger.warning(f"[RECONCILE] Не удалось получить список клиентов панели: {e}")
+            return
+
+        if not panel_clients:
+            logger.debug(f"[RECONCILE] Панель сервера {server.id} вернула пустой список клиентов")
+            return
+
+        # Загружаем все subscription_token из БД (для быстрого поиска)
+        sub_result = await self.session.execute(
+            select(Subscription.subscription_token, Subscription.id)
+        )
+        token_to_sub_id: dict[str, int] = {row[0]: row[1] for row in sub_result.all()}
+
+        # Загружаем все XUIInbound для этого сервера: xui_id → inbound.id
+        xui_inbound_result = await self.session.execute(
+            select(XUIInbound.xui_id, XUIInbound.id).where(XUIInbound.server_id == server.id)
+        )
+        xui_id_to_inbound_id: dict[int, int] = {row[0]: row[1] for row in xui_inbound_result.all()}
+
+        # Загружаем существующие connections для быстрой проверки (subscription_id, inbound_id)
+        conn_result = await self.session.execute(
+            select(XUIInboundConnection.subscription_id, XUIInboundConnection.inbound_id)
+            .join(XUIInbound, XUIInboundConnection.inbound_id == XUIInbound.id)
+            .where(XUIInbound.server_id == server.id)
+        )
+        existing_pairs: set[tuple[int, int]] = set(conn_result.all())
+
+        orphans_deleted = 0
+        warnings_logged = 0
+
+        for panel_client in panel_clients:
+            sub_id_field = panel_client.get("subId", "") or ""
+            email = panel_client.get("email", "") or ""
+            inbound_ids_on_panel: list[int] = panel_client.get("inboundIds") or []
+
+            if not sub_id_field:
+                # Нет subId → не бот-клиент, не трогаем
+                logger.debug(
+                    f"[RECONCILE] Клиент '{email}' без subId — пропуск (не бот-клиент)"
+                )
+                continue
+
+            if sub_id_field not in token_to_sub_id:
+                # subId не совпадает ни с одной подпиской в БД
+                # Может быть ручным клиентом или зомби от удалённой подписки — НЕ удалять
+                logger.warning(
+                    f"[RECONCILE] Клиент '{email}' (subId={sub_id_field!r}) "
+                    f"на сервере {server.id}: subId не совпадает ни с одной подпиской в БД. "
+                    f"Оставляем (возможно ручной или зомби удалённой подписки). "
+                    f"Проверьте вручную."
+                )
+                warnings_logged += 1
+                continue
+
+            # subId совпадает с существующей подпиской в БД
+            subscription_id = token_to_sub_id[sub_id_field]
+
+            # Проверяем для каждого inbound, на котором зарегистрирован клиент
+            for xui_inbound_id in inbound_ids_on_panel:
+                inbound_db_id = xui_id_to_inbound_id.get(xui_inbound_id)
+                if inbound_db_id is None:
+                    # Инбаунд не в нашей БД — не трогаем
+                    logger.debug(
+                        f"[RECONCILE] Инбаунд xui_id={xui_inbound_id} не найден в БД сервера {server.id}, пропуск"
+                    )
+                    continue
+
+                if (subscription_id, inbound_db_id) not in existing_pairs:
+                    # Орфан: наш токен (bot-подпись), но нет InboundConnection
+                    logger.info(
+                        f"[RECONCILE] XUI-зомби: клиент '{email}' (subId={sub_id_field!r}) "
+                        f"на inbound xui_id={xui_inbound_id} сервера {server.id}: "
+                        f"подписка {subscription_id} существует в БД, но нет InboundConnection → удаление с панели"
+                    )
+                    try:
+                        await xui_client.delete_client(email)
+                        orphans_deleted += 1
+                    except Exception as e:
+                        logger.error(
+                            f"[RECONCILE] Не удалось удалить зомби '{email}' с панели: {e}"
+                        )
+                    # Удаляем по email — не продолжаем проверять остальные inbounds
+                    break
+
+        logger.info(
+            f"[RECONCILE] Сервер {server.id}: удалено зомби={orphans_deleted}, "
+            f"предупреждений о неизвестных клиентах={warnings_logged}"
+        )
 
     async def _sync_inbound_clients(self, inbound: Inbound, xui_client: object | None = None) -> int:
         """Dispatch client sync to the appropriate protocol handler.
