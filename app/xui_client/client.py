@@ -183,10 +183,6 @@ class XUIClient:
             f"[XUI REQUEST] method={method}, base_url={self.base_url!r}, "
             f"path={path!r}, full_url={url!r}"
         )
-        logger.debug(
-            f"[XUI COOKIES] jar={list(session.cookie_jar)} "
-            f"backup={self._cookies}"
-        )
 
         request_cookies = {c.key: c.value for c in session.cookie_jar}
         if self._cookies and not request_cookies:
@@ -242,7 +238,7 @@ class XUIClient:
                     location = response.headers.get("Location", "none")
                     logger.warning(
                         f"[XUI 404] full_url={url}, path={path}, "
-                        f"location={location}, cookies_sent={response.request_info.headers.get('Cookie', 'none')}"
+                        f"location={location}"
                     )
                     raise XUINotFoundError(f"Resource not found: {path}")
 
@@ -349,7 +345,7 @@ class XUIClient:
         url = f"{self.base_url.rstrip('/')}/login"
 
         logger.info(f"Login attempt to: {url}")
-        logger.info(f"Username: {self.username}, SSL verify: {self.verify_ssl}")
+        logger.info(f"Login: ssl_verify={self.verify_ssl}")
 
         try:
             return await self._login_json()
