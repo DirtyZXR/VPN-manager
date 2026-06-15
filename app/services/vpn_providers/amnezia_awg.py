@@ -181,10 +181,10 @@ class AmneziaAWGProvider(BaseVPNProvider):
         priv_key_cmd = f"docker exec -i {self.container_name} awg genkey"
         private_key = (await self._cmd(priv_key_cmd)).strip()
 
-        pub_key_cmd = (
-            f"docker exec -i {self.container_name} bash -c 'echo \"{private_key}\" | awg pubkey'"
-        )
-        public_key = (await self._cmd(pub_key_cmd)).strip()
+        public_key = (await self._cmd(
+            f"docker exec -i {self.container_name} awg pubkey",
+            input_data=private_key,
+        )).strip()
 
         psk = (await self._get_server_psk()).strip()
         next_ip = await self._find_next_free_ip(inbound)
