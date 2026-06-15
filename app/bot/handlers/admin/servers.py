@@ -728,7 +728,7 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
     await callback.answer()
 
     try:
-        from app.services.installers.xui_installer import XUIInstaller
+        from app.services.installers.xui_installer import XUIInstaller, _sql_str
         from app.services.ssh_service import SSHManager
 
         async with async_session_factory() as session:
@@ -745,7 +745,7 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
 
         hashed = XUIInstaller._hash_password_bcrypt(new_password)
         sql = (
-            f"UPDATE users SET password='{hashed}' WHERE id=1"
+            f"UPDATE users SET password='{_sql_str(hashed)}' WHERE id=1"
         )
         await installer._cmd(
             "docker exec -i vpnbot-xui apk add --no-cache sqlite 2>/dev/null || true"

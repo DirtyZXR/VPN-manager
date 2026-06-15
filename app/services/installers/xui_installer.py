@@ -29,6 +29,11 @@ XUI_INTERNAL_PORT = 2053
 XUI_SUB_PORT = 2096
 
 
+def _sql_str(value: str) -> str:
+    """Escape a string for safe inlining into a single-quoted SQLite literal."""
+    return value.replace("'", "''")
+
+
 def _parse_port_ranges(text: str) -> list[tuple[int, int]]:
     """Parse port input like '443, 10000-10100, 666' into list of (start, end) tuples.
 
@@ -393,13 +398,13 @@ class XUIInstaller(BaseInstaller):
 
         sql_ins = (
             f"INSERT INTO settings (key, value) VALUES "
-            f"('webBasePath', '{clean_web}'), "
-            f"('subPath', '{clean_sub}'), "
-            f"('subJsonPath', '{clean_json}'), "
+            f"('webBasePath', '{_sql_str(clean_web)}'), "
+            f"('subPath', '{_sql_str(clean_sub)}'), "
+            f"('subJsonPath', '{_sql_str(clean_json)}'), "
             f"('subEnable', 'true'), "
             f"('subJsonEnable', 'true'), "
-            f"('subURI', '{sub_uri}'), "
-            f"('subJsonURI', '{sub_json_uri}'), "
+            f"('subURI', '{_sql_str(sub_uri)}'), "
+            f"('subJsonURI', '{_sql_str(sub_json_uri)}'), "
             f"('webPort', '{XUI_INTERNAL_PORT}'), "
             f"('subPort', '{XUI_SUB_PORT}')"
         )
@@ -409,8 +414,8 @@ class XUIInstaller(BaseInstaller):
         )
 
         sql_user = (
-            f"UPDATE users SET username='{username}', "
-            f"password='{self._hash_password_bcrypt(password)}' "
+            f"UPDATE users SET username='{_sql_str(username)}', "
+            f"password='{_sql_str(self._hash_password_bcrypt(password))}' "
             f"WHERE id=1"
         )
         await self._cmd(
