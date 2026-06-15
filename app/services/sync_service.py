@@ -1,6 +1,7 @@
 """Service for synchronizing data between bot database and XUI panels."""
 
 import asyncio
+import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -22,6 +23,10 @@ from app.xui_client.models import ensure_settings_dict
 
 # Глобальная блокировка для предотвращения конфликтов между всеми экземплярами SyncService
 _global_sync_lock = asyncio.Lock()
+
+# Зомби-клиенты моложе этого порога НЕ удаляются автоматически —
+# защита от гонки с незакоммиченной сагой add_inbound_to_subscription.
+ZOMBIE_GRACE_PERIOD = timedelta(minutes=15)
 
 
 class SyncService:
@@ -273,32 +278,36 @@ class SyncService:
             return True
 
         except XUIConnectionError as e:
-            server.sync_status = "offline"
-            server.sync_error = f"Connection failed: {str(e)}"
+            new_status = "offline"
+            new_error = f"Connection failed: {str(e)}"
             logger.warning(f"[WARN] Сервер {server.id} недоступен")
             await self.session.rollback()
+            await self._save_server_error_status(server.id, new_status, new_error)
             return False
 
         except XUIError as e:
-            server.sync_status = "error"
-            server.sync_error = str(e)
+            new_status = "error"
+            new_error = str(e)
             logger.error(f"[ERROR] Ошибка XUI сервера {server.id}: {e}")
             await self.session.rollback()
+            await self._save_server_error_status(server.id, new_status, new_error)
             return False
 
         except Exception as e:
             # Check for Amnezia errors without importing at top level
             if type(e).__name__ == "AmneziaConnectionError":
-                server.sync_status = "offline"
-                server.sync_error = f"Connection failed: {str(e)}"
+                new_status = "offline"
+                new_error = f"Connection failed: {str(e)}"
                 logger.warning(f"[WARN] Сервер {server.id} недоступен (Amnezia)")
                 await self.session.rollback()
+                await self._save_server_error_status(server.id, new_status, new_error)
                 return False
             elif type(e).__name__ == "AmneziaError":
-                server.sync_status = "error"
-                server.sync_error = str(e)
+                new_status = "error"
+                new_error = str(e)
                 logger.error(f"[ERROR] Ошибка Amnezia сервера {server.id}: {e}")
                 await self.session.rollback()
+                await self._save_server_error_status(server.id, new_status, new_error)
                 return False
 
             logger.error(
@@ -306,12 +315,46 @@ class SyncService:
                 exc_info=True,
             )
             await self.session.rollback()
+            await self._save_server_error_status(server.id, "error", f"{type(e).__name__}: {str(e)}")
             return False
 
         # Don't close clients - keep them cached for reuse
         # finally:
         #     if xui_service:
         #         await xui_service.close_all_clients()
+
+    async def _save_server_error_status(
+        self,
+        server_id: int,
+        sync_status: str,
+        sync_error: str,
+    ) -> None:
+        """Сохранить диагностический статус ошибки сервера в отдельной транзакции.
+
+        Вызывается ПОСЛЕ rollback() бизнес-транзакции, чтобы статус попал в БД
+        независимо от откатанных бизнес-данных.
+
+        Args:
+            server_id: ID сервера
+            sync_status: Новый статус ('error', 'offline')
+            sync_error: Текст ошибки
+        """
+        try:
+            srv = await self.session.get(Server, server_id)
+            if srv is not None:
+                srv.sync_status = sync_status
+                srv.sync_error = sync_error
+                srv.last_sync_at = datetime.now(UTC)
+                await self.session.commit()
+                logger.debug(
+                    f"[SYNC] Статус ошибки сервера {server_id} сохранён: {sync_status}"
+                )
+        except Exception as status_err:
+            logger.warning(
+                f"[SYNC] Не удалось сохранить статус ошибки сервера {server_id}: {status_err}"
+            )
+            with contextlib.suppress(Exception):
+                await self.session.rollback()
 
     async def sync_all_clients(self) -> int:
         """Синхронизировать всех клиентов на всех активных inbounds.
@@ -545,18 +588,25 @@ class SyncService:
     async def _reconcile_xui_server(self, server: Server, xui_client: object) -> None:
         """Реконсиляция зомби/фантомов для одного XUI-сервера.
 
+        Единый снимок get_clients():
+        - Если get_clients() упал или вернул пустоту из-за ошибки — весь шаг
+          реконсиляции пропускается (ничего не удаляется).
+        - Один снимок используется и для проверки фантомов, и для зомби.
+
         2a. Фантомы БД: InboundConnection с sync_status='error'
-            - Если клиента нет на панели → удалить запись из БД (фантом).
-            - Если клиент есть на панели → восстановить sync_status='synced'.
+            - Если email клиента НЕ в снимке get_clients() → фантом, удаляем из БД.
+            - Если email есть в снимке → восстановить sync_status='synced'.
 
         2b. XUI bot-зомби (авто-удаление только при надёжной bot-подписи):
-            - Получаем panel-wide список клиентов через xui_client.get_clients().
             - Панельный клиент с непустым subId, совпадающим с subscription_token
               СУЩЕСТВУЮЩЕЙ подписки в БД, но без InboundConnection для этого
               inbound → наш орфан → удаляем с панели (высокая уверенность).
-            - subId не совпадает ни с одной подпиской → НЕ удалять,
-              только warning (может быть ручным/чужим клиентом).
+            - Grace-period: зомби с createdAt моложе ZOMBIE_GRACE_PERIOD НЕ удаляется
+              в этом цикле (защита от гонки с незакоммиченной сагой add).
+            - Клиент без createdAt или createdAt==0 → не удалять (безопаснее пропустить).
+            - subId не совпадает ни с одной подпиской → НЕ удалять, только warning.
             - Клиент без subId → не трогать (debug-лог).
+            - Пустой email → пропустить.
 
         AWG/MTProxy: нет надёжной enumeration всех клиентов — только лог.
         Автоудаление не производится.
@@ -575,7 +625,35 @@ class SyncService:
         logger.info(f"[RECONCILE] Начало реконсиляции для сервера {server.id} ({server.name})")
 
         # -----------------------------------------------------------------------
+        # Единый надёжный снимок панели.
+        # Если get_clients() бросил исключение — весь шаг реконсиляции пропускается.
+        # -----------------------------------------------------------------------
+        try:
+            panel_clients = await xui_client.get_clients()
+        except Exception as e:
+            logger.warning(
+                f"[RECONCILE] Не удалось получить список клиентов панели для сервера {server.id}: {e}. "
+                f"Реконсиляция пропущена (ничего не удаляется)."
+            )
+            return
+
+        if panel_clients is None:
+            logger.warning(
+                f"[RECONCILE] get_clients() вернул None для сервера {server.id}. "
+                f"Реконсиляция пропущена."
+            )
+            return
+
+        # Набор email-адресов, присутствующих на панели (для проверки фантомов)
+        panel_emails: set[str] = {
+            (c.get("email") or "").lower()
+            for c in panel_clients
+            if c.get("email")
+        }
+
+        # -----------------------------------------------------------------------
         # 2a. Фантомы БД: XUIInboundConnection с sync_status='error'
+        # Используем снимок get_clients() — НЕ отдельный get_client_traffic().
         # -----------------------------------------------------------------------
         conn_poly = with_polymorphic(XUIInboundConnection, "*")
         phantom_result = await self.session.execute(
@@ -597,38 +675,26 @@ class SyncService:
             if not c_email:
                 logger.debug(f"[RECONCILE] Соединение {conn.id} без email, пропуск")
                 continue
-            try:
-                traffic = await xui_client.get_client_traffic(c_email)
-                if traffic is None:
-                    # Клиента нет на панели — фантом, удаляем из БД
-                    logger.info(
-                        f"[RECONCILE] Фантом: соединение {conn.id} (email={c_email}) "
-                        f"отсутствует на панели → удаление из БД"
-                    )
-                    await self.session.delete(conn)
-                else:
-                    # Клиент есть на панели — восстанавливаем статус
-                    logger.info(
-                        f"[RECONCILE] Соединение {conn.id} (email={c_email}) "
-                        f"найдено на панели → sync_status='synced'"
-                    )
-                    conn.sync_status = "synced"
-            except Exception as e:
-                logger.warning(
-                    f"[RECONCILE] Не удалось проверить соединение {conn.id} (email={c_email}): {e}"
+            if c_email.lower() not in panel_emails:
+                # Клиента нет на панели — фантом, удаляем из БД
+                logger.info(
+                    f"[RECONCILE] Фантом: соединение {conn.id} (email={c_email}) "
+                    f"отсутствует на панели → удаление из БД"
                 )
+                self.session.delete(conn)
+            else:
+                # Клиент есть на панели — восстанавливаем статус
+                logger.info(
+                    f"[RECONCILE] Соединение {conn.id} (email={c_email}) "
+                    f"найдено на панели → sync_status='synced'"
+                )
+                conn.sync_status = "synced"
 
         await self.session.flush()
 
         # -----------------------------------------------------------------------
         # 2b. XUI bot-зомби: панельные клиенты без соответствующей InboundConnection
         # -----------------------------------------------------------------------
-        try:
-            panel_clients = await xui_client.get_clients()
-        except Exception as e:
-            logger.warning(f"[RECONCILE] Не удалось получить список клиентов панели: {e}")
-            return
-
         if not panel_clients:
             logger.debug(f"[RECONCILE] Панель сервера {server.id} вернула пустой список клиентов")
             return
@@ -652,6 +718,9 @@ class SyncService:
             .where(XUIInbound.server_id == server.id)
         )
         existing_pairs: set[tuple[int, int]] = set(conn_result.all())
+
+        now_ms = datetime.now(UTC).timestamp() * 1000
+        grace_ms = ZOMBIE_GRACE_PERIOD.total_seconds() * 1000
 
         orphans_deleted = 0
         warnings_logged = 0
@@ -683,6 +752,23 @@ class SyncService:
             # subId совпадает с существующей подпиской в БД
             subscription_id = token_to_sub_id[sub_id_field]
 
+            # Grace-period: проверяем возраст клиента по createdAt (epoch ms).
+            # Если createdAt отсутствует, равен 0 или клиент моложе порога — пропускаем.
+            created_at_ms = panel_client.get("createdAt") or 0
+            if not created_at_ms:
+                logger.debug(
+                    f"[RECONCILE] Клиент '{email}' (subId={sub_id_field!r}) "
+                    f"без createdAt — пропуск (безопаснее не удалять)"
+                )
+                continue
+            age_ms = now_ms - created_at_ms
+            if age_ms < grace_ms:
+                logger.debug(
+                    f"[RECONCILE] Клиент '{email}' (subId={sub_id_field!r}) "
+                    f"моложе grace-period ({age_ms/1000:.0f}s < {ZOMBIE_GRACE_PERIOD.total_seconds():.0f}s) — пропуск"
+                )
+                continue
+
             # Проверяем для каждого inbound, на котором зарегистрирован клиент
             for xui_inbound_id in inbound_ids_on_panel:
                 inbound_db_id = xui_id_to_inbound_id.get(xui_inbound_id)
@@ -695,6 +781,11 @@ class SyncService:
 
                 if (subscription_id, inbound_db_id) not in existing_pairs:
                     # Орфан: наш токен (bot-подпись), но нет InboundConnection
+                    if not email:
+                        logger.debug(
+                            f"[RECONCILE] XUI-зомби (subId={sub_id_field!r}) с пустым email — пропуск"
+                        )
+                        break
                     logger.info(
                         f"[RECONCILE] XUI-зомби: клиент '{email}' (subId={sub_id_field!r}) "
                         f"на inbound xui_id={xui_inbound_id} сервера {server.id}: "

@@ -466,6 +466,54 @@ class TestRebuildSubscription:
         # sync_status must NOT be set to error
         assert conn.sync_status == "synced"
 
+    @pytest.mark.asyncio
+    async def test_remove_returns_false_surfaces_in_failed(self):
+        """remove_inbound_from_subscription returning False (phantom/db-fail) → поднимается в failed."""
+        from app.xui_client.exceptions import XUIError
+
+        # conn с inbound_id=10 существует → идёт в removed_ids (not in new_inbound_ids=[])
+        session = MagicMock()
+        session.flush = AsyncMock()
+        session.add = MagicMock()
+        session.delete = MagicMock()
+
+        sub = MagicMock()
+        sub.id = 5
+        sub.name = "Sub"
+        sub.total_gb = 0
+        sub.expiry_date = None
+        sub.template_id = None
+        sub.notes = None
+
+        conn = MagicMock()
+        conn.inbound_id = 10
+        sub.inbound_connections = [conn]
+        sub.client = MagicMock()
+
+        async def fake_execute(*args, **kwargs):
+            r = MagicMock()
+            r.scalar_one_or_none.return_value = sub
+            r.scalars.return_value.all.return_value = [sub]
+            return r
+
+        session.execute = fake_execute
+
+        svc = _make_service(session)
+        svc.get_subscription = AsyncMock(return_value=sub)
+
+        # remove_inbound_from_subscription returns False (phantom/db-fail)
+        svc.remove_inbound_from_subscription = AsyncMock(return_value=False)
+        svc.add_inbound_to_subscription = AsyncMock(return_value=MagicMock())
+
+        with pytest.raises(XUIError, match="partially failed"):
+            await svc.rebuild_subscription(
+                subscription_id=5,
+                new_name="Sub",
+                new_total_gb=0,
+                new_expiry_days=None,
+                new_inbound_ids=[],  # removes inbound 10
+            )
+
 
 # ---------------------------------------------------------------------------
 # delete_subscription tests

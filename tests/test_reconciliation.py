@@ -1,5 +1,6 @@
 """Tests for zombie/phantom reconciliation and transaction boundaries in sync_service."""
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -60,6 +61,16 @@ def _make_session() -> MagicMock:
     return session
 
 
+def _old_created_at_ms() -> int:
+    """createdAt (epoch ms) older than grace-period — zombie should be deleted."""
+    return int((time.time() - 20 * 60) * 1000)  # 20 minutes ago
+
+
+def _fresh_created_at_ms() -> int:
+    """createdAt (epoch ms) within grace-period — zombie must NOT be deleted."""
+    return int(time.time() * 1000)  # right now
+
+
 # ---------------------------------------------------------------------------
 # 2a. Phantom tests
 # ---------------------------------------------------------------------------
@@ -70,13 +81,11 @@ class TestPhantomReconciliation:
 
     @pytest.mark.asyncio
     async def test_phantom_deleted_when_absent_from_panel(self, mock_settings):
-        """Соединение error + клиент отсутствует на панели → session.delete вызван."""
+        """Соединение error + email отсутствует в снимке get_clients() → session.delete вызван."""
         session = _make_session()
 
         conn = _make_xui_connection(conn_id=42, email="ghost@vpn", sync_status="error")
 
-        # session.execute returns: error_connections query, then sub_tokens, then xui_inbounds, then pairs
-        # We patch _reconcile_xui_server to call the real method but mock execute responses.
         from app.services.sync_service import SyncService
 
         svc = SyncService.__new__(SyncService)
@@ -84,20 +93,16 @@ class TestPhantomReconciliation:
         svc._xui_service = MagicMock()
 
         xui_client = MagicMock()
-        xui_client.get_client_traffic = AsyncMock(return_value=None)  # absent on panel
-        xui_client.get_clients = AsyncMock(return_value=[])  # no panel-wide clients
+        # get_clients() snapshot: ghost@vpn is NOT present
+        xui_client.get_clients = AsyncMock(return_value=[])
 
         server = _make_server()
 
-        # Mock session.execute to return staged results in order
+        # Mock session.execute: error_connections, sub_tokens, xui_inbounds, pairs
         execute_results = [
-            # 1st: error connections query
             _make_scalars_result([conn]),
-            # 2nd: subscription tokens
             _make_rows_result([]),
-            # 3rd: xui inbounds
             _make_rows_result([]),
-            # 4th: existing pairs
             _make_rows_result([]),
         ]
         session.execute = AsyncMock(side_effect=execute_results)
@@ -108,7 +113,7 @@ class TestPhantomReconciliation:
 
     @pytest.mark.asyncio
     async def test_phantom_restored_when_present_on_panel(self, mock_settings):
-        """Соединение error + клиент ЕСТЬ на панели → sync_status='synced', не удалён."""
+        """Соединение error + email ЕСТЬ в снимке get_clients() → sync_status='synced', не удалён."""
         session = _make_session()
 
         conn = _make_xui_connection(conn_id=7, email="alive@vpn", sync_status="error")
@@ -120,8 +125,10 @@ class TestPhantomReconciliation:
         svc._xui_service = MagicMock()
 
         xui_client = MagicMock()
-        xui_client.get_client_traffic = AsyncMock(return_value={"uuid": "abc"})  # present
-        xui_client.get_clients = AsyncMock(return_value=[])
+        # get_clients() snapshot: alive@vpn IS present
+        xui_client.get_clients = AsyncMock(
+            return_value=[{"email": "alive@vpn", "subId": "", "inboundIds": []}]
+        )
 
         server = _make_server()
 
@@ -138,6 +145,29 @@ class TestPhantomReconciliation:
         session.delete.assert_not_called()
         assert conn.sync_status == "synced"
 
+    @pytest.mark.asyncio
+    async def test_get_clients_raises_skips_entire_reconciliation(self, mock_settings):
+        """get_clients() бросает → реконсиляция пропущена, ничего не удалено (ни зомби, ни фантомы)."""
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        xui_client = MagicMock()
+        xui_client.get_clients = AsyncMock(side_effect=Exception("connection refused"))
+
+        server = _make_server()
+        # execute should NOT be called because we return early
+        session.execute = AsyncMock()
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        session.delete.assert_not_called()
+        session.execute.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # 2b. XUI zombie tests
@@ -148,8 +178,8 @@ class TestXUIZombieReconciliation:
     """XUI зомби: subId == токен существующей подписки, нет InboundConnection → удалить с панели."""
 
     @pytest.mark.asyncio
-    async def test_zombie_deleted_when_sub_exists_but_no_connection(self, mock_settings):
-        """subId совпадает с подпиской в БД, нет connection → delete_client вызван."""
+    async def test_zombie_deleted_when_old_enough(self, mock_settings):
+        """subId совпадает с подпиской, нет connection, createdAt старый → delete_client вызван."""
         session = _make_session()
 
         from app.services.sync_service import SyncService
@@ -163,11 +193,11 @@ class TestXUIZombieReconciliation:
             "email": "zombie@vpn",
             "subId": bot_token,
             "inboundIds": [10],  # xui_id=10
+            "createdAt": _old_created_at_ms(),
         }
 
         xui_client = MagicMock()
         xui_client.get_clients = AsyncMock(return_value=[panel_client])
-        xui_client.get_client_traffic = AsyncMock(return_value=None)
         xui_client.delete_client = AsyncMock(return_value=True)
 
         server = _make_server()
@@ -189,6 +219,154 @@ class TestXUIZombieReconciliation:
         xui_client.delete_client.assert_called_once_with("zombie@vpn")
 
     @pytest.mark.asyncio
+    async def test_zombie_skipped_within_grace_period(self, mock_settings):
+        """Зомби моложе grace-period (createdAt=сейчас) → НЕ удалён."""
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        bot_token = "fresh-token"
+        panel_client = {
+            "email": "fresh-zombie@vpn",
+            "subId": bot_token,
+            "inboundIds": [10],
+            "createdAt": _fresh_created_at_ms(),  # right now — within grace period
+        }
+
+        xui_client = MagicMock()
+        xui_client.get_clients = AsyncMock(return_value=[panel_client])
+        xui_client.delete_client = AsyncMock(return_value=True)
+
+        server = _make_server()
+
+        execute_results = [
+            _make_scalars_result([]),
+            _make_rows_result([(bot_token, 99)]),
+            _make_rows_result([(10, 5)]),
+            _make_rows_result([]),  # no connection → would be zombie IF old enough
+        ]
+        session.execute = AsyncMock(side_effect=execute_results)
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        xui_client.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zombie_without_created_at_not_deleted(self, mock_settings):
+        """Клиент без createdAt/0 → не удалён (безопаснее пропустить)."""
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        bot_token = "no-ts-token"
+        # No createdAt field at all
+        panel_client = {
+            "email": "nots@vpn",
+            "subId": bot_token,
+            "inboundIds": [10],
+        }
+
+        xui_client = MagicMock()
+        xui_client.get_clients = AsyncMock(return_value=[panel_client])
+        xui_client.delete_client = AsyncMock(return_value=True)
+
+        server = _make_server()
+
+        execute_results = [
+            _make_scalars_result([]),
+            _make_rows_result([(bot_token, 99)]),
+            _make_rows_result([(10, 5)]),
+            _make_rows_result([]),
+        ]
+        session.execute = AsyncMock(side_effect=execute_results)
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        xui_client.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zombie_with_zero_created_at_not_deleted(self, mock_settings):
+        """Клиент с createdAt=0 → не удалён."""
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        bot_token = "zero-ts-token"
+        panel_client = {
+            "email": "zeronts@vpn",
+            "subId": bot_token,
+            "inboundIds": [10],
+            "createdAt": 0,
+        }
+
+        xui_client = MagicMock()
+        xui_client.get_clients = AsyncMock(return_value=[panel_client])
+        xui_client.delete_client = AsyncMock(return_value=True)
+
+        server = _make_server()
+
+        execute_results = [
+            _make_scalars_result([]),
+            _make_rows_result([(bot_token, 99)]),
+            _make_rows_result([(10, 5)]),
+            _make_rows_result([]),
+        ]
+        session.execute = AsyncMock(side_effect=execute_results)
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        xui_client.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zombie_empty_email_not_deleted(self, mock_settings):
+        """Зомби с пустым email → не удалён."""
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        bot_token = "bot-token-empty-email"
+        panel_client = {
+            "email": "",  # пустой email
+            "subId": bot_token,
+            "inboundIds": [10],
+            "createdAt": _old_created_at_ms(),
+        }
+
+        xui_client = MagicMock()
+        xui_client.get_clients = AsyncMock(return_value=[panel_client])
+        xui_client.delete_client = AsyncMock(return_value=True)
+
+        server = _make_server()
+
+        execute_results = [
+            _make_scalars_result([]),
+            _make_rows_result([(bot_token, 99)]),
+            _make_rows_result([(10, 5)]),
+            _make_rows_result([]),
+        ]
+        session.execute = AsyncMock(side_effect=execute_results)
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        xui_client.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_unknown_sub_id_not_deleted(self, mock_settings):
         """subId НЕ совпадает ни с одной подпиской → НЕ удалён, warning залогирован."""
         session = _make_session()
@@ -203,11 +381,11 @@ class TestXUIZombieReconciliation:
             "email": "manual@vpn",
             "subId": "unknown-token-xyz",
             "inboundIds": [10],
+            "createdAt": _old_created_at_ms(),
         }
 
         xui_client = MagicMock()
         xui_client.get_clients = AsyncMock(return_value=[panel_client])
-        xui_client.get_client_traffic = AsyncMock(return_value=None)
         xui_client.delete_client = AsyncMock()
 
         server = _make_server()
@@ -243,11 +421,11 @@ class TestXUIZombieReconciliation:
             "email": "nosub@vpn",
             "subId": "",  # пустой subId
             "inboundIds": [10],
+            "createdAt": _old_created_at_ms(),
         }
 
         xui_client = MagicMock()
         xui_client.get_clients = AsyncMock(return_value=[panel_client])
-        xui_client.get_client_traffic = AsyncMock(return_value=None)
         xui_client.delete_client = AsyncMock()
 
         server = _make_server()
@@ -280,11 +458,11 @@ class TestXUIZombieReconciliation:
             "email": "connected@vpn",
             "subId": bot_token,
             "inboundIds": [10],
+            "createdAt": _old_created_at_ms(),
         }
 
         xui_client = MagicMock()
         xui_client.get_clients = AsyncMock(return_value=[panel_client])
-        xui_client.get_client_traffic = AsyncMock(return_value=None)
         xui_client.delete_client = AsyncMock()
 
         server = _make_server()
@@ -328,7 +506,7 @@ class TestTransactionBoundaries:
         server.last_sync_at = None
         server.sync_status = "error"  # needs sync
 
-        # ServerMonitor is imported locally inside sync_server, so patch it there
+        # Patch _save_server_error_status to a no-op so we don't need a full DB
         with (
             patch.object(svc, "_needs_sync", return_value=True),
             patch.object(
@@ -336,6 +514,7 @@ class TestTransactionBoundaries:
                 "_sync_server_inbounds",
                 new=AsyncMock(side_effect=RuntimeError("boom")),
             ),
+            patch.object(svc, "_save_server_error_status", new=AsyncMock()),
             patch("app.services.server_monitor.ServerMonitor.ping", new=AsyncMock(return_value=True)),
         ):
             # Мокируем session.execute для запроса inbounds
@@ -381,6 +560,51 @@ class TestTransactionBoundaries:
         assert result is True
         session.commit.assert_called_once()
         session.rollback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_error_status_saved_after_rollback(self, mock_settings):
+        """При ошибке sync_server: rollback → _save_server_error_status вызван с нужными аргументами."""
+        from app.xui_client import XUIError
+
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._is_running = False
+        svc._xui_service = MagicMock()
+        svc._xui_service._get_client = AsyncMock(return_value=MagicMock())
+        import asyncio
+        svc._sync_lock = asyncio.Lock()
+
+        server = _make_server()
+        server.last_sync_at = None
+        server.sync_status = "synced"
+
+        save_status_mock = AsyncMock()
+
+        with (
+            patch.object(svc, "_needs_sync", return_value=True),
+            patch.object(
+                svc,
+                "_sync_server_inbounds",
+                new=AsyncMock(side_effect=XUIError("panel error")),
+            ),
+            patch.object(svc, "_save_server_error_status", new=save_status_mock),
+            patch("app.services.server_monitor.ServerMonitor.ping", new=AsyncMock(return_value=True)),
+        ):
+            session.execute = AsyncMock(return_value=_make_scalars_result([]))
+
+            result = await svc.sync_server(server, force=True)
+
+        assert result is False
+        session.rollback.assert_called_once()
+        # _save_server_error_status должен быть вызван ПОСЛЕ rollback
+        save_status_mock.assert_awaited_once()
+        call_args = save_status_mock.await_args
+        assert call_args.args[0] == server.id  # server_id
+        assert call_args.args[1] == "error"    # sync_status
 
 
 # ---------------------------------------------------------------------------

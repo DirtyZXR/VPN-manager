@@ -224,7 +224,13 @@ class NewSubscriptionService:
         # Process removed
         for ib_id in removed_ids:
             try:
-                await self.remove_inbound_from_subscription(subscription_id, ib_id)
+                removed_ok = await self.remove_inbound_from_subscription(subscription_id, ib_id)
+                if not removed_ok:
+                    logger.error(
+                        f"rebuild_subscription: remove_inbound_from_subscription returned False "
+                        f"for inbound {ib_id} sub {subscription_id} (phantom marked error)"
+                    )
+                    failed.append((ib_id, "db delete failed"))
             except Exception as e:
                 logger.error(
                     f"rebuild_subscription: failed to remove inbound {ib_id} "
