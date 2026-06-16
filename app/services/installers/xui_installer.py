@@ -13,13 +13,10 @@ Container names: vpnbot-xui (3x-ui), vpnbot-caddy (Caddy)
 Config dir on server: /opt/vpnbot/xui/
 """
 
-import logging
-
 import bcrypt
+from loguru import logger
 
 from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
-
-logger = logging.getLogger(__name__)
 
 XUI_SERVICE_DIR = f"{BASE_DIR}/xui"
 XUI_CONTAINER = "xui"

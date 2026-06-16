@@ -21,13 +21,13 @@ This would reduce connection overhead for installer workflows. Current workaroun
 commands into single bash scripts sent via one run_command() call.
 """
 
-import logging
 import secrets
 import string
 import time
 from collections.abc import Awaitable, Callable
 
 import asyncssh
+from loguru import logger
 
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.port_manager import PortManager
@@ -37,8 +37,6 @@ ProgressCallback = Callable[[str], Awaitable[None]]
 
 class AlreadyInstalledError(RuntimeError):
     """Raised when a vpnbot container already exists on the server."""
-
-logger = logging.getLogger(__name__)
 
 CONTAINER_PREFIX = "vpnbot"
 BASE_DIR = "/opt/vpnbot"

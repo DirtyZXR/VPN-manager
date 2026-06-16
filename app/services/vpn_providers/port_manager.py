@@ -1,10 +1,8 @@
 """Port Manager for allocating free ports on a server via SSH."""
 
-import logging
+from loguru import logger
 
 from app.services.ssh_service import SSHManager
-
-logger = logging.getLogger(__name__)
 
 # Range of ports to use for new VPN containers/protocols
 PORT_RANGE_START = 30000

@@ -1,13 +1,12 @@
 """Server monitor service for pinging and checking host availability."""
 
 import asyncio
-import logging
 import platform
+
+from loguru import logger
 
 from app.database import async_session_factory
 from app.database.models import Server
-
-logger = logging.getLogger(__name__)
 
 
 class ServerMonitor:

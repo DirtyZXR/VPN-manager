@@ -13,11 +13,9 @@ Container name: vpnbot-mtproxy
 Config dir on server: /opt/vpnbot/mtproxy/
 """
 
-import logging
+from loguru import logger
 
 from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
-
-logger = logging.getLogger(__name__)
 
 MTPROXY_SERVICE_DIR = f"{BASE_DIR}/mtproxy"
 MTPROXY_CONTAINER = "mtproxy"

@@ -13,12 +13,11 @@ Config dir on server: /opt/vpnbot/awg/
 """
 
 import contextlib
-import logging
 import random
 
-from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
 
 AWG_SERVICE_DIR = f"{BASE_DIR}/awg"
 AWG_CONTAINER_NAME = "awg"

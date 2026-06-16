@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
 
 import asyncssh
+from loguru import logger
 
 from app.config import get_settings
 from app.database.models import Server
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
-
-logger = logging.getLogger(__name__)
 
 # Timeout for establishing the TCP+SSH handshake (seconds).
 SSH_CONNECT_TIMEOUT = 30
@@ -139,10 +137,8 @@ class SSHManager:
                 )
             except (asyncssh.HostKeyNotVerifiable, asyncssh.PermissionDenied) as exc:
                 logger.warning(
-                    "SSH host-key mismatch on %s:%s — possible MITM. "
-                    "Admin action required.",
-                    self.host,
-                    self.port,
+                    f"SSH host-key mismatch on {self.host}:{self.port} — possible MITM. "
+                    "Admin action required."
                 )
                 raise SSHHostKeyMismatchError(self.host, str(exc)) from exc
 
@@ -165,7 +161,7 @@ class SSHManager:
                 discovered = host_key.export_public_key().decode().strip()
                 self._discovered_host_key = discovered
                 logger.info(
-                    "TOFU: captured host key for %s (type=%s); persisting.",
+                    "TOFU: captured host key for {} (type={}); persisting.",
                     self.host,
                     discovered.split()[0] if discovered else "unknown",
                 )
@@ -193,7 +189,7 @@ class SSHManager:
                     await self._persist_host_key(session)
             except Exception as exc:
                 logger.debug(
-                    "TOFU: could not persist host key for %s (no session available): %s",
+                    "TOFU: could not persist host key for {} (no session available): {}",
                     self.host,
                     exc,
                 )
@@ -210,7 +206,7 @@ class SSHManager:
             self.server.ssh_host_key = discovered
             session.add(self.server)
             await session.commit()
-            logger.info("TOFU: host key persisted for %s.", self.host)
+            logger.info("TOFU: host key persisted for {}.", self.host)
 
     # ── Context-manager (persistent connection) ───────────────────────
 

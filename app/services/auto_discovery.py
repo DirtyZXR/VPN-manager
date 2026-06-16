@@ -4,13 +4,12 @@ Uses installer discover_existing() methods to read configuration from
 vpnbot-* containers.
 """
 
-import logging
 from typing import Any
+
+from loguru import logger
 
 from app.database.models import Server
 from app.services.ssh_service import SSHManager
-
-logger = logging.getLogger(__name__)
 
 
 class AutoDiscoveryService:
