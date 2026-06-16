@@ -40,7 +40,8 @@ class MTProxyInstaller(BaseInstaller):
 
         from app.utils import extract_mtproxy_domain
 
-        config = await self._cmd(f"cat {MTPROXY_SERVICE_DIR}/config.toml")
+        async with self.ssh:
+            config = await self._cmd(f"cat {MTPROXY_SERVICE_DIR}/config.toml")
 
         bind_match = re.search(r'bind-to\s*=\s*"0\.0\.0\.0:(\d+)"', config)
         secret_match = re.search(r'(?:secret|default)\s*=\s*"([^"]+)"', config)
@@ -88,70 +89,71 @@ class MTProxyInstaller(BaseInstaller):
         ports_to_clean: list[tuple[int, str]] = []
 
         try:
-            logger.info(
-                f"Installing MTProxy ({implementation}) on {self.ssh.host}:{port}"
-            )
+            async with self.ssh:
+                logger.info(
+                    f"Installing MTProxy ({implementation}) on {self.ssh.host}:{port}"
+                )
 
-            await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
-            await self.prepare_host()
+                await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
+                await self.prepare_host()
 
-            if await self.check_already_installed():
-                if force:
-                    logger.warning(f"Force reinstall: removing existing vpnbot-mtproxy on {self.ssh.host}")
-                    await self._cmd("docker rm -f vpnbot-mtproxy 2>/dev/null || true")
-                    await self._cmd("sleep 2")
-                else:
-                    raise AlreadyInstalledError(
-                        f"MTProxy уже установлен на {self.ssh.host}. "
-                        "Для переустановки нажмите кнопку ниже."
-                    )
+                if await self.check_already_installed():
+                    if force:
+                        logger.warning(f"Force reinstall: removing existing vpnbot-mtproxy on {self.ssh.host}")
+                        await self._cmd("docker rm -f vpnbot-mtproxy 2>/dev/null || true")
+                        await self._cmd("sleep 2")
+                    else:
+                        raise AlreadyInstalledError(
+                            f"MTProxy уже установлен на {self.ssh.host}. "
+                            "Для переустановки нажмите кнопку ниже."
+                        )
 
-            if not await self.check_port_free(port):
-                raise RuntimeError(f"Port {port}/tcp is occupied on {self.ssh.host}")
+                if not await self.check_port_free(port):
+                    raise RuntimeError(f"Port {port}/tcp is occupied on {self.ssh.host}")
 
-            if implementation not in ("mtg", "mtg-multi"):
-                raise ValueError(f"Unknown implementation: {implementation}")
+                if implementation not in ("mtg", "mtg-multi"):
+                    raise ValueError(f"Unknown implementation: {implementation}")
 
-            image = MTG_MULTI_IMAGE if implementation == "mtg-multi" else MTG_IMAGE
-            dirs_to_clean = [service_dir]
-            ports_to_clean = [(port, "tcp")]
+                image = MTG_MULTI_IMAGE if implementation == "mtg-multi" else MTG_IMAGE
+                dirs_to_clean = [service_dir]
+                ports_to_clean = [(port, "tcp")]
 
-            await self._progress(2, 9, "Открытие портов в файрволе...")
-            await self._open_firewall_port(port)
+                await self._progress(2, 9, "Открытие портов в файрволе...")
+                await self._open_firewall_port(port)
 
-            await self._progress(3, 9, "Создание директорий...")
-            await self._create_dirs(service_dir)
+                await self._progress(3, 9, "Создание директорий...")
+                await self._create_dirs(service_dir)
 
-            await self._progress(4, 9, "Генерация секрета...")
-            await self._generate_secret(service_dir, domain)
-            secret = (await self._cmd(f"cat {service_dir}/secret.txt")).strip()
+                await self._progress(4, 9, "Генерация секрета...")
+                await self._generate_secret(service_dir, domain)
+                secret = (await self._cmd(f"cat {service_dir}/secret.txt")).strip()
 
-            await self._progress(5, 9, "Запись конфигурации...")
-            await self._write_config(service_dir, port, domain, implementation, max_connections)
+                await self._progress(5, 9, "Запись конфигурации...")
+                await self._write_config(service_dir, port, domain, implementation, max_connections)
 
-            await self._progress(6, 9, "Запись docker-compose.yml...")
-            await self._write_compose_file(service_dir, port, image, implementation)
+                await self._progress(6, 9, "Запись docker-compose.yml...")
+                await self._write_compose_file(service_dir, port, image, implementation)
 
-            await self._progress(7, 9, "Запуск контейнера...")
-            await self._start_container(service_dir)
+                await self._progress(7, 9, "Запуск контейнера...")
+                await self._start_container(service_dir)
 
-            await self._progress(8, 9, "Проверка доступности...")
-            await self._verify(port)
+                await self._progress(8, 9, "Проверка доступности...")
+                await self._verify(port)
 
-            await self._progress(9, 9, "Установка завершена")
+                await self._progress(9, 9, "Установка завершена")
 
-            logger.info(f"MTProxy ({implementation}) installed on {self.ssh.host}:{port}")
+                logger.info(f"MTProxy ({implementation}) installed on {self.ssh.host}:{port}")
 
-            return {
-                "container_name": f"vpnbot-{MTPROXY_CONTAINER}",
-                "image": image,
-                "implementation": implementation,
-                "port": port,
-                "domain": domain,
-                "secret": secret,
-                "max_connections": max_connections if implementation == "mtg-multi" else None,
-                "service_dir": service_dir,
-            }
+                return {
+                    "container_name": f"vpnbot-{MTPROXY_CONTAINER}",
+                    "image": image,
+                    "implementation": implementation,
+                    "port": port,
+                    "domain": domain,
+                    "secret": secret,
+                    "max_connections": max_connections if implementation == "mtg-multi" else None,
+                    "service_dir": service_dir,
+                }
         except Exception:
             logger.exception("MTProxy installation failed, running cleanup")
             await self.cleanup(
