@@ -8,26 +8,20 @@ All installers (AWG, XUI, MTProxy) inherit from BaseInstaller which handles:
 - Container naming convention: vpnbot-<service>
 - Rollback/cleanup on failure
 
-Architecture note (TODO): Currently each SSH command opens/closes a separate connection
-via SSHManager.run_command(). For installers that run many sequential commands, consider
-adding a persistent session context manager to SSHManager:
-
-    async with ssh.session() as conn:
-        await conn.run("cmd1")
-        result = await conn.run("cmd2")
-        ...
-
-This would reduce connection overhead for installer workflows. Current workaround: batch
-commands into single bash scripts sent via one run_command() call.
+Architecture note: SSHManager is an async context manager that holds one persistent
+connection for the duration of an operation. Installers wrap their install() and
+discover_existing() bodies in ``async with self.ssh:`` so all sequential SSH commands
+reuse a single connection (connect_timeout and per-command timeout apply). One-off
+run_command() calls used outside a context still open and close a connection per command.
 """
 
-import logging
 import secrets
 import string
 import time
 from collections.abc import Awaitable, Callable
 
 import asyncssh
+from loguru import logger
 
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.port_manager import PortManager
@@ -37,8 +31,6 @@ ProgressCallback = Callable[[str], Awaitable[None]]
 
 class AlreadyInstalledError(RuntimeError):
     """Raised when a vpnbot container already exists on the server."""
-
-logger = logging.getLogger(__name__)
 
 CONTAINER_PREFIX = "vpnbot"
 BASE_DIR = "/opt/vpnbot"

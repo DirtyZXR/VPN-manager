@@ -7,18 +7,16 @@ Supports two implementations:
 
 import base64
 import io
-import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
 import qrcode
+from loguru import logger
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.base import BaseVPNProvider
-
-logger = logging.getLogger(__name__)
 
 
 class MTProxyProvider(BaseVPNProvider):

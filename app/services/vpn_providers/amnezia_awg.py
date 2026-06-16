@@ -4,7 +4,6 @@ import base64
 import io
 import ipaddress
 import json
-import logging
 import re
 import struct
 import uuid
@@ -13,12 +12,11 @@ from datetime import datetime
 from typing import Any
 
 import qrcode
+from loguru import logger
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.base import BaseVPNProvider
-
-logger = logging.getLogger(__name__)
 
 I1_DEFAULT = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
 
