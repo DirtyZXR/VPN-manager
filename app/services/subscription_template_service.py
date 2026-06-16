@@ -15,6 +15,7 @@ from app.database.models import (
     SubscriptionTemplate,
     SubscriptionTemplateInbound,
 )
+from app.utils.date_utils import ensure_utc
 from app.xui_client.exceptions import XUIError
 
 
@@ -492,7 +493,7 @@ class SubscriptionTemplateService:
             old_days: Old default days (None or 0 = never expire)
             new_days: New default days (None or 0 = never expire)
         """
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta
 
         from app.services.new_subscription_service import NewSubscriptionService
 
@@ -536,11 +537,7 @@ class SubscriptionTemplateService:
                     elif old_days_val > 0 and new_days_val > 0 and old_days_val != new_days_val:
                         delta_days = new_days_val - old_days_val
                         if sub.expiry_date:
-                            sub_expiry = (
-                                sub.expiry_date.replace(tzinfo=UTC)
-                                if sub.expiry_date.tzinfo is None
-                                else sub.expiry_date
-                            )
+                            sub_expiry = ensure_utc(sub.expiry_date)
                             new_expiry_date = sub_expiry + timedelta(days=delta_days)
                         else:
                             new_expiry_days = float(new_days_val)

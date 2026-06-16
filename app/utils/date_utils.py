@@ -4,6 +4,20 @@ import math
 from datetime import UTC, datetime, timedelta
 
 
+def ensure_utc(dt: datetime | None) -> datetime | None:
+    """Normalise a datetime to UTC-aware without shifting the wall time.
+
+    - None  → None
+    - naive → treat as UTC, attach tzinfo=UTC
+    - aware → return as-is (timezone is preserved, not converted)
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
+
 def format_expiry_date(expiry_date: datetime | None, include_time: bool = False) -> str:
     """Format expiry date with remaining days calculation.
 
@@ -17,9 +31,8 @@ def format_expiry_date(expiry_date: datetime | None, include_time: bool = False)
     if not expiry_date:
         return "Бессрочно"
 
-    # Ensure UTC timezone
-    if expiry_date.tzinfo is None:
-        expiry_date = expiry_date.replace(tzinfo=UTC)
+    # Ensure UTC timezone (legacy naive rows treated as UTC)
+    expiry_date = ensure_utc(expiry_date)
 
     now = datetime.now(UTC)
 
