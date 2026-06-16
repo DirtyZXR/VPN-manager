@@ -11,6 +11,7 @@ from loguru import logger
 from app.bot.handlers.admin.servers import first_setup, services
 from app.bot.handlers.admin.servers._shared import show_server_details
 from app.bot.handlers.admin.servers.first_setup import _check_first_setup
+from app.bot.handlers.admin.servers.services import show_server_services
 from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
