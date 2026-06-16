@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import sys
 from pathlib import Path
 
@@ -16,6 +17,21 @@ from app.config import get_settings
 from app.database import async_session_factory, init_db
 from app.services import SyncService
 from app.services.notification_checker import NotificationChecker
+
+
+class InterceptHandler(logging.Handler):
+    """Bridge stdlib logging records into loguru sinks (with rotation, format, etc.)."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        frame, depth = logging.currentframe(), 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 # Flags to control background tasks
 _background_sync_running = False
@@ -124,6 +140,10 @@ def setup_logging() -> None:
         rotation="10 MB",
         retention="7 days",
     )
+
+    # Route all stdlib logging (aiogram, sqlalchemy, asyncssh, aiohttp, etc.)
+    # through loguru so they land in the same sinks with rotation.
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 
 async def main() -> None:
