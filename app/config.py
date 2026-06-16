@@ -3,7 +3,8 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from cryptography.fernet import Fernet, InvalidToken
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -46,6 +47,18 @@ class Settings(BaseSettings):
         default=30,
         description="XUI client timeout in seconds",
     )
+
+    @field_validator("encryption_key")
+    @classmethod
+    def validate_encryption_key(cls, value: str) -> str:
+        """Validate that encryption_key is a valid Fernet key."""
+        try:
+            Fernet(value.encode())
+        except (ValueError, InvalidToken, Exception):
+            raise ValueError(
+                "ENCRYPTION_KEY невалиден — нужен Fernet-ключ (44 урл-безопасных base64 символа)"
+            ) from None
+        return value
 
     @property
     def admin_ids(self) -> set[int]:
