@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.database import async_session_factory, init_db
 from app.services import SyncService
 from app.services.notification_checker import NotificationChecker
+from app.services.notification_service import close_shared_bot
 
 
 class InterceptHandler(logging.Handler):
@@ -208,6 +209,11 @@ async def main() -> None:
         logger.info("Stopping background tasks...")
         # Close bot session
         await bot.session.close()
+        # Close notification singleton Bot (avoids 'Unclosed client session' warnings)
+        try:
+            await close_shared_bot()
+        except Exception as exc:
+            logger.warning(f"Error closing notification bot singleton: {exc}")
 
 
 def run() -> None:
