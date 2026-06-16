@@ -9,6 +9,7 @@ from app.database.models.base import Base, SyncMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound
+    from app.database.models.services import AWGService, MTProxyService, XUIPanel
 
 
 class Server(Base, TimestampMixin, SyncMixin):
