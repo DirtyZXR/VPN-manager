@@ -49,6 +49,12 @@ HOTSPOTS = [
     "app/bot/handlers/admin/servers/xui_desync.py",
     "app/bot/handlers/admin/servers/xui_edit.py",
     "app/bot/handlers/admin/servers/xui_install.py",
+    # Батч 4: user handlers + common + registration + middleware
+    "app/bot/handlers/user/subscriptions.py",
+    "app/bot/handlers/common.py",
+    "app/bot/handlers/registration.py",
+    "app/bot/handlers/fallback.py",
+    "app/bot/middlewares/auth.py",
 ]
 
 

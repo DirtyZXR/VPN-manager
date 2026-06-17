@@ -45,8 +45,10 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
             service = NewSubscriptionService(session)
             subscriptions = await service.get_client_subscriptions(client.id)
 
-        logger.info(
-            f"User {client.id} subscriptions: found {len(subscriptions) if subscriptions else 0} subscriptions"
+        logger.debug(
+            "Подписки клиента {}: найдено {}",
+            client.id,
+            len(subscriptions) if subscriptions else 0,
         )
 
         if not subscriptions:
@@ -156,7 +158,7 @@ async def show_my_subscriptions(callback: CallbackQuery, client) -> None:
 
         await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error in show_my_subscriptions: {e}")
+        logger.error("Ошибка в show_my_subscriptions: {}", e, exc_info=True)
         await callback.message.answer(t("user.subs.error", "❌ Ошибка при загрузке подписок."))
     finally:
         import contextlib
@@ -236,7 +238,7 @@ async def show_all_subscription_urls(callback: CallbackQuery, client) -> None:
 
         await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Error in show_all_subscription_urls: {e}")
+        logger.error("Ошибка в show_all_subscription_urls: {}", e, exc_info=True)
         await callback.message.answer(t("user.subs.error", "❌ Ошибка при загрузке подписок."))
     finally:
         import contextlib
@@ -295,7 +297,7 @@ async def copy_all_json_urls(callback: CallbackQuery, client) -> None:
         # Send as new message instead of callback answer for better copy support
         await callback.message.answer(f"```\n{text}\n```", parse_mode="MarkdownV2")
     except Exception as e:
-        logger.error(f"Error in copy_all_json_urls: {e}")
+        logger.error("Ошибка в copy_all_json_urls: {}", e, exc_info=True)
         await callback.message.answer(t("user.subs.error", "❌ Ошибка при загрузке подписок."))
     finally:
         import contextlib
@@ -389,7 +391,7 @@ async def show_user_subscription_details(callback: CallbackQuery, client) -> Non
                         with contextlib.suppress(Exception):
                             await provider.close()
                     except Exception as e:
-                        logger.warning(f"Failed to get config for conn {conn.id}: {e}")
+                        logger.warning("Не удалось получить конфиг для подключения {}: {}", conn.id, e)
                         config_type = "empty"
                         config_data = None
                         has_vpn_uri = False
@@ -542,7 +544,7 @@ async def export_database(callback: CallbackQuery, client) -> None:
 
             # Copy database file to avoid locking issues
             shutil.copy2(db_path, temp_db_path)
-            logger.info(f"Database copied to {temp_db_path} for export")
+            logger.info("База данных скопирована для экспорта: {}", temp_db_path)
 
             # Send database file
             from datetime import datetime
@@ -563,19 +565,19 @@ async def export_database(callback: CallbackQuery, client) -> None:
             )
 
             await callback.answer(t("admin.export.success", "✅ База данных отправлена!"))
-            logger.info(f"Database exported by admin {client.id}: {db_path}")
+            logger.info("База данных экспортирована администратором {}: {}", client.id, db_path)
 
         finally:
             # Clean up temporary file
             if temp_db_path.exists():
                 try:
                     temp_db_path.unlink()
-                    logger.debug(f"Temporary database file removed: {temp_db_path}")
+                    logger.debug("Временный файл БД удалён: {}", temp_db_path)
                 except Exception as e:
-                    logger.warning(f"Failed to remove temporary file {temp_db_path}: {e}")
+                    logger.warning("Не удалось удалить временный файл {}: {}", temp_db_path, e)
 
     except Exception as e:
-        logger.error(f"Error exporting database for admin {client.id}: {e}", exc_info=True)
+        logger.error("Ошибка экспорта базы данных для администратора {}: {}", client.id, e, exc_info=True)
         await callback.answer(
             t("admin.export.error", "❌ Ошибка при экспорте базы данных."), show_alert=True
         )
@@ -685,7 +687,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
                                         )
                                     break
                     except Exception as e:
-                        logger.warning(f"Failed to get traffic for connection {conn.id}: {e}")
+                        logger.warning("Не удалось получить трафик для подключения {}: {}", conn.id, e)
                         traffic_text += t("user.status.traffic_error", " (ошибка получения данных)")
 
             # Add connection status indicator
@@ -721,7 +723,7 @@ async def show_subscription_status(callback: CallbackQuery, client) -> None:
             try:
                 await client_obj.close()
             except Exception as e:
-                logger.warning(f"Error closing XUI client: {e}")
+                logger.warning("Ошибка при закрытии XUI-клиента: {}", e)
 
 
 @router.callback_query(F.data == "request_subscription")
@@ -882,7 +884,7 @@ async def send_vpn_uri(callback: CallbackQuery, client) -> None:
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.error(f"Failed to get vpn_uri for connection {conn_id}: {e}", exc_info=True)
+            logger.error("Не удалось получить vpn_uri для подключения {}: {}", conn_id, e, exc_info=True)
             await callback.message.answer(
                 t("user.subs.download_error", "❌ Ошибка при получении ссылки.")
             )
@@ -1026,7 +1028,7 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
         except Exception as e:
             from loguru import logger
 
-            logger.error(f"Error downloading config for conn {conn_id}: {e}")
+            logger.error("Ошибка при скачивании конфига для подключения {}: {}", conn_id, e, exc_info=True)
             await callback.message.answer(
                 t("user.subs.download_error", "❌ Ошибка при скачивании конфига.")
             )
@@ -1037,7 +1039,7 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
             except Exception as e:
                 from loguru import logger
 
-                logger.warning(f"Failed to close provider: {e}")
+                logger.warning("Не удалось закрыть провайдер: {}", e)
 
             builder = InlineKeyboardBuilder()
             builder.button(
@@ -1052,4 +1054,4 @@ async def download_file_config(callback: CallbackQuery, client) -> None:
             try:
                 await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
             except Exception as e:
-                logger.warning(f"Could not restore keyboard: {e}")
+                logger.warning("Не удалось восстановить клавиатуру: {}", e)

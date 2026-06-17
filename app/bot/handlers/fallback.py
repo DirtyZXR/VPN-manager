@@ -14,5 +14,5 @@ router = Router(name="fallback")
 @router.callback_query()
 async def silent_unhandled_callback(callback: CallbackQuery) -> None:
     """Ответить на любой не пойманный callback без текста, чтобы не висел спиннер."""
-    logger.debug(f"Необработанный callback тихо погашен: {callback.data!r}")
+    logger.debug("Необработанный callback тихо погашен: {!r}", callback.data)
     await callback.answer()

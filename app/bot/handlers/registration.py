@@ -60,7 +60,10 @@ async def choose_use_telegram(callback: CallbackQuery, state: FSMContext, event_
     telegram_username = tg_user.username
 
     logger.info(
-        f"User registration via Telegram: name={name}, telegram_id={telegram_id}, username={telegram_username}"
+        "Регистрация через Telegram: name={}, telegram_id={}, username={}",
+        name,
+        telegram_id,
+        telegram_username,
     )
 
     async with async_session_factory() as session:
@@ -88,7 +91,7 @@ async def choose_use_telegram(callback: CallbackQuery, state: FSMContext, event_
         notification_service = NotificationService(session)
         await notification_service.notify_admin_of_new_user(client)
 
-        logger.info(f"✅ Client created: {client.name} (ID: {client.id}, email: {client.email})")
+        logger.info("Клиент создан через Telegram: {} (ID: {}, email: {})", client.name, client.id, client.email)
 
     await state.clear()
 
@@ -129,7 +132,10 @@ async def handle_custom_name(message: Message, state: FSMContext, event_from_use
     telegram_username = tg_user.username
 
     logger.info(
-        f"User registration with custom name: name={name}, telegram_id={telegram_id}, username={telegram_username}"
+        "Регистрация с произвольным именем: name={}, telegram_id={}, username={}",
+        name,
+        telegram_id,
+        telegram_username,
     )
 
     async with async_session_factory() as session:
@@ -157,7 +163,7 @@ async def handle_custom_name(message: Message, state: FSMContext, event_from_use
         notification_service = NotificationService(session)
         await notification_service.notify_admin_of_new_user(client)
 
-        logger.info(f"✅ Client created: {client.name} (ID: {client.id}, email: {client.email})")
+        logger.info("Клиент создан с произвольным именем: {} (ID: {}, email: {})", client.name, client.id, client.email)
 
     await state.clear()
 
