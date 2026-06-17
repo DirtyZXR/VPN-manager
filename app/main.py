@@ -2,7 +2,6 @@
 
 import asyncio
 import contextlib
-import logging
 import sys
 from pathlib import Path
 
@@ -15,24 +14,10 @@ from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
 from app.config import get_settings
 from app.database import async_session_factory, init_db
+from app.logging_config import setup_logging
 from app.services import SyncService
 from app.services.notification_checker import NotificationChecker
 from app.services.notification_service import close_shared_bot
-
-
-class InterceptHandler(logging.Handler):
-    """Bridge stdlib logging records into loguru sinks (with rotation, format, etc.)."""
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-        frame, depth = logging.currentframe(), 2
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 # Flags to control background tasks
 _background_sync_running = False
@@ -48,7 +33,7 @@ async def background_sync_wrapper() -> None:
     _background_sync_running = True
 
     try:
-        logger.info("Starting background sync wrapper...")
+        logger.info("Фоновая синхронизация запущена")
         while _background_sync_running:
             try:
                 # Use global lock to prevent concurrent database access
@@ -63,22 +48,21 @@ async def background_sync_wrapper() -> None:
                         # Close XUI clients to prevent resource leaks
                         await sync_service.close_xui_clients()
 
-                # Wait for SYNC_INTERVAL (5 minutes) between cycles
-                logger.debug("Waiting for next sync cycle...")
-                await asyncio.sleep(300)  # 5 minutes = 300 seconds
+                logger.debug("Ожидание следующего цикла синхронизации...")
+                await asyncio.sleep(300)  # 5 минут
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Error in background sync cycle: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait 1 minute on error
+                logger.error("Ошибка в цикле фоновой синхронизации: {}", e, exc_info=True)
+                await asyncio.sleep(60)
 
     except asyncio.CancelledError:
-        logger.info("Background sync cancelled")
+        logger.info("Фоновая синхронизация отменена")
     except Exception as e:
-        logger.error(f"Fatal error in background sync wrapper: {e}", exc_info=True)
+        logger.error("Критическая ошибка в обёртке фоновой синхронизации: {}", e, exc_info=True)
     finally:
         _background_sync_running = False
-        logger.info("Background sync wrapper stopped")
+        logger.info("Фоновая синхронизация остановлена")
 
 
 async def background_notification_wrapper() -> None:
@@ -87,7 +71,7 @@ async def background_notification_wrapper() -> None:
     _background_notification_running = True
 
     try:
-        logger.info("Starting background notification wrapper...")
+        logger.info("Фоновая рассылка уведомлений запущена")
         while _background_notification_running:
             try:
                 # Use global lock to prevent concurrent database access
@@ -98,22 +82,21 @@ async def background_notification_wrapper() -> None:
                     finally:
                         await notification_checker.close()
 
-                # Wait 10 minutes between checks
-                logger.debug("Waiting for next notification check...")
-                await asyncio.sleep(600)  # 10 minutes = 600 seconds
+                logger.debug("Ожидание следующей проверки уведомлений...")
+                await asyncio.sleep(600)  # 10 минут
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Error in background notification cycle: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait 1 minute on error
+                logger.error("Ошибка в цикле фоновых уведомлений: {}", e, exc_info=True)
+                await asyncio.sleep(60)
 
     except asyncio.CancelledError:
-        logger.info("Background notifications cancelled")
+        logger.info("Фоновая рассылка уведомлений отменена")
     except Exception as e:
-        logger.error(f"Fatal error in background notification wrapper: {e}", exc_info=True)
+        logger.error("Критическая ошибка в обёртке фоновых уведомлений: {}", e, exc_info=True)
     finally:
         _background_notification_running = False
-        logger.info("Background notification wrapper stopped")
+        logger.info("Фоновая рассылка уведомлений остановлена")
 
 
 def build_dispatcher() -> Dispatcher:
@@ -125,36 +108,6 @@ def build_dispatcher() -> Dispatcher:
     return dp
 
 
-def setup_logging() -> None:
-    """Configure loguru logging."""
-    settings = get_settings()
-
-    # Remove default handler
-    logger.remove()
-
-    # Add console handler
-    logger.add(
-        sys.stdout,
-        level=settings.log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    )
-
-    # Add file handler
-    log_path = Path("logs")
-    log_path.mkdir(exist_ok=True)
-
-    logger.add(
-        log_path / "app.log",
-        level=settings.log_level,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-        rotation="10 MB",
-        retention="7 days",
-    )
-
-    # Route all stdlib logging (aiogram, sqlalchemy, asyncssh, aiohttp, etc.)
-    # through loguru so they land in the same sinks with rotation.
-    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-
 
 async def main() -> None:
     """Main async entry point."""
@@ -162,17 +115,17 @@ async def main() -> None:
 
     # Setup logging
     setup_logging()
-    logger.info("Starting VPN Manager bot...")
+    logger.info("Запуск VPN Manager bot...")
 
     # Initialize database
-    logger.info("Initializing database...")
+    logger.info("Инициализация базы данных...")
     await init_db()
-    logger.info("Database initialized")
+    logger.info("База данных инициализирована")
 
     # Ensure data directory exists for Telethon
     data_path = Path("data")
     data_path.mkdir(exist_ok=True)
-    logger.info("Data directory created/verified")
+    logger.info("Директория data создана/проверена")
 
     # Create bot instance
     bot = Bot(
@@ -184,7 +137,7 @@ async def main() -> None:
     dp = build_dispatcher()
 
     # Start tasks
-    logger.info("Starting polling, background sync and notifications...")
+    logger.info("Запуск polling, фоновой синхронизации и уведомлений...")
     try:
         # Create async tasks
         sync_task = asyncio.create_task(background_sync_wrapper())
@@ -207,14 +160,14 @@ async def main() -> None:
         # Stop background tasks
         _background_sync_running = False
         _background_notification_running = False
-        logger.info("Stopping background tasks...")
+        logger.info("Остановка фоновых задач...")
         # Close bot session
         await bot.session.close()
         # Close notification singleton Bot (avoids 'Unclosed client session' warnings)
         try:
             await close_shared_bot()
         except Exception as exc:
-            logger.warning(f"Error closing notification bot singleton: {exc}")
+            logger.warning("Ошибка при закрытии singleton Bot уведомлений: {}", exc)
 
 
 def run() -> None:
@@ -222,9 +175,9 @@ def run() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
+        logger.info("Бот остановлен пользователем")
     except Exception as e:
-        logger.exception(f"Bot crashed: {e}")
+        logger.exception("Бот аварийно завершился: {}", e)
         sys.exit(1)
 
 

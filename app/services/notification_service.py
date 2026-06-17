@@ -195,17 +195,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription.name}"
+                "Уведомление о создании подписки отправлено клиенту {} (telegram_id={}), подписка {}",
+                client.name, client.telegram_id, subscription.name,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send notification to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить уведомление о создании клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -267,17 +266,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Update notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription.name}"
+                "Уведомление об обновлении подписки отправлено клиенту {} (telegram_id={}), подписка {}",
+                client.name, client.telegram_id, subscription.name,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send update notification to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить уведомление об обновлении клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -339,12 +337,15 @@ class NotificationService:
                 parse_mode="HTML",
             )
 
-            logger.info(f"✅ Rebuild notification sent to client {client.name}")
+            logger.info("Уведомление о перестройке подписки отправлено клиенту {}", client.name)
 
             return True
 
         except Exception as e:
-            logger.error(f"❌ Failed to send rebuild notification to client {client.name}: {e}")
+            logger.error(
+                "Не удалось отправить уведомление о перестройке клиенту {}: {}",
+                client.name, e,
+            )
             return False
 
     async def notify_subscription_deleted(
@@ -385,17 +386,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Deletion notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription_name}"
+                "Уведомление об удалении подписки отправлено клиенту {} (telegram_id={}), подписка {}",
+                client.name, client.telegram_id, subscription_name,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send deletion notification to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить уведомление об удалении клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -450,17 +450,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Inbound added notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription.name}"
+                "Уведомление о добавлении подключения отправлено клиенту {} (telegram_id={}), подписка {}",
+                client.name, client.telegram_id, subscription.name,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send inbound added notification to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить уведомление о добавлении подключения клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -507,17 +506,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Inbound removed notification sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"for subscription {subscription_name}"
+                "Уведомление об удалении подключения отправлено клиенту {} (telegram_id={}), подписка {}",
+                client.name, client.telegram_id, subscription_name,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send inbound removed notification to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить уведомление об удалении подключения клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -550,17 +548,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Expiry warning sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}) "
-                f"type: {notification_type}"
+                "Предупреждение об истечении отправлено клиенту {} (telegram_id={}), тип {}",
+                client.name, client.telegram_id, notification_type,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send expiry warning to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить предупреждение об истечении клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -591,16 +588,16 @@ class NotificationService:
             )
 
             logger.info(
-                f"✅ Traffic warning sent to client {client.name} "
-                f"(Telegram ID: {client.telegram_id})"
+                "Предупреждение о трафике отправлено клиенту {} (telegram_id={})",
+                client.name, client.telegram_id,
             )
 
             return True
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send traffic warning to client {client.name} "
-                f"(Telegram ID: {client.telegram_id}): {e}",
+                "Не удалось отправить предупреждение о трафике клиенту {} (telegram_id={}): {}",
+                client.name, client.telegram_id, e,
                 exc_info=True,
             )
             return False
@@ -614,7 +611,7 @@ class NotificationService:
         settings = get_settings()
         admin_ids = settings.admin_ids
         if not admin_ids:
-            logger.warning("No admin Telegram IDs configured, skipping new user notification.")
+            logger.warning("Нет admin_ids — пропуск уведомления о новом пользователе")
             return
 
         safe_name = html.escape(client.name) if client.name else "Не указан"
@@ -638,15 +635,18 @@ class NotificationService:
                         parse_mode="HTML",
                     )
                     logger.info(
-                        f"✅ Admin notification sent to {admin_id} for new user {safe_name}"
+                        "Уведомление администратору {} о новом пользователе {}",
+                        admin_id, safe_name,
                     )
                 except Exception as e:
-                    logger.error(
-                        f"❌ Failed to send admin notification to {admin_id} for new user {safe_name}: {e}"
+                    logger.warning(
+                        "Не удалось отправить уведомление администратору {} о новом пользователе {}: {}",
+                        admin_id, safe_name, e,
                     )
         except Exception as e:
             logger.error(
-                f"❌ Failed to send admin notifications for new user {client.name}: {e}",
+                "Ошибка при отправке уведомлений администраторам о новом пользователе {}: {}",
+                client.name, e,
                 exc_info=True,
             )
 
@@ -662,9 +662,7 @@ class NotificationService:
         settings = get_settings()
         admin_ids = settings.admin_ids
         if not admin_ids:
-            logger.warning(
-                "No admin Telegram IDs configured, skipping subscription request notification."
-            )
+            logger.warning("Нет admin_ids — пропуск уведомления о запросе подписки")
             return
 
         safe_name = html.escape(client.name) if client.name else "Не указан"
@@ -689,15 +687,18 @@ class NotificationService:
                         parse_mode="HTML",
                     )
                     logger.info(
-                        f"✅ Admin notification sent to {admin_id} for subscription request from {safe_name}"
+                        "Уведомление администратору {} о запросе подписки от {}",
+                        admin_id, safe_name,
                     )
                 except Exception as e:
-                    logger.error(
-                        f"❌ Failed to send admin notification to {admin_id} for subscription request from {safe_name}: {e}"
+                    logger.warning(
+                        "Не удалось отправить уведомление администратору {} о запросе от {}: {}",
+                        admin_id, safe_name, e,
                     )
         except Exception as e:
             logger.error(
-                f"❌ Failed to send admin notifications for subscription request from {client.name}: {e}",
+                "Ошибка при отправке уведомлений администраторам о запросе от {}: {}",
+                client.name, e,
                 exc_info=True,
             )
 
@@ -711,7 +712,7 @@ class NotificationService:
         settings = get_settings()
         admin_ids = settings.admin_ids
         if not admin_ids:
-            logger.warning("No admin Telegram IDs configured, skipping request notification.")
+            logger.warning("Нет admin_ids — пропуск уведомления о новом запросе")
             return
 
         from app.bot.keyboards.inline import get_request_admin_keyboard
@@ -742,11 +743,15 @@ class NotificationService:
                         reply_markup=keyboard,
                     )
                 except Exception as e:
-                    logger.error(
-                        f"Failed to send request notification to admin {admin_id}: {e}"
+                    logger.warning(
+                        "Не удалось отправить уведомление о запросе администратору {}: {}",
+                        admin_id, e,
                     )
         except Exception as e:
-            logger.error(f"Failed to process admin notifications for request {request.id}: {e}")
+            logger.error(
+                "Ошибка при отправке уведомлений администраторам о запросе {}: {}",
+                request.id, e,
+            )
 
     async def notify_user_request_decision(
         self,
@@ -792,7 +797,10 @@ class NotificationService:
             )
             return True
         except Exception as e:
-            logger.error(f"Failed to send request decision notification to {telegram_id}: {e}")
+            logger.error(
+                "Не удалось отправить уведомление о решении по запросу пользователю {}: {}",
+                telegram_id, e,
+            )
             return False
 
     async def notify_admins_missing_on_panel(
@@ -809,9 +817,7 @@ class NotificationService:
         settings = get_settings()
         admin_ids = settings.admin_ids
         if not admin_ids:
-            logger.warning(
-                "[RECONCILE] Нет admin_ids — пропуск уведомления об удалённых клиентах."
-            )
+            logger.warning("Нет admin_ids — пропуск уведомления об удалённых клиентах")
             return
 
         if not marked_connections:
@@ -843,17 +849,17 @@ class NotificationService:
                         parse_mode="HTML",
                     )
                     logger.info(
-                        f"[RECONCILE] Уведомление об удалённых клиентах отправлено "
-                        f"администратору {admin_id} (сервер {server_name})"
+                        "Уведомление об удалённых клиентах отправлено администратору {} (сервер {})",
+                        admin_id, server_name,
                     )
                 except Exception as e:
-                    logger.error(
-                        f"[RECONCILE] Не удалось отправить уведомление "
-                        f"администратору {admin_id}: {e}"
+                    logger.warning(
+                        "Не удалось отправить уведомление об удалённых клиентах администратору {}: {}",
+                        admin_id, e,
                     )
         except Exception as e:
             logger.error(
-                f"[RECONCILE] Ошибка отправки уведомлений об удалённых клиентах "
-                f"(сервер {server_name}): {e}",
+                "Ошибка отправки уведомлений об удалённых клиентах (сервер {}): {}",
+                server_name, e,
                 exc_info=True,
             )
