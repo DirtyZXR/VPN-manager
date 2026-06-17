@@ -37,6 +37,18 @@ HOTSPOTS = [
     # Батч 3: admin handlers
     "app/bot/handlers/admin/templates.py",
     "app/bot/handlers/admin/subscriptions.py",
+    "app/bot/handlers/admin/broadcast.py",
+    "app/bot/handlers/admin/clients.py",
+    "app/bot/handlers/admin/requests.py",
+    "app/bot/handlers/admin/sync.py",
+    "app/bot/handlers/admin/servers/awg.py",
+    "app/bot/handlers/admin/servers/monitoring.py",
+    "app/bot/handlers/admin/servers/mtproxy.py",
+    "app/bot/handlers/admin/servers/services.py",
+    "app/bot/handlers/admin/servers/ssh.py",
+    "app/bot/handlers/admin/servers/xui_desync.py",
+    "app/bot/handlers/admin/servers/xui_edit.py",
+    "app/bot/handlers/admin/servers/xui_install.py",
 ]
 
 

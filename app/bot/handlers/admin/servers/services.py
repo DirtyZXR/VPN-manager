@@ -166,7 +166,7 @@ async def run_server_autodiscover(
         try:
             discovered = await discovery.discover_all()
         except Exception as e:
-            logger.error(f"Discovery error on server {server_id}: {e}", exc_info=True)
+            logger.error("Ошибка автообнаружения на сервере {}: {}", server_id, e, exc_info=True)
             await callback.message.edit_text(
                 t(
                     "admin.servers.services.discovery_error",

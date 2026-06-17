@@ -176,7 +176,7 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
                 reply_markup=get_back_keyboard("admin_clients"),
             )
         except Exception as e:
-            logger.error(f"Failed to create client: {e}", exc_info=True)
+            logger.error("Ошибка создания клиента: {}", e, exc_info=True)
             await session.rollback()
             await message.answer(
                 t("admin.clients.add.error", "❌ Ошибка при создании клиента: {e}", e=str(e)),
@@ -415,12 +415,12 @@ async def show_client_subscriptions(
     try:
         await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
     except Exception as e:
-        logger.warning(f"Failed to edit message in show_client_subscriptions: {e}")
+        logger.warning("Не удалось отредактировать сообщение в show_client_subscriptions: {}", e)
         # Try to edit reply_markup only as fallback
         try:
             await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
         except Exception as e2:
-            logger.error(f"Failed to edit reply_markup: {e2}")
+            logger.error("Не удалось отредактировать reply_markup: {}", e2)
     await callback.answer()
 
 
@@ -841,7 +841,7 @@ async def delete_client(callback: CallbackQuery, state: FSMContext) -> None:
                     await provider.remove_client(inbound, conn)
                     deleted_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to cleanup VPN client {conn.id}: {e}")
+                    logger.warning("Не удалось удалить VPN-подключение {}: {}", conn.id, e)
 
             await state.clear()
             await callback.answer(

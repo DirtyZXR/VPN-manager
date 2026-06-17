@@ -176,7 +176,7 @@ async def xui_connect_existing(callback: CallbackQuery, state: FSMContext) -> No
 
         params = await installer.discover_existing()
     except Exception as e:
-        logger.error(f"XUI discover failed: {e}", exc_info=True)
+        logger.error("Ошибка авто-обнаружения 3x-ui: {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Не удалось прочитать конфигурацию</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -330,7 +330,7 @@ async def xui_connect_gen_password(callback: CallbackQuery, state: FSMContext) -
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"XUI connect (gen password) failed: {e}", exc_info=True)
+        logger.error("Ошибка подключения 3x-ui (генерация пароля): {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Ошибка подключения</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -914,7 +914,7 @@ async def xui_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 parse_mode="HTML",
             )
         else:
-            logger.error(f"3x-ui installation failed: {e}", exc_info=True)
+            logger.error("Ошибка установки 3x-ui: {}", e, exc_info=True)
             await msg.edit_text(
                 f"❌ <b>Ошибка установки 3x-ui</b>\n\n<code>{e}</code>",
                 reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -1042,7 +1042,7 @@ async def xui_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"3x-ui force reinstall failed: {e}", exc_info=True)
+        logger.error("Ошибка переустановки 3x-ui: {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Ошибка переустановки 3x-ui</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
