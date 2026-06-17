@@ -14,6 +14,11 @@ HOTSPOTS = [
     "app/services/notification_checker.py",
     "app/services/subscription_template_service.py",
     "app/main.py",
+    "app/services/protocol_sync/__init__.py",
+    "app/services/protocol_sync/xui_sync.py",
+    "app/services/protocol_sync/mtproxy_sync.py",
+    "app/services/protocol_sync/awg_sync.py",
+    "app/xui_client/client.py",
 ]
 
 

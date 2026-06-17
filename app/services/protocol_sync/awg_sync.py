@@ -51,7 +51,7 @@ class AWGProtocolSync(ProtocolSyncBase):
         try:
             provider = get_vpn_provider(server, inbound_type="awg_inbound")
         except ValueError:
-            logger.warning(f"[AWG SYNC] No provider for server {server.id}")
+            logger.warning("AWG sync: нет провайдера для сервера {}", server.id)
             return 0
 
         synced = 0
@@ -75,7 +75,7 @@ class AWGProtocolSync(ProtocolSyncBase):
                     conn.is_enabled = False
                     conn.sync_status = "synced"
                     conn.last_sync_at = now
-                    logger.info(f"[AWG SYNC] Disabled expired connection {conn.id}")
+                    logger.info("AWG: подключение {} отключено (истёк срок)", conn.id)
                     synced += 1
 
                 elif not conn.is_enabled and should_be_enabled:
@@ -83,11 +83,11 @@ class AWGProtocolSync(ProtocolSyncBase):
                     conn.is_enabled = True
                     conn.sync_status = "synced"
                     conn.last_sync_at = now
-                    logger.info(f"[AWG SYNC] Enabled renewed connection {conn.id}")
+                    logger.info("AWG: подключение {} включено (подписка возобновлена)", conn.id)
                     synced += 1
 
             except Exception as e:
-                logger.error(f"[AWG SYNC] Error syncing connection {conn.id}: {e}")
+                logger.warning("AWG sync: ошибка обработки подключения {}: {}", conn.id, e)
 
         await provider.close()
         await session.flush()
