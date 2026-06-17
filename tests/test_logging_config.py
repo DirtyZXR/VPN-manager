@@ -44,3 +44,19 @@ def test_setup_logging_silences_noisy_libraries():
     setup_logging()
     for name in NOISY_LOGGERS:
         assert logging.getLogger(name).level == logging.WARNING
+
+
+def test_contextualize_adds_extra_to_records():
+    from loguru import logger
+
+    captured = []
+    sink_id = logger.add(captured.append, level="DEBUG", format="{message}")
+    try:
+        with logger.contextualize(cycle="zz99"):
+            logger.info("inside")
+        logger.info("outside")
+    finally:
+        logger.remove(sink_id)
+
+    assert captured[0].record["extra"].get("cycle") == "zz99"
+    assert "cycle" not in captured[1].record["extra"]

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -99,32 +100,34 @@ class SyncService:
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
-            start_time = datetime.now(UTC)
-            logger.info(f"[SYNC] Начало цикла синхронизации в {start_time} (force={force})")
+            cycle_id = uuid.uuid4().hex[:8]
+            with logger.contextualize(cycle=cycle_id):
+                start_time = datetime.now(UTC)
+                logger.info(f"[SYNC] Начало цикла синхронизации в {start_time} (force={force})")
 
-            try:
-                # 1. Синхронизировать сервера и inbounds (включая клиентов)
-                servers_synced = await self.sync_all_servers(force=force)
+                try:
+                    # 1. Синхронизировать сервера и inbounds (включая клиентов)
+                    servers_synced = await self.sync_all_servers(force=force)
 
-                # 2. Синхронизировать клиентов (только если sync_server не сделал этого)
-                # sync_server уже синхронизирует клиентов, поэтому вызов sync_all_clients будет дублировать
-                # Поэтому мы не вызываем sync_all_clients здесь
+                    # 2. Синхронизировать клиентов (только если sync_server не сделал этого)
+                    # sync_server уже синхронизирует клиентов, поэтому вызов sync_all_clients будет дублировать
+                    # Поэтому мы не вызываем sync_all_clients здесь
 
-                # 3. Проверить целостность подключений
-                integrity_ok = await self.verify_connections_integrity()
+                    # 3. Проверить целостность подключений
+                    integrity_ok = await self.verify_connections_integrity()
 
-                # 4. Логировать результаты
-                duration = (datetime.now(UTC) - start_time).total_seconds()
-                logger.info(
-                    f"[OK] Цикл синхронизации завершен за {duration:.2f}s. "
-                    f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
-                )
+                    # 4. Логировать результаты
+                    duration = (datetime.now(UTC) - start_time).total_seconds()
+                    logger.info(
+                        f"[OK] Цикл синхронизации завершен за {duration:.2f}s. "
+                        f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
+                    )
 
-                return {"servers": servers_synced}
+                    return {"servers": servers_synced}
 
-            except Exception as e:
-                logger.error(f"[ERROR] Ошибка в цикле синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
-                return {"servers": 0, "error": f"{type(e).__name__}: {str(e)}"}
+                except Exception as e:
+                    logger.error(f"[ERROR] Ошибка в цикле синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
+                    return {"servers": 0, "error": f"{type(e).__name__}: {str(e)}"}
 
     # === SERVER SYNC ===
 
@@ -150,27 +153,28 @@ class SyncService:
 
         synced_count = 0
         for i, server_id in enumerate(server_ids, 1):
-            server = await self._load_server_for_sync(server_id)
-            if server is None:
-                continue
-            server_name = server.name
-            try:
-                logger.info(
-                    f"[LOG] sync_all_servers: сервер {i}/{len(server_ids)} - {server_name} (ID: {server_id})"
-                )
-                synced = await self.sync_server(server, force=force)
-                if synced:
-                    synced_count += 1
-                    logger.info(f"[OK] Сервер {server_name} успешно синхронизирован")
-                else:
+            with logger.contextualize(server=server_id):
+                server = await self._load_server_for_sync(server_id)
+                if server is None:
+                    continue
+                server_name = server.name
+                try:
                     logger.info(
-                        f"[SKIP] Сервер {server_name} пропущен (не нужна синхронизация или ошибка)"
+                        f"[LOG] sync_all_servers: сервер {i}/{len(server_ids)} - {server_name} (ID: {server_id})"
                     )
-            except Exception as e:
-                logger.error(
-                    f"[ERROR] Ошибка синхронизации сервера {server_id}: {type(e).__name__} - {str(e)}",
-                    exc_info=True,
-                )
+                    synced = await self.sync_server(server, force=force)
+                    if synced:
+                        synced_count += 1
+                        logger.info(f"[OK] Сервер {server_name} успешно синхронизирован")
+                    else:
+                        logger.info(
+                            f"[SKIP] Сервер {server_name} пропущен (не нужна синхронизация или ошибка)"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"[ERROR] Ошибка синхронизации сервера {server_id}: {type(e).__name__} - {str(e)}",
+                        exc_info=True,
+                    )
 
         logger.info(
             f"[LOG] sync_all_servers завершен: {synced_count}/{len(server_ids)} серверов синхронизировано"

@@ -2,6 +2,7 @@
 
 import contextlib
 import hashlib
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -58,53 +59,54 @@ class NotificationChecker:
 
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
-        try:
-            await self._cleanup_old_logs()
+        with logger.contextualize(cycle=uuid.uuid4().hex[:8]):
+            try:
+                await self._cleanup_old_logs()
 
-            clients_result = await self.session.execute(
-                select(Client)
-                .where(Client.telegram_id.isnot(None))
-                .where(Client.is_active)
-                .options(
-                    selectinload(Client.subscriptions)
-                    .selectinload(Subscription.inbound_connections)
-                    .selectinload(InboundConnection.inbound)
-                    .selectinload(Inbound.server)
-                    .selectinload(Server.xui_panel),
+                clients_result = await self.session.execute(
+                    select(Client)
+                    .where(Client.telegram_id.isnot(None))
+                    .where(Client.is_active)
+                    .options(
+                        selectinload(Client.subscriptions)
+                        .selectinload(Subscription.inbound_connections)
+                        .selectinload(InboundConnection.inbound)
+                        .selectinload(Inbound.server)
+                        .selectinload(Server.xui_panel),
+                    )
                 )
-            )
-            clients = list(clients_result.scalars())
+                clients = list(clients_result.scalars())
 
-            for user in clients:
-                try:
-                    subscriptions = [s for s in user.subscriptions if s.is_active]
-                    if not subscriptions:
-                        continue
+                for user in clients:
+                    try:
+                        subscriptions = [s for s in user.subscriptions if s.is_active]
+                        if not subscriptions:
+                            continue
 
-                    subs_with_conns = []
-                    for sub in subscriptions:
-                        connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
-                        subs_with_conns.append({"subscription": sub, "connections": connections})
+                        subs_with_conns = []
+                        for sub in subscriptions:
+                            connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
+                            subs_with_conns.append({"subscription": sub, "connections": connections})
 
-                    for notification_type, (
-                        window_min,
-                        window_max,
-                    ) in self.EXPIRY_THRESHOLDS.items():
-                        await self._check_expiry_notifications(
-                            user, subs_with_conns, notification_type.value, window_min, window_max
-                        )
+                        for notification_type, (
+                            window_min,
+                            window_max,
+                        ) in self.EXPIRY_THRESHOLDS.items():
+                            await self._check_expiry_notifications(
+                                user, subs_with_conns, notification_type.value, window_min, window_max
+                            )
 
-                    await self._check_traffic_notifications(user, subs_with_conns)
+                        await self._check_traffic_notifications(user, subs_with_conns)
 
-                    await self.session.commit()
+                        await self.session.commit()
 
-                except Exception as e:
-                    logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
-                    with contextlib.suppress(Exception):
-                        await self.session.rollback()
+                    except Exception as e:
+                        logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
+                        with contextlib.suppress(Exception):
+                            await self.session.rollback()
 
-        except Exception as e:
-            logger.error(f"Error in notification checker: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error in notification checker: {e}", exc_info=True)
 
     async def _cleanup_old_logs(self) -> None:
         """Delete notification logs older than 7 days."""
