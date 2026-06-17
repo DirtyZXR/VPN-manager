@@ -616,14 +616,14 @@ class NotificationChecker:
             )
 
             logger.info(
-                f"✅ Sent expiry notification to user {user.id} "
-                f"(Telegram ID: {user.telegram_id}) "
-                f"for {len(subscriptions)} subscription(s)"
+                "Уведомление об истечении отправлено пользователю {} (telegram_id={}), подписок: {}",
+                user.id, user.telegram_id, len(subscriptions),
             )
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send expiry notification to user {user.id}: {e}", exc_info=True
+                "Не удалось отправить уведомление об истечении пользователю {}: {}",
+                user.id, e, exc_info=True,
             )
             raise
 
@@ -665,14 +665,14 @@ class NotificationChecker:
             )
 
             logger.info(
-                f"✅ Sent traffic notification to user {user.id} "
-                f"(Telegram ID: {user.telegram_id}) "
-                f"for {len(subscriptions)} subscription(s)"
+                "Уведомление о трафике отправлено пользователю {} (telegram_id={}), подписок: {}",
+                user.id, user.telegram_id, len(subscriptions),
             )
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send traffic notification to user {user.id}: {e}", exc_info=True
+                "Не удалось отправить уведомление о трафике пользователю {}: {}",
+                user.id, e, exc_info=True,
             )
             raise
 

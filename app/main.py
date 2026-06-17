@@ -33,7 +33,7 @@ async def background_sync_wrapper() -> None:
     _background_sync_running = True
 
     try:
-        logger.info("Starting background sync wrapper...")
+        logger.info("Фоновая синхронизация запущена")
         while _background_sync_running:
             try:
                 # Use global lock to prevent concurrent database access
@@ -48,22 +48,21 @@ async def background_sync_wrapper() -> None:
                         # Close XUI clients to prevent resource leaks
                         await sync_service.close_xui_clients()
 
-                # Wait for SYNC_INTERVAL (5 minutes) between cycles
-                logger.debug("Waiting for next sync cycle...")
-                await asyncio.sleep(300)  # 5 minutes = 300 seconds
+                logger.debug("Ожидание следующего цикла синхронизации...")
+                await asyncio.sleep(300)  # 5 минут
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Error in background sync cycle: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait 1 minute on error
+                logger.error("Ошибка в цикле фоновой синхронизации: {}", e, exc_info=True)
+                await asyncio.sleep(60)
 
     except asyncio.CancelledError:
-        logger.info("Background sync cancelled")
+        logger.info("Фоновая синхронизация отменена")
     except Exception as e:
-        logger.error(f"Fatal error in background sync wrapper: {e}", exc_info=True)
+        logger.error("Критическая ошибка в обёртке фоновой синхронизации: {}", e, exc_info=True)
     finally:
         _background_sync_running = False
-        logger.info("Background sync wrapper stopped")
+        logger.info("Фоновая синхронизация остановлена")
 
 
 async def background_notification_wrapper() -> None:
@@ -72,7 +71,7 @@ async def background_notification_wrapper() -> None:
     _background_notification_running = True
 
     try:
-        logger.info("Starting background notification wrapper...")
+        logger.info("Фоновая рассылка уведомлений запущена")
         while _background_notification_running:
             try:
                 # Use global lock to prevent concurrent database access
@@ -83,22 +82,21 @@ async def background_notification_wrapper() -> None:
                     finally:
                         await notification_checker.close()
 
-                # Wait 10 minutes between checks
-                logger.debug("Waiting for next notification check...")
-                await asyncio.sleep(600)  # 10 minutes = 600 seconds
+                logger.debug("Ожидание следующей проверки уведомлений...")
+                await asyncio.sleep(600)  # 10 минут
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.error(f"Error in background notification cycle: {e}", exc_info=True)
-                await asyncio.sleep(60)  # Wait 1 minute on error
+                logger.error("Ошибка в цикле фоновых уведомлений: {}", e, exc_info=True)
+                await asyncio.sleep(60)
 
     except asyncio.CancelledError:
-        logger.info("Background notifications cancelled")
+        logger.info("Фоновая рассылка уведомлений отменена")
     except Exception as e:
-        logger.error(f"Fatal error in background notification wrapper: {e}", exc_info=True)
+        logger.error("Критическая ошибка в обёртке фоновых уведомлений: {}", e, exc_info=True)
     finally:
         _background_notification_running = False
-        logger.info("Background notification wrapper stopped")
+        logger.info("Фоновая рассылка уведомлений остановлена")
 
 
 def build_dispatcher() -> Dispatcher:
@@ -117,17 +115,17 @@ async def main() -> None:
 
     # Setup logging
     setup_logging()
-    logger.info("Starting VPN Manager bot...")
+    logger.info("Запуск VPN Manager bot...")
 
     # Initialize database
-    logger.info("Initializing database...")
+    logger.info("Инициализация базы данных...")
     await init_db()
-    logger.info("Database initialized")
+    logger.info("База данных инициализирована")
 
     # Ensure data directory exists for Telethon
     data_path = Path("data")
     data_path.mkdir(exist_ok=True)
-    logger.info("Data directory created/verified")
+    logger.info("Директория data создана/проверена")
 
     # Create bot instance
     bot = Bot(
@@ -139,7 +137,7 @@ async def main() -> None:
     dp = build_dispatcher()
 
     # Start tasks
-    logger.info("Starting polling, background sync and notifications...")
+    logger.info("Запуск polling, фоновой синхронизации и уведомлений...")
     try:
         # Create async tasks
         sync_task = asyncio.create_task(background_sync_wrapper())
@@ -162,14 +160,14 @@ async def main() -> None:
         # Stop background tasks
         _background_sync_running = False
         _background_notification_running = False
-        logger.info("Stopping background tasks...")
+        logger.info("Остановка фоновых задач...")
         # Close bot session
         await bot.session.close()
         # Close notification singleton Bot (avoids 'Unclosed client session' warnings)
         try:
             await close_shared_bot()
         except Exception as exc:
-            logger.warning(f"Error closing notification bot singleton: {exc}")
+            logger.warning("Ошибка при закрытии singleton Bot уведомлений: {}", exc)
 
 
 def run() -> None:
@@ -177,9 +175,9 @@ def run() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
+        logger.info("Бот остановлен пользователем")
     except Exception as e:
-        logger.exception(f"Bot crashed: {e}")
+        logger.exception("Бот аварийно завершился: {}", e)
         sys.exit(1)
 
 
