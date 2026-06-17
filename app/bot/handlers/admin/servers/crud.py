@@ -20,14 +20,8 @@ router = Router()
 
 
 @router.callback_query(F.data == "admin_servers")
-async def show_servers(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def show_servers(callback: CallbackQuery, state: FSMContext) -> None:
     """Show servers list."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -53,14 +47,8 @@ async def show_servers(callback: CallbackQuery, is_admin: bool, state: FSMContex
 
 
 @router.callback_query(F.data == "server_add")
-async def start_add_server(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_add_server(callback: CallbackQuery, state: FSMContext) -> None:
     """Start adding new server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await state.clear()
     await state.set_state(ServerManagement.waiting_for_name)
     await callback.message.edit_text(
@@ -206,14 +194,8 @@ async def _create_and_finish_server_addition(
 
 
 @router.callback_query(F.data.startswith("server_select_"))
-async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def select_server(callback: CallbackQuery, state: FSMContext) -> None:
     """Show server details."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await state.clear()
     server_id = int(callback.data.split("_")[-1])
 
@@ -317,14 +299,8 @@ async def select_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
 
 @router.callback_query(F.data.startswith("server_delete_"))
-async def confirm_delete_server(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def confirm_delete_server(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm server deletion."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
     await state.update_data(server_id=server_id)
     await state.set_state(ServerManagement.confirm_delete)
@@ -340,14 +316,8 @@ async def confirm_delete_server(callback: CallbackQuery, state: FSMContext, is_a
 
 
 @router.callback_query(F.data.startswith("confirm_server_delete_"))
-async def delete_server(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def delete_server(callback: CallbackQuery, state: FSMContext) -> None:
     """Delete server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -357,18 +327,12 @@ async def delete_server(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
     await state.clear()
     await callback.answer(t("admin.servers.deleted", "✅ Сервер удален."))
-    await show_servers(callback, is_admin, state)
+    await show_servers(callback, state)
 
 
 @router.callback_query(F.data.startswith("server_edit_main_"))
-async def edit_server(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def edit_server(callback: CallbackQuery, state: FSMContext) -> None:
     """Show server edit menu."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
     await state.update_data(server_id=server_id)
 

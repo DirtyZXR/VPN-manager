@@ -13,14 +13,8 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("server_services_"))
-async def show_server_services(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def show_server_services(callback: CallbackQuery, state: FSMContext) -> None:
     """Show services installed on the server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -116,15 +110,9 @@ async def show_server_services(callback: CallbackQuery, state: FSMContext, is_ad
 
 @router.callback_query(F.data.startswith("server_autodiscover_"))
 async def run_server_autodiscover(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Run AutoDiscoveryService over SSH."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     await callback.message.edit_text(

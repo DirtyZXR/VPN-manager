@@ -17,14 +17,8 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("server_setup_ssh_"))
-async def start_ssh_setup(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_ssh_setup(callback: CallbackQuery, state: FSMContext) -> None:
     """Start SSH setup for a server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
     await state.update_data(server_id=server_id)
 

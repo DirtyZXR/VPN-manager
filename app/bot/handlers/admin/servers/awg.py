@@ -15,14 +15,8 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("server_edit_awg_"))
-async def edit_awg_service(callback: CallbackQuery, is_admin: bool) -> None:
+async def edit_awg_service(callback: CallbackQuery) -> None:
     """Edit AWG service or show desync menu."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
     msg = await callback.message.edit_text("🔍 Проверка состояния AWG на сервере...")
 
@@ -85,14 +79,8 @@ async def edit_awg_service(callback: CallbackQuery, is_admin: bool) -> None:
     await msg.edit_text("Меню управления AWG (в разработке).", reply_markup=get_back_keyboard(f"server_services_{server_id}"))
 
 @router.callback_query(F.data.startswith("server_install_awg_"))
-async def start_awg_install(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_awg_install(callback: CallbackQuery, state: FSMContext) -> None:
     """Start AWG installation: check SSH, then ask for port."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -852,8 +840,7 @@ async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
 
 
 @router.callback_query(F.data.startswith("awg_desync_remove_db_"))
-async def awg_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def awg_desync_remove_db(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
     async with async_session_factory() as session:
         from sqlalchemy import delete
@@ -864,11 +851,10 @@ async def awg_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_ad
         await session.commit()
     await callback.answer("✅ AWG удален из БД", show_alert=True)
     from app.bot.handlers.admin.servers.services import show_server_services
-    await show_server_services(callback, state, is_admin)
+    await show_server_services(callback, state)
 
 @router.callback_query(F.data.startswith("awg_desync_restore_db_"))
-async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
 
     msg = await callback.message.edit_text("🔄 <b>Восстановление AWG из БД...</b>\n\nНачинаю установку...", parse_mode="HTML")

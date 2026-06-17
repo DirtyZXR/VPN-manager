@@ -15,8 +15,7 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("xui_desync_remove_db_"))
-async def xui_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def xui_desync_remove_db(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
     async with async_session_factory() as session:
         from sqlalchemy import delete
@@ -26,11 +25,10 @@ async def xui_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_ad
         await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol.in_(("vless", "vmess", "trojan", "shadowsocks", "wireguard", "socks", "http"))))
         await session.commit()
     await callback.answer("✅ 3x-ui панель и инбаунды удалены из БД", show_alert=True)
-    await show_server_services(callback, state, is_admin)
+    await show_server_services(callback, state)
 
 @router.callback_query(F.data.startswith("xui_desync_restore_db_"))
-async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
 
     msg = await callback.message.edit_text("🔄 <b>Аварийное восстановление 3x-ui из БД...</b>\n\nНачинаю переустановку панели...", parse_mode="HTML")
@@ -136,8 +134,7 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_a
         await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("xui_desync_restore_file_"))
-async def xui_desync_restore_file(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def xui_desync_restore_file(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
     await state.update_data(server_id=server_id)
     await state.set_state(ServerManagement.waiting_for_restore_file)
