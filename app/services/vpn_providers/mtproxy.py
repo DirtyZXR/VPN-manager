@@ -110,7 +110,7 @@ class MTProxyProvider(BaseVPNProvider):
             await self._restart_container()
             return True
         except Exception as e:
-            logger.error(f"Failed to remove MTProxy secret: {e}")
+            logger.error("Не удалось удалить MTProxy secret: {}", e)
             return False
 
     async def update_client(
@@ -138,7 +138,7 @@ class MTProxyProvider(BaseVPNProvider):
             await self._restart_container()
             return True
         except Exception as e:
-            logger.error(f"Failed to enable MTProxy secret: {e}")
+            logger.error("Не удалось включить MTProxy secret: {}", e)
             return False
 
     async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:

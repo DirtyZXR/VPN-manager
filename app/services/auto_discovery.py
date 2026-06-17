@@ -74,7 +74,7 @@ class AutoDiscoveryService:
             installer = XUIInstaller(self.ssh)
             return await installer.discover_existing()
         except Exception as e:
-            logger.debug(f"XUI discovery failed on server {self.server.id}: {e}")
+            logger.debug("XUI discovery не удался на сервере {}: {}", self.server.id, e)
             return None
 
     async def discover_amnezia_awg(self) -> dict[str, Any] | None:
@@ -85,7 +85,7 @@ class AutoDiscoveryService:
             installer = AWGInstaller(self.ssh)
             return await installer.discover_existing()
         except Exception as e:
-            logger.debug(f"AWG discovery failed on server {self.server.id}: {e}")
+            logger.debug("AWG discovery не удался на сервере {}: {}", self.server.id, e)
             return None
 
     async def discover_mtproxy(self) -> dict[str, Any] | None:
@@ -96,5 +96,5 @@ class AutoDiscoveryService:
             installer = MTProxyInstaller(self.ssh)
             return await installer.discover_existing()
         except Exception as e:
-            logger.debug(f"MTProxy discovery failed on server {self.server.id}: {e}")
+            logger.debug("MTProxy discovery не удался на сервере {}: {}", self.server.id, e)
             return None

@@ -89,7 +89,8 @@ class MTProxyInstaller(BaseInstaller):
         try:
             async with self.ssh:
                 logger.info(
-                    f"Installing MTProxy ({implementation}) on {self.ssh.host}:{port}"
+                    "Установка MTProxy ({}) на {}:{}",
+                    implementation, self.ssh.host, port,
                 )
 
                 await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
@@ -97,7 +98,7 @@ class MTProxyInstaller(BaseInstaller):
 
                 if await self.check_already_installed():
                     if force:
-                        logger.warning(f"Force reinstall: removing existing vpnbot-mtproxy on {self.ssh.host}")
+                        logger.warning("Принудительная переустановка: удаляю vpnbot-mtproxy на {}", self.ssh.host)
                         await self._cmd("docker rm -f vpnbot-mtproxy 2>/dev/null || true")
                         await self._cmd("sleep 2")
                     else:
@@ -140,7 +141,7 @@ class MTProxyInstaller(BaseInstaller):
 
                 await self._progress(9, 9, "Установка завершена")
 
-                logger.info(f"MTProxy ({implementation}) installed on {self.ssh.host}:{port}")
+                logger.info("MTProxy ({}) установлен на {}:{}", implementation, self.ssh.host, port)
 
                 return {
                     "container_name": f"vpnbot-{MTPROXY_CONTAINER}",
@@ -242,7 +243,7 @@ class MTProxyInstaller(BaseInstaller):
             raise RuntimeError(
                 f"MTProxy verification failed: port {port} not listening"
             )
-        logger.info(f"MTProxy verified: port {port} listening")
+        logger.info("MTProxy запущен: порт {} слушает", port)
 
     async def add_secret(self, name: str, domain: str = "google.com") -> str:
         """Add a new named secret to mtg-multi config.

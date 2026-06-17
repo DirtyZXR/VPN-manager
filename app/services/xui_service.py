@@ -66,7 +66,7 @@ class XUIService:
         try:
             return self._cipher.decrypt(encrypted.encode()).decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt password: {e}")
+            logger.error("Ошибка расшифровки пароля: {}", e)
             raise ValueError(
                 f"Password decryption failed — password may be stored as plain text. "
                 f"Re-save the panel credentials to fix. Error: {e}"

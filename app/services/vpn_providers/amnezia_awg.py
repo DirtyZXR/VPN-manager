@@ -52,7 +52,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         try:
             return await self._cmd(cmd)
         except Exception:
-            logger.warning("Failed to read PSK from server, generating a new one.")
+            logger.warning("Не удалось прочитать PSK с сервера, генерирую новый")
             return await self._cmd(f"docker exec -i {self.container_name} awg genpsk")
 
     async def _get_server_public_key(self) -> str:
@@ -212,7 +212,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             await self._sync_config()
             return True
         except Exception as e:
-            logger.error(f"Failed to remove AWG client: {e}")
+            logger.error("Не удалось удалить AWG-клиента: {}", e)
             return False
 
     async def update_client(
@@ -230,7 +230,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         client_ip = connection.client_ip
 
         if not public_key or not psk or not client_ip:
-            logger.error("Missing keys or IP in AWG client connection.")
+            logger.error("Отсутствуют ключи или IP в AWG-соединении клиента")
             return False
 
         try:
@@ -239,7 +239,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             await self._sync_config()
             return True
         except Exception as e:
-            logger.error(f"Failed to enable AWG client: {e}")
+            logger.error("Не удалось включить AWG-клиента: {}", e)
             return False
 
     async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
@@ -253,7 +253,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             await self._sync_config()
             return True
         except Exception as e:
-            logger.error(f"Failed to disable AWG client: {e}")
+            logger.error("Не удалось отключить AWG-клиента: {}", e)
             return False
 
     async def reset_client_traffic(

@@ -19,6 +19,21 @@ HOTSPOTS = [
     "app/services/protocol_sync/mtproxy_sync.py",
     "app/services/protocol_sync/awg_sync.py",
     "app/xui_client/client.py",
+    # Батч 2: installers + vpn_providers + core-сервисы
+    "app/services/installers/base.py",
+    "app/services/installers/xui_installer.py",
+    "app/services/installers/mtproxy_installer.py",
+    "app/services/installers/awg_installer.py",
+    "app/services/new_subscription_service.py",
+    "app/services/xui_service.py",
+    "app/services/ssh_service.py",
+    "app/services/auto_discovery.py",
+    "app/services/server_monitor.py",
+    "app/services/client_service.py",
+    "app/services/vpn_providers/amnezia_awg.py",
+    "app/services/vpn_providers/mtproxy.py",
+    "app/services/vpn_providers/port_manager.py",
+    "app/utils/texts.py",
 ]
 
 

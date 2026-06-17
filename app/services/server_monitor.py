@@ -45,7 +45,7 @@ class ServerMonitor:
             await process.communicate()
             return process.returncode == 0
         except Exception as e:
-            logger.error(f"Ping failed for host {host}: {e}")
+            logger.error("Ping не удался для хоста {}: {}", host, e)
             return False
 
     @classmethod

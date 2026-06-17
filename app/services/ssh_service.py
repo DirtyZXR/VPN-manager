@@ -76,7 +76,7 @@ class SSHManager:
         try:
             return cipher.decrypt(encrypted_data.encode()).decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt SSH credential: {e}")
+            logger.error("Ошибка расшифровки SSH-учётных данных: {}", e)
             return None
 
     def get_ssh_password(self) -> str | None:
@@ -137,8 +137,8 @@ class SSHManager:
                 )
             except (asyncssh.HostKeyNotVerifiable, asyncssh.PermissionDenied) as exc:
                 logger.warning(
-                    f"SSH host-key mismatch on {self.host}:{self.port} — possible MITM. "
-                    "Admin action required."
+                    "SSH host-key mismatch на {}:{} — возможен MITM. Требуется вмешательство администратора.",
+                    self.host, self.port,
                 )
                 raise SSHHostKeyMismatchError(self.host, str(exc)) from exc
 
@@ -239,7 +239,7 @@ class SSHManager:
     def _process_result(self, result: asyncssh.SSHCompletedProcess, command: str) -> str:
         """Validate exit status and return stdout; raise on non-zero exit."""
         if result.exit_status != 0:
-            logger.error(f"Command failed: {command}\nStderr: {result.stderr}")
+            logger.error("Команда завершилась с ошибкой: {}\nStderr: {}", command, result.stderr)
             raise Exception(
                 f"Command failed with exit status {result.exit_status}: {result.stderr}"
             )
@@ -261,7 +261,7 @@ class SSHManager:
         except SSHHostKeyMismatchError:
             raise
         except Exception as e:
-            logger.error(f"SSH test connection failed: {e}")
+            logger.error("Проверка SSH-соединения не удалась: {}", e)
             return False
 
     async def run_command(self, command: str, input_data: str | None = None) -> str:
