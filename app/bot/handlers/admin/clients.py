@@ -30,14 +30,8 @@ router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_clients")
-async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def show_clients(callback: CallbackQuery, state: FSMContext) -> None:
     """Show clients search menu."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -73,14 +67,8 @@ async def show_clients(callback: CallbackQuery, is_admin: bool, state: FSMContex
 
 
 @router.callback_query(F.data == "client_add")
-async def start_add_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_add_client(callback: CallbackQuery, state: FSMContext) -> None:
     """Start adding new client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await state.set_state(ClientManagement.waiting_for_name)
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
@@ -198,14 +186,8 @@ async def process_client_telegram_id(message: Message, state: FSMContext) -> Non
 
 
 @router.callback_query(F.data.startswith("client_select_"))
-async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def select_client(callback: CallbackQuery, state: FSMContext) -> None:
     """Show client details and actions."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await state.clear()
     client_id = int(callback.data.split("_")[-1])
 
@@ -297,15 +279,9 @@ async def select_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
 @router.callback_query(F.data.startswith("client_subscriptions_"))
 async def show_client_subscriptions(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Show client subscriptions."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await state.clear()
 
     # Parse client_id and page
@@ -450,15 +426,9 @@ async def show_client_subscriptions(
 
 @router.callback_query(F.data.startswith("client_create_subscription_"))
 async def start_create_subscription_for_client(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start creating subscription for specific client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
     await state.update_data(client_id=client_id)
 
@@ -487,15 +457,9 @@ async def start_create_subscription_for_client(
 
 @router.callback_query(F.data.startswith("client_create_from_template_"))
 async def start_create_subscription_from_template(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start creating subscription from template for specific client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
     await state.update_data(client_id=client_id)
 
@@ -576,15 +540,9 @@ async def select_template_for_client(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data.startswith("client_rename_name_"))
 async def start_rename_client_name(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start renaming client name."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.waiting_for_new_name)
@@ -627,15 +585,9 @@ async def process_rename_client_name(message: Message, state: FSMContext) -> Non
 
 @router.callback_query(F.data.startswith("client_rename_telegram_"))
 async def start_rename_client_telegram(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start changing client Telegram ID."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.waiting_for_new_telegram_id)
@@ -699,14 +651,8 @@ async def process_rename_client_telegram(message: Message, state: FSMContext) ->
 
 
 @router.callback_query(F.data.startswith("client_enable_"))
-async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
+async def enable_client(callback: CallbackQuery) -> None:
     """Enable client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -731,7 +677,7 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
                     count=toggled,
                 )
             )
-            await select_client(callback, is_admin, state=None)  # type: ignore
+            await select_client(callback, state=None)  # type: ignore
         except Exception:
             await session.rollback()
             raise
@@ -740,14 +686,8 @@ async def enable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("client_disable_"))
-async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
+async def disable_client(callback: CallbackQuery) -> None:
     """Disable client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -772,7 +712,7 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
                     count=toggled,
                 )
             )
-            await select_client(callback, is_admin, state=None)  # type: ignore
+            await select_client(callback, state=None)  # type: ignore
         except Exception:
             await session.rollback()
             raise
@@ -785,15 +725,9 @@ async def disable_client(callback: CallbackQuery, is_admin: bool) -> None:
 
 @router.callback_query(F.data.startswith("client_edit_notes_"))
 async def start_edit_client_notes(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start editing client notes."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.waiting_for_notes)
@@ -831,14 +765,8 @@ async def process_client_notes(message: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("client_delete_"))
-async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def confirm_delete_client(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm client deletion."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
     await state.update_data(client_id=client_id)
     await state.set_state(ClientManagement.confirm_delete)
@@ -855,14 +783,8 @@ async def confirm_delete_client(callback: CallbackQuery, state: FSMContext, is_a
 
 
 @router.callback_query(F.data.startswith("confirm_client_delete_"))
-async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def delete_client(callback: CallbackQuery, state: FSMContext) -> None:
     """Delete client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await callback.answer()
     await callback.message.edit_text(
         "⏳ Удаление клиента, пожалуйста подождите...", reply_markup=None
@@ -929,7 +851,7 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
                     count=deleted_count,
                 )
             )
-            await show_clients(callback, is_admin, state)
+            await show_clients(callback, state)
         except Exception:
             await session.rollback()
             raise
@@ -938,14 +860,8 @@ async def delete_client(callback: CallbackQuery, state: FSMContext, is_admin: bo
 
 
 @router.callback_query(F.data.startswith("client_make_admin_"))
-async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
+async def make_admin(callback: CallbackQuery) -> None:
     """Make client admin."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -954,18 +870,12 @@ async def make_admin(callback: CallbackQuery, is_admin: bool) -> None:
         await session.commit()
 
     await callback.answer(t("admin.clients.admin.made", "✅ Клиент теперь админ."))
-    await select_client(callback, is_admin, state=None)  # type: ignore
+    await select_client(callback, state=None)  # type: ignore
 
 
 @router.callback_query(F.data.startswith("client_unadmin_"))
-async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
+async def unmake_admin(callback: CallbackQuery) -> None:
     """Remove admin status from client."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     client_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -974,33 +884,21 @@ async def unmake_admin(callback: CallbackQuery, is_admin: bool) -> None:
         await session.commit()
 
     await callback.answer(t("admin.clients.admin.removed", "✅ Клиент больше не админ."))
-    await select_client(callback, is_admin, state=None)  # type: ignore
+    await select_client(callback, state=None)  # type: ignore
 
 
 # ==================== CLIENT LIST (PAGINATED) ====================
 
 
 @router.callback_query(F.data == "clients_list")
-async def show_clients_list(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_clients_list(callback: CallbackQuery) -> None:
     """Show paginated list of all active clients (first page)."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await _render_clients_page(callback, page=0)
 
 
 @router.callback_query(F.data.startswith("clients_page_"))
-async def navigate_clients_page(callback: CallbackQuery, is_admin: bool) -> None:
+async def navigate_clients_page(callback: CallbackQuery) -> None:
     """Navigate between client list pages."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     # Ignore the "current page" indicator button
     if callback.data == "clients_page_current":
         await callback.answer()
@@ -1067,14 +965,8 @@ async def _render_clients_page(callback: CallbackQuery, page: int = 0, per_page:
 
 
 @router.callback_query(F.data == "client_search")
-async def start_client_search(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_client_search(callback: CallbackQuery, state: FSMContext) -> None:
     """Start client search flow."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     with contextlib.suppress(Exception):
         await callback.message.edit_text(
             t("admin.clients.search.title", "🔍 Поиск клиентов\n\nВыберите критерий поиска:"),
@@ -1084,14 +976,8 @@ async def start_client_search(callback: CallbackQuery, state: FSMContext, is_adm
 
 
 @router.callback_query(F.data.startswith("search_field_"))
-async def select_search_field(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def select_search_field(callback: CallbackQuery, state: FSMContext) -> None:
     """Handle search field selection."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.clients.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     # Extract field from callback data: "search_field_<field>"
     # e.g. "search_field_name" -> "name", "search_field_xui_email" -> "xui_email"
     field = callback.data.removeprefix("search_field_")
