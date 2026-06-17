@@ -20,14 +20,8 @@ router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_broadcast")
-async def start_broadcast(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def start_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
     """Start broadcast flow."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await state.clear()
     await state.set_state(BroadcastManagement.waiting_for_message)
 
@@ -45,11 +39,8 @@ async def start_broadcast(callback: CallbackQuery, is_admin: bool, state: FSMCon
 
 
 @router.message(BroadcastManagement.waiting_for_message)
-async def process_broadcast_message(message: Message, state: FSMContext, is_admin: bool) -> None:
+async def process_broadcast_message(message: Message, state: FSMContext) -> None:
     """Process broadcast message input and ask for confirmation."""
-    if not is_admin:
-        return
-
     if not message.text and not message.caption:
         await message.answer(
             t(
@@ -137,14 +128,8 @@ async def _run_broadcast(
 
 
 @router.callback_query(BroadcastManagement.confirm_broadcast, F.data == "confirm_start_broadcast")
-async def confirm_broadcast(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def confirm_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
     """Confirm and execute broadcast."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     data = await state.get_data()
     message_id = data.get("message_id")
     chat_id = data.get("chat_id")

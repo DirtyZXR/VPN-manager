@@ -17,14 +17,8 @@ router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data.startswith("admin_req_approve_"))
-async def approve_request(callback: CallbackQuery, is_admin: bool):
+async def approve_request(callback: CallbackQuery):
     """Approve subscription request."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.requests.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     req_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:
@@ -69,14 +63,8 @@ async def approve_request(callback: CallbackQuery, is_admin: bool):
 
 
 @router.callback_query(F.data.startswith("admin_req_reject_"))
-async def reject_request(callback: CallbackQuery, is_admin: bool):
+async def reject_request(callback: CallbackQuery):
     """Reject subscription request."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.requests.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     req_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:
