@@ -616,15 +616,8 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
 
 @router.callback_query(F.data.startswith("admin_sub_detail_"))
 @router.callback_query(F.data.startswith("client_sub_detail_"))
-async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_subscription_details(callback: CallbackQuery) -> None:
     """Show detailed subscription information."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -749,15 +742,8 @@ async def show_subscription_details(callback: CallbackQuery, is_admin: bool) -> 
 
 
 @router.callback_query(F.data.startswith("admin_sub_inbounds_"))
-async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_subscription_inbounds(callback: CallbackQuery) -> None:
     """Show inbounds for subscription with management options."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -902,15 +888,8 @@ async def show_subscription_inbounds(callback: CallbackQuery, is_admin: bool) ->
 
 
 @router.callback_query(F.data.startswith("get_conn_config_"))
-async def get_connection_config(callback: CallbackQuery, is_admin: bool) -> None:
+async def get_connection_config(callback: CallbackQuery) -> None:
     """Send VPN client config file for AWG/MTProxy connections."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     await callback.answer()
     connection_id = int(callback.data.split("_")[-1])
 
@@ -1000,16 +979,9 @@ async def get_connection_config(callback: CallbackQuery, is_admin: bool) -> None
 
 @router.callback_query(F.data.startswith("admin_sub_add_inbound_"))
 async def start_add_inbound_to_subscription(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start adding inbound to existing subscription."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
     await state.update_data(subscription_id=subscription_id)
 
@@ -1307,15 +1279,8 @@ async def get_inbounds_selection_keyboard(
 
 
 @router.callback_query(F.data.startswith("toggle_conn_"))
-async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> None:
+async def toggle_inbound_connection(callback: CallbackQuery) -> None:
     """Toggle inbound connection (enable/disable)."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     await callback.answer()
 
     connection_id = int(callback.data.split("_")[-1])
@@ -1459,16 +1424,9 @@ async def toggle_inbound_connection(callback: CallbackQuery, is_admin: bool) -> 
 
 @router.callback_query(F.data.startswith("inbounds_multi_select_"))
 async def enter_multi_select_mode(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Enter multi-select mode for inbounds."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
     await state.update_data(subscription_id=subscription_id, selected_connections=set())
     await state.set_state(SubscriptionManagement.inbounds_multi_select_mode)
@@ -1954,16 +1912,9 @@ def get_multi_select_confirm_keyboard() -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data.startswith("delete_conn_"))
 async def confirm_delete_inbound_connection(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Confirm deletion of inbound connection."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     connection_id = int(callback.data.split("_")[-1])
     await state.update_data(connection_id=connection_id)
 
@@ -1979,16 +1930,9 @@ async def confirm_delete_inbound_connection(
 
 @router.callback_query(F.data.startswith("confirm_delete_conn_"))
 async def delete_inbound_connection(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Delete inbound connection."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     await callback.answer()
     await callback.message.edit_text(
         "⏳ Удаление подключения, пожалуйста подождите...", reply_markup=None
@@ -2061,16 +2005,9 @@ async def delete_inbound_connection(
 
 @router.callback_query(F.data.startswith("admin_sub_edit_"))
 async def start_edit_subscription(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start editing subscription."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
     await state.clear()  # Clear any previous state
     await state.update_data(subscription_id=subscription_id)
@@ -2293,16 +2230,9 @@ async def process_subscription_notes(message, state: FSMContext) -> None:
 # Edit all subscription parameters
 @router.callback_query(F.data == "edit_sub_all")
 async def start_edit_all_subscription_params(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start editing all subscription parameters."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     data = await state.get_data()
     subscription_id = data["subscription_id"]
 
@@ -2344,15 +2274,8 @@ async def start_edit_all_subscription_params(
 
 
 @router.callback_query(F.data.startswith("admin_sub_enable_"))
-async def enable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
+async def enable_subscription(callback: CallbackQuery) -> None:
     """Enable subscription."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -2365,19 +2288,12 @@ async def enable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         finally:
             await service.close_all_clients()
     await callback.answer(t("admin.subscriptions.enabled_success", "✅ Подписка включена."))
-    await show_subscription_details(callback, is_admin)
+    await show_subscription_details(callback)
 
 
 @router.callback_query(F.data.startswith("admin_sub_disable_"))
-async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
+async def disable_subscription(callback: CallbackQuery) -> None:
     """Disable subscription."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -2390,21 +2306,14 @@ async def disable_subscription(callback: CallbackQuery, is_admin: bool) -> None:
         finally:
             await service.close_all_clients()
     await callback.answer(t("admin.subscriptions.disabled_success", "✅ Подписка отключена."))
-    await show_subscription_details(callback, is_admin)
+    await show_subscription_details(callback)
 
 
 @router.callback_query(F.data.startswith("admin_sub_delete_"))
 async def confirm_delete_subscription(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Confirm subscription deletion."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[-1])
     await state.update_data(subscription_id=subscription_id)
 
@@ -2421,15 +2330,8 @@ async def confirm_delete_subscription(
 
 
 @router.callback_query(F.data.startswith("confirm_admin_sub_delete_"))
-async def delete_subscription(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def delete_subscription(callback: CallbackQuery, state: FSMContext) -> None:
     """Delete subscription."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     await callback.answer()
     await callback.message.edit_text(
         "⏳ Удаление подписки, пожалуйста подождите...", reply_markup=None
@@ -2489,15 +2391,8 @@ async def delete_subscription(callback: CallbackQuery, state: FSMContext, is_adm
 
 
 @router.callback_query(F.data.startswith("sub_reset:"))
-async def reset_subscription_handler(callback: CallbackQuery, is_admin: bool) -> None:
+async def reset_subscription_handler(callback: CallbackQuery) -> None:
     """Reset subscription traffic and time."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split(":")[1])
 
     async with async_session_factory() as session:
@@ -2636,16 +2531,9 @@ async def reset_subscription_handler(callback: CallbackQuery, is_admin: bool) ->
 
 @router.callback_query(F.data.startswith("sub_edit_traffic:"))
 async def start_quick_edit_traffic(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start quick edit of subscription traffic limit."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split(":")[1])
     await state.update_data(subscription_id=subscription_id)
     await state.set_state(SubscriptionManagement.editing_traffic)
@@ -2659,16 +2547,9 @@ async def start_quick_edit_traffic(
 
 @router.callback_query(F.data.startswith("sub_edit_expiry:"))
 async def start_quick_edit_expiry(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start quick edit of subscription expiry date."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split(":")[1])
     await state.update_data(subscription_id=subscription_id)
     await state.set_state(SubscriptionManagement.editing_expiry)
@@ -2682,16 +2563,9 @@ async def start_quick_edit_expiry(
 
 @router.callback_query(F.data.startswith("sub_add_time:"))
 async def add_time_to_subscription_handler(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start process to add time to subscription."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.subscriptions.access_denied", "❌ У вас нет прав администратора."),
-            show_alert=True,
-        )
-        return
-
     subscription_id = int(callback.data.split(":")[1])
     await state.update_data(subscription_id=subscription_id)
     await state.set_state(SubscriptionManagement.waiting_for_add_days)
@@ -2853,15 +2727,9 @@ async def process_add_time_days(message: TgMessage, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("admin_sub_rebuild_"))
 async def start_rebuild_subscription(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
     """Start rebuild subscription flow (reuse token)."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[3])
     await state.clear()
 
@@ -2896,14 +2764,8 @@ async def start_rebuild_subscription(
 
 
 @router.callback_query(F.data.startswith("rebuild_mode_template_"))
-async def rebuild_mode_template(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def rebuild_mode_template(callback: CallbackQuery, state: FSMContext) -> None:
     """Select template for rebuilding."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:
@@ -2943,14 +2805,8 @@ async def rebuild_mode_template(callback: CallbackQuery, state: FSMContext, is_a
 @router.callback_query(
     SubscriptionRebuild.waiting_for_template_selection, F.data.startswith("rebuild_tpl_")
 )
-async def rebuild_with_template(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def rebuild_with_template(callback: CallbackQuery, state: FSMContext) -> None:
     """Rebuild subscription using selected template."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     await callback.answer()
 
     parts = callback.data.split("_")
@@ -3033,14 +2889,8 @@ async def rebuild_with_template(callback: CallbackQuery, state: FSMContext, is_a
 
 
 @router.callback_query(F.data.startswith("rebuild_mode_manual_"))
-async def rebuild_mode_manual(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def rebuild_mode_manual(callback: CallbackQuery, state: FSMContext) -> None:
     """Manual rebuild: Ask for traffic limit."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     subscription_id = int(callback.data.split("_")[3])
 
     await state.update_data(subscription_id=subscription_id)
@@ -3191,11 +3041,8 @@ async def rebuild_toggle_inbound(callback: CallbackQuery, state: FSMContext) -> 
     SubscriptionRebuild.inbounds_multi_select_mode, F.data == "rebuild_confirm_ibs"
 )
 async def rebuild_confirm_inbounds(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ) -> None:
-    if not is_admin:
-        return
-
     data = await state.get_data()
     selected_ids = data.get("selected_inbound_ids", set())
     if not selected_ids:
