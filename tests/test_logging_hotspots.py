@@ -34,6 +34,9 @@ HOTSPOTS = [
     "app/services/vpn_providers/mtproxy.py",
     "app/services/vpn_providers/port_manager.py",
     "app/utils/texts.py",
+    # Батч 3: admin handlers
+    "app/bot/handlers/admin/templates.py",
+    "app/bot/handlers/admin/subscriptions.py",
 ]
 
 
