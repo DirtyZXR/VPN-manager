@@ -137,11 +137,55 @@ class SyncService:
         Returns:
             Количество синхронизированных серверов
         """
-        from sqlalchemy import select
+        # Берём только ID активных серверов и перечитываем каждый сервер свежим
+        # внутри цикла. Иначе rollback() при ошибке одного сервера обесценивает
+        # (expire) ORM-объекты остальных в общей сессии, и обращение к ним в
+        # async вызывает MissingGreenlet, роняя весь цикл.
+        ids_result = await self.session.execute(select(Server.id).where(Server.is_active))
+        server_ids = ids_result.scalars().all()
 
+        logger.info(
+            f"[LOG] sync_all_servers: найдено {len(server_ids)} активных серверов, force={force}"
+        )
+
+        synced_count = 0
+        for i, server_id in enumerate(server_ids, 1):
+            server = await self._load_server_for_sync(server_id)
+            if server is None:
+                continue
+            server_name = server.name
+            try:
+                logger.info(
+                    f"[LOG] sync_all_servers: сервер {i}/{len(server_ids)} - {server_name} (ID: {server_id})"
+                )
+                synced = await self.sync_server(server, force=force)
+                if synced:
+                    synced_count += 1
+                    logger.info(f"[OK] Сервер {server_name} успешно синхронизирован")
+                else:
+                    logger.info(
+                        f"[SKIP] Сервер {server_name} пропущен (не нужна синхронизация или ошибка)"
+                    )
+            except Exception as e:
+                logger.error(
+                    f"[ERROR] Ошибка синхронизации сервера {server_id}: {type(e).__name__} - {str(e)}",
+                    exc_info=True,
+                )
+
+        logger.info(
+            f"[LOG] sync_all_servers завершен: {synced_count}/{len(server_ids)} серверов синхронизировано"
+        )
+        return synced_count
+
+    async def _load_server_for_sync(self, server_id: int) -> Server | None:
+        """Свежо загрузить сервер с eager-связями для синхронизации.
+
+        Перечитывание на каждой итерации цикла гарантирует, что rollback()
+        предыдущего сервера не оставит expired-объект (см. sync_all_servers).
+        """
         result = await self.session.execute(
             select(Server)
-            .where(Server.is_active)
+            .where(Server.id == server_id)
             .options(
                 selectinload(Server.xui_panel),
                 selectinload(Server.awg_service),
@@ -149,36 +193,7 @@ class SyncService:
                 selectinload(Server.inbounds),
             )
         )
-        servers = result.scalars().all()
-
-        logger.info(
-            f"[LOG] sync_all_servers: найдено {len(servers)} активных серверов, force={force}"
-        )
-
-        synced_count = 0
-        for i, server in enumerate(servers, 1):
-            try:
-                logger.info(
-                    f"[LOG] sync_all_servers: сервер {i}/{len(servers)} - {server.name} (ID: {server.id})"
-                )
-                result = await self.sync_server(server, force=force)
-                if result:
-                    synced_count += 1
-                    logger.info(f"[OK] Сервер {server.name} успешно синхронизирован")
-                else:
-                    logger.info(
-                        f"[SKIP] Сервер {server.name} пропущен (не нужна синхронизация или ошибка)"
-                    )
-            except Exception as e:
-                logger.error(
-                    f"[ERROR] Ошибка синхронизации сервера {server.id}: {type(e).__name__} - {str(e)}",
-                    exc_info=True,
-                )
-
-        logger.info(
-            f"[LOG] sync_all_servers завершен: {synced_count}/{len(servers)} серверов синхронизировано"
-        )
-        return synced_count
+        return result.scalar_one_or_none()
 
     async def sync_server(self, server: Server, force: bool = False) -> bool:
         """Синхронизировать отдельный сервер.
@@ -195,13 +210,17 @@ class SyncService:
         Returns:
             True если успешно, False если ошибка
         """
+        # server_id фиксируем ДО возможного rollback: после rollback ORM-объект
+        # становится expired, и обращение к server.id в async-обработчиках ошибок
+        # вызывало бы MissingGreenlet (неявное IO вне greenlet).
+        server_id = server.id
         try:
             # Проверить, нужна ли синхронизация
             if not force and not self._needs_sync(server):
-                logger.debug(f"✓ Сервер {server.id} в актуальном состоянии")
+                logger.debug(f"✓ Сервер {server_id} в актуальном состоянии")
                 return False
 
-            logger.info(f"[SYNC] Синхронизация сервера {server.id}: {server.name}")
+            logger.info(f"[SYNC] Синхронизация сервера {server_id}: {server.name}")
 
             # Ping the server to update its online status
             if server.ip_address:
@@ -274,23 +293,23 @@ class SyncService:
             await self.session.flush()
             # Единственный commit после полной успешной синхронизации сервера
             await self.session.commit()
-            logger.info(f"[OK] Сервер {server.id} синхронизирован (клиентов: {clients_synced})")
+            logger.info(f"[OK] Сервер {server_id} синхронизирован (клиентов: {clients_synced})")
             return True
 
         except XUIConnectionError as e:
             new_status = "offline"
             new_error = f"Connection failed: {str(e)}"
-            logger.warning(f"[WARN] Сервер {server.id} недоступен")
+            logger.warning(f"[WARN] Сервер {server_id} недоступен")
             await self.session.rollback()
-            await self._save_server_error_status(server.id, new_status, new_error)
+            await self._save_server_error_status(server_id, new_status, new_error)
             return False
 
         except XUIError as e:
             new_status = "error"
             new_error = str(e)
-            logger.error(f"[ERROR] Ошибка XUI сервера {server.id}: {e}")
+            logger.error(f"[ERROR] Ошибка XUI сервера {server_id}: {e}")
             await self.session.rollback()
-            await self._save_server_error_status(server.id, new_status, new_error)
+            await self._save_server_error_status(server_id, new_status, new_error)
             return False
 
         except Exception as e:
@@ -298,24 +317,24 @@ class SyncService:
             if type(e).__name__ == "AmneziaConnectionError":
                 new_status = "offline"
                 new_error = f"Connection failed: {str(e)}"
-                logger.warning(f"[WARN] Сервер {server.id} недоступен (Amnezia)")
+                logger.warning(f"[WARN] Сервер {server_id} недоступен (Amnezia)")
                 await self.session.rollback()
-                await self._save_server_error_status(server.id, new_status, new_error)
+                await self._save_server_error_status(server_id, new_status, new_error)
                 return False
             elif type(e).__name__ == "AmneziaError":
                 new_status = "error"
                 new_error = str(e)
-                logger.error(f"[ERROR] Ошибка Amnezia сервера {server.id}: {e}")
+                logger.error(f"[ERROR] Ошибка Amnezia сервера {server_id}: {e}")
                 await self.session.rollback()
-                await self._save_server_error_status(server.id, new_status, new_error)
+                await self._save_server_error_status(server_id, new_status, new_error)
                 return False
 
             logger.error(
-                f"[ERROR] Неожиданная ошибка сервера {server.id}: {type(e).__name__} - {str(e)}",
+                f"[ERROR] Неожиданная ошибка сервера {server_id}: {type(e).__name__} - {str(e)}",
                 exc_info=True,
             )
             await self.session.rollback()
-            await self._save_server_error_status(server.id, "error", f"{type(e).__name__}: {str(e)}")
+            await self._save_server_error_status(server_id, "error", f"{type(e).__name__}: {str(e)}")
             return False
 
         # Don't close clients - keep them cached for reuse
