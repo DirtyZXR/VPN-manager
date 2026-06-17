@@ -78,7 +78,7 @@ async def cmd_reload_texts(message: Message, is_admin: bool) -> None:
         reload_texts()
         await message.answer(t("admin.texts.reloaded", "✅ Файл с текстами успешно перезагружен!"))
     except Exception as e:
-        logger.error(f"Error reloading texts: {e}")
+        logger.error("Ошибка перезагрузки текстов: {}", e, exc_info=True)
         await message.answer(
             t(
                 "admin.texts.reload_error",
@@ -293,7 +293,7 @@ async def _render_step(callback: CallbackQuery, step_index: int, state: FSMConte
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.warning(f"Failed to send instruction media '{media_path}': {e}")
+            logger.warning("Не удалось отправить медиафайл инструкции '{}': {}", media_path, e)
             await callback.message.answer(
                 f"<b>{title}</b>\n\n{text}",
                 reply_markup=keyboard,
@@ -384,7 +384,7 @@ async def admin_reload_instructions(callback: CallbackQuery, is_admin: bool) -> 
             show_alert=True,
         )
     except Exception as e:
-        logger.error(f"Failed to reload instructions: {e}", exc_info=True)
+        logger.error("Ошибка перезагрузки инструкций: {}", e, exc_info=True)
         await callback.answer(
             t("common.error", "❌ Ошибка: {error}", error=str(e)), show_alert=True
         )
@@ -408,7 +408,7 @@ async def admin_reload_texts_cb(callback: CallbackQuery, is_admin: bool) -> None
             show_alert=True,
         )
     except Exception as e:
-        logger.error(f"Failed to reload texts: {e}")
+        logger.error("Ошибка перезагрузки текстов через кнопку: {}", e, exc_info=True)
         await callback.answer(
             t(
                 "admin.texts.reload_error",

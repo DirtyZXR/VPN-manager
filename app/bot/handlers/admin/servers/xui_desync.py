@@ -106,7 +106,7 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> N
                     try:
                         await client.add_inbound(payload)
                     except Exception as e:
-                        logger.warning(f"Failed to recreate inbound {ib.id} port {ib.port}: {e}")
+                        logger.warning("Не удалось воссоздать inbound {} порт {}: {}", ib.id, ib.port, e)
 
                     # Add clients to this inbound
                     connections = (await session.execute(select(XUIInboundConnection).where(XUIInboundConnection.inbound_id == ib.id))).scalars().all()
@@ -126,11 +126,11 @@ async def xui_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> N
                                 )
                                 await client.add_client(req, [ib.xui_id])
                             except Exception as e:
-                                logger.warning(f"Failed to recreate client {conn.id}: {e}")
+                                logger.warning("Не удалось воссоздать клиента {}: {}", conn.id, e)
 
         await msg.edit_text("✅ <b>Аварийное восстановление 3x-ui завершено!</b>\n\nБазовые настройки и клиенты воссозданы. Тонкие настройки Xray (сертификаты/streamSettings) могли сброситься к значениям по умолчанию.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Failed to restore 3x-ui: {e}", exc_info=True)
+        logger.error("Ошибка восстановления 3x-ui: {}", e, exc_info=True)
         await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("xui_desync_restore_file_"))
@@ -290,6 +290,6 @@ async def process_xui_restore_file(message: TgMessage, state: FSMContext) -> Non
         await msg.edit_text("✅ <b>Панель 3x-ui успешно восстановлена из файла!</b>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
         await state.clear()
     except Exception as e:
-        logger.error(f"Failed to restore 3x-ui from file: {e}", exc_info=True)
+        logger.error("Ошибка восстановления 3x-ui из файла: {}", e, exc_info=True)
         await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
         await state.clear()

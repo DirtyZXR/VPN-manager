@@ -13,14 +13,14 @@ class TextManager:
 
     def _load(self) -> None:
         if not self.filepath.exists():
-            logger.warning(f"Text file not found: {self.filepath}")
+            logger.warning("Файл текстов не найден: {}", self.filepath)
             return
 
         try:
             with open(self.filepath, encoding="utf-8") as f:
                 self._texts = yaml.safe_load(f) or {}
         except Exception as e:
-            logger.warning(f"Failed to load text file {self.filepath}: {e}")
+            logger.warning("Не удалось загрузить файл текстов {}: {}", self.filepath, e)
 
     def _format(self, text: str, **kwargs) -> str:
         if not kwargs:
@@ -28,13 +28,13 @@ class TextManager:
         try:
             return text.format(**kwargs)
         except KeyError as e:
-            logger.warning(f"Missing kwargs for text formatting. Key expected: {e}, Text: '{text}'")
+            logger.warning("Отсутствует ключ форматирования текста: {}, шаблон: '{}'", e, text)
             return text
         except ValueError as e:
-            logger.warning(f"Value error during text formatting: {e}, Text: '{text}'")
+            logger.warning("Ошибка значения при форматировании текста: {}, шаблон: '{}'", e, text)
             return text
         except Exception as e:
-            logger.warning(f"Unexpected error formatting text: {e}")
+            logger.warning("Неожиданная ошибка при форматировании текста: {}", e)
             return text
 
     def get(self, key: str, default: str, **kwargs) -> str:
@@ -54,7 +54,7 @@ class TextManager:
 
     def reload(self) -> None:
         """Force reload the YAML file from disk."""
-        logger.info(f"Reloading texts from {self.filepath}")
+        logger.info("Перезагрузка текстов из {}", self.filepath)
         self._load()
 
 

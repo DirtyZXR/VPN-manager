@@ -217,7 +217,7 @@ async def process_edit_xui_password(message: TgMessage, state: FSMContext) -> No
     try:
         await message.delete()
     except Exception as e:
-        logger.warning(f"Could not delete message: {e}")
+        logger.warning("Не удалось удалить сообщение: {}", e)
 
     if new_password == "/skip":
         await _show_xui_edit_menu(message, server_id)

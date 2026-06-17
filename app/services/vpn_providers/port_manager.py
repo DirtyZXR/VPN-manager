@@ -45,7 +45,7 @@ class PortManager:
                     used_ports.add(int(line.strip()))
             return used_ports
         except Exception as e:
-            logger.error(f"Failed to get used ports from server {self.ssh.server.id}: {e}")
+            logger.error("Не удалось получить список занятых портов с сервера {}: {}", self.ssh.server.id, e)
             raise
 
     async def allocate_free_port(
@@ -68,7 +68,7 @@ class PortManager:
         # Iterate through the range and find the first unused port
         for port in range(start, end + 1):
             if port not in used_ports:
-                logger.info(f"Allocated free port {port} on server {self.ssh.server.id}")
+                logger.info("Выделен свободный порт {} на сервере {}", port, self.ssh.server.id)
                 return port
 
         raise Exception(
@@ -101,9 +101,9 @@ class PortManager:
                 await self.ssh.run_command(f"sudo -n ufw allow {port} 2>/dev/null || ufw allow {port}")
             else:
                 await self.ssh.run_command(f"sudo -n ufw allow {port}/{protocol.lower()} 2>/dev/null || ufw allow {port}/{protocol.lower()}")
-            logger.info(f"Opened port {port}/{protocol} via UFW on server {self.ssh.server.id}")
+            logger.info("Порт {}/{} открыт через UFW на сервере {}", port, protocol, self.ssh.server.id)
         except Exception as e:
-            logger.error(f"Failed to open port {port} via UFW on server {self.ssh.server.id}: {e}")
+            logger.error("Не удалось открыть порт {} через UFW на сервере {}: {}", port, self.ssh.server.id, e)
             raise
 
     async def close_port(self, port: int, protocol: str = "tcp") -> None:
@@ -120,7 +120,7 @@ class PortManager:
                 await self.ssh.run_command(
                     f"sudo -n ufw delete allow {port}/{protocol.lower()} 2>/dev/null || ufw delete allow {port}/{protocol.lower()} 2>/dev/null || true"
                 )
-            logger.info(f"Closed port {port}/{protocol} via UFW on server {self.ssh.server.id}")
+            logger.info("Порт {}/{} закрыт через UFW на сервере {}", port, protocol, self.ssh.server.id)
         except Exception as e:
-            logger.error(f"Failed to close port {port} via UFW on server {self.ssh.server.id}: {e}")
+            logger.error("Не удалось закрыть порт {} через UFW на сервере {}: {}", port, self.ssh.server.id, e)
             raise

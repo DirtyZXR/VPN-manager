@@ -142,8 +142,8 @@ class AWGInstaller(BaseInstaller):
         try:
             async with self.ssh:
                 logger.info(
-                    f"Installing AWG on {self.ssh.host}:{port} "
-                    f"subnet={subnet_ip}/{subnet_cidr}"
+                    "Установка AWG на {}:{}, subnet={}/{}",
+                    self.ssh.host, port, subnet_ip, subnet_cidr,
                 )
 
                 await self._progress(1, 11, "Подготовка сервера (Docker, утилиты)...")
@@ -151,7 +151,7 @@ class AWGInstaller(BaseInstaller):
 
                 if await self.check_already_installed():
                     if force:
-                        logger.warning(f"Force reinstall: removing existing vpnbot-awg on {self.ssh.host}")
+                        logger.warning("Принудительная переустановка: удаляю vpnbot-awg на {}", self.ssh.host)
                         await self._cmd("docker rm -f vpnbot-awg 2>/dev/null || true")
                         await self._cmd("sleep 2")
                     else:
@@ -200,7 +200,7 @@ class AWGInstaller(BaseInstaller):
 
                 await self._progress(11, 11, "Установка завершена")
 
-                logger.info(f"AWG installed successfully on {self.ssh.host}:{port}")
+                logger.info("AWG установлен на {}:{}", self.ssh.host, port)
 
                 return {
                     "container_name": f"vpnbot-{AWG_CONTAINER_NAME}",

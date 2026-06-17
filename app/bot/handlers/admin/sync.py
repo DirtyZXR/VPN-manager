@@ -89,7 +89,7 @@ async def sync_servers(callback: CallbackQuery) -> None:
         # Не отправляем callback.answer снова - уже отправили в начале
 
     except Exception as e:
-        logger.error(f"Ошибка синхронизации серверов: {e}", exc_info=True)
+        logger.error("Ошибка синхронизации серверов: {}", e, exc_info=True)
         with contextlib.suppress(Exception):
             await callback.message.edit_text(
                 t("admin.sync.sync_error", "❌ Ошибка при синхронизации: {error}", error=str(e)),
@@ -142,7 +142,7 @@ async def check_integrity(callback: CallbackQuery) -> None:
         # Не отправляем callback.answer снова - уже отправили в начале
 
     except Exception as e:
-        logger.error(f"Ошибка проверки целостности: {e}", exc_info=True)
+        logger.error("Ошибка проверки целостности: {}", e, exc_info=True)
         with contextlib.suppress(Exception):
             await callback.message.edit_text(
                 t("admin.sync.integrity_error", "❌ Ошибка при проверке: {error}", error=str(e)),

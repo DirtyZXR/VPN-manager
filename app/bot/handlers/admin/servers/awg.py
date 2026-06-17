@@ -237,7 +237,7 @@ async def awg_connect_existing(callback: CallbackQuery, state: FSMContext) -> No
 
         params = await installer.discover_existing()
     except Exception as e:
-        logger.error(f"AWG discover failed: {e}", exc_info=True)
+        logger.error("Ошибка авто-обнаружения AWG: {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Не удалось прочитать конфигурацию</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -354,7 +354,7 @@ async def awg_confirm_connect(callback: CallbackQuery, state: FSMContext) -> Non
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"AWG connect failed: {e}", exc_info=True)
+        logger.error("Ошибка подключения AWG: {}", e, exc_info=True)
         await callback.message.edit_text(
             f"❌ <b>Ошибка подключения AmneziaWG</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -395,7 +395,7 @@ async def awg_port_random(callback: CallbackQuery, state: FSMContext) -> None:
         pm = PortManager(ssh)
         port = await pm.allocate_free_port()
     except Exception as e:
-        logger.error(f"Port allocation failed: {e}")
+        logger.error("Ошибка выделения порта: {}", e)
         await msg.edit_text(
             f"❌ Не удалось подобрать порт: {e}",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -451,7 +451,7 @@ async def awg_port_manual(message: TgMessage, state: FSMContext) -> None:
             )
             return
     except Exception as e:
-        logger.error(f"Port check failed: {e}")
+        logger.error("Ошибка проверки порта: {}", e)
         await msg.edit_text(
             f"❌ Не удалось проверить порт: {e}",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -717,7 +717,7 @@ async def awg_execute_install(callback: CallbackQuery, state: FSMContext) -> Non
                 parse_mode="HTML",
             )
         else:
-            logger.error(f"AWG installation failed: {e}", exc_info=True)
+            logger.error("Ошибка установки AWG: {}", e, exc_info=True)
             await msg.edit_text(
                 f"❌ <b>Ошибка установки AmneziaWG</b>\n\n<code>{e}</code>",
                 reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -831,7 +831,7 @@ async def awg_force_reinstall(callback: CallbackQuery, state: FSMContext) -> Non
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"AWG force reinstall failed: {e}", exc_info=True)
+        logger.error("Ошибка переустановки AWG: {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Ошибка переустановки AmneziaWG</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -903,7 +903,7 @@ async def awg_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> N
 
         await msg.edit_text("✅ <b>AWG успешно восстановлен!</b>\n\nВсе конфигурации и ключи перенесены на сервер.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Failed to restore AWG: {e}", exc_info=True)
+        logger.error("Ошибка восстановления AWG: {}", e, exc_info=True)
         await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
 
 

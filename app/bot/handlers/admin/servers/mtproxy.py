@@ -242,7 +242,7 @@ async def mtproxy_connect_existing(callback: CallbackQuery, state: FSMContext) -
 
         params = await installer.discover_existing()
     except Exception as e:
-        logger.error(f"MTProxy discover failed: {e}", exc_info=True)
+        logger.error("Ошибка авто-обнаружения MTProxy: {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Не удалось прочитать конфигурацию</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -354,7 +354,7 @@ async def mtproxy_confirm_connect(callback: CallbackQuery, state: FSMContext) ->
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"MTProxy connect failed: {e}", exc_info=True)
+        logger.error("Ошибка подключения MTProxy: {}", e, exc_info=True)
         await callback.message.edit_text(
             f"❌ <b>Ошибка подключения MTProxy</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -752,7 +752,7 @@ async def mtproxy_execute_install(callback: CallbackQuery, state: FSMContext) ->
                 parse_mode="HTML",
             )
         else:
-            logger.error(f"MTProxy installation failed: {e}", exc_info=True)
+            logger.error("Ошибка установки MTProxy: {}", e, exc_info=True)
             await msg.edit_text(
                 f"❌ <b>Ошибка установки MTProxy</b>\n\n<code>{e}</code>",
                 reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -873,7 +873,7 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"MTProxy force reinstall failed: {e}", exc_info=True)
+        logger.error("Ошибка переустановки MTProxy: {}", e, exc_info=True)
         await msg.edit_text(
             f"❌ <b>Ошибка переустановки MTProxy</b>\n\n<code>{e}</code>",
             reply_markup=get_back_keyboard(f"server_services_{server_id}"),
@@ -946,5 +946,5 @@ async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> N
 
         await msg.edit_text("✅ <b>MTProxy успешно восстановлен!</b>\n\nВсе секреты перенесены на сервер.", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")
     except Exception as e:
-        logger.error(f"Failed to restore MTProxy: {e}", exc_info=True)
+        logger.error("Ошибка восстановления MTProxy: {}", e, exc_info=True)
         await msg.edit_text(f"❌ Ошибка восстановления:\n<code>{e}</code>", reply_markup=get_back_keyboard(f"server_services_{server_id}"), parse_mode="HTML")

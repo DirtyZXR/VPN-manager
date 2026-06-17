@@ -87,7 +87,7 @@ class BaseInstaller:
 
             if not isinstance(e, TelegramAPIError):
                 raise
-            logger.debug(f"Progress callback suppressed: {e}")
+            logger.debug("Ошибка progress callback (подавлена): {}", e)
 
     async def _cmd(self, command: str, input_data: str | None = None) -> str:
         """Execute command with optional sudo prefix."""
@@ -203,23 +203,23 @@ class BaseInstaller:
         Always verifies Docker is available even if .prepared marker exists,
         because Docker may have been removed or become inaccessible.
         """
-        logger.info(f"Preparing host {self.ssh.host}...")
+        logger.info("Подготовка хоста {}...", self.ssh.host)
 
         if not await self._docker_is_available():
-            logger.info("Docker not found, installing...")
+            logger.info("Docker не найден, устанавливаю...")
             await self._ensure_docker()
         elif not await self._compose_is_available():
-            logger.info("Docker found but compose v2 missing, installing plugin...")
+            logger.info("Docker найден, но плагин compose v2 отсутствует, устанавливаю...")
             await self._install_compose_plugin()
 
         if await self.is_prepared():
-            logger.info(f"Host already prepared ({PREPARED_MARKER} exists), skipping utils/UFW")
+            logger.info("Хост уже подготовлен ({} существует), пропускаю utils/UFW", PREPARED_MARKER)
             return
 
         await self._ensure_utils()
         await self._ensure_ufw()
         await self._mark_prepared()
-        logger.info(f"Host {self.ssh.host} prepared successfully")
+        logger.info("Хост {} подготовлен", self.ssh.host)
 
     async def _detect_os(self) -> str:
         """Detect the OS package manager. Returns: debian, fedora, centos, opensuse, archlinux."""
@@ -233,7 +233,7 @@ class BaseInstaller:
         )
         dist = await self._cmd(script)
         dist = dist.strip()
-        logger.info(f"Detected OS family: {dist}")
+        logger.info("Семейство ОС: {}", dist)
         return dist
 
     async def _ensure_docker(self) -> None:
@@ -247,14 +247,14 @@ class BaseInstaller:
         After install verifies both `docker` and `docker compose` are functional.
         """
         if await self._docker_is_available():
-            logger.info("Docker already available")
+            logger.info("Docker уже доступен")
             await self._ensure_docker_active()
             if not await self._compose_is_available():
-                logger.info("Docker compose v2 not found, installing plugin")
+                logger.info("Плагин docker compose v2 не найден, устанавливаю")
                 await self._install_compose_plugin()
             return
 
-        logger.info("Docker not found, installing via get.docker.com...")
+        logger.info("Docker не найден, устанавливаю через get.docker.com...")
         await self._cmd(
             "curl -fsSL https://get.docker.com | sh"
         )
@@ -264,13 +264,13 @@ class BaseInstaller:
         await self._ensure_docker_active()
 
         docker_ver = await self._cmd("docker --version")
-        logger.info(f"Docker installed: {docker_ver}")
+        logger.info("Docker установлен: {}", docker_ver)
 
         if not await self._compose_is_available():
             await self._install_compose_plugin()
 
         compose_ver = await self._cmd("docker compose version")
-        logger.info(f"Docker Compose: {compose_ver}")
+        logger.info("Docker Compose: {}", compose_ver)
 
     async def _docker_is_available(self) -> bool:
         """Check if docker command is accessible in PATH."""
@@ -315,7 +315,7 @@ class BaseInstaller:
                 if await self._compose_is_available():
                     return
             except Exception:
-                logger.warning(f"Package manager install failed for dist '{dist}', trying binary download")
+                logger.warning("Установка через пакетный менеджер не удалась (dist={}), пробую бинарный download", dist)
 
         await self._cmd(
             "mkdir -p /usr/local/lib/docker/cli-plugins && "
@@ -350,7 +350,7 @@ class BaseInstaller:
         try:
             await self._cmd(fix_script)
         except Exception as e:
-            logger.warning(f"Docker PATH fix attempted but may have issues: {e}")
+            logger.warning("Попытка исправить PATH для Docker, возможны проблемы: {}", e)
 
     async def _ensure_docker_active(self) -> None:
         """Ensure Docker daemon is running."""
@@ -376,7 +376,7 @@ class BaseInstaller:
         elif dist == "archlinux":
             await self._cmd("pacman -S --noconfirm --noprogressbar curl jq")
         else:
-            logger.warning(f"Unknown dist '{dist}', skipping utils installation")
+            logger.warning("Неизвестный дистрибутив '{}', пропускаю установку утилит", dist)
 
     async def _ensure_ufw(self) -> None:
         """Install and enable UFW with SSH allowed."""
@@ -394,7 +394,7 @@ class BaseInstaller:
         await self._cmd(
             f"ufw allow {ssh_port}/tcp && ufw --force enable"
         )
-        logger.info(f"UFW enabled, SSH port {ssh_port} allowed")
+        logger.info("UFW включён, SSH-порт {} открыт", ssh_port)
 
     async def _mark_prepared(self) -> None:
         """Mark host as prepared."""
@@ -424,9 +424,9 @@ class BaseInstaller:
                 f"ufw allow {ssh_port}/tcp && "
                 f"ufw --force reload"
             )
-            logger.info(f"Strict firewall applied on {self.ssh.host}: only SSH/{ssh_port} allowed")
+            logger.info("Строгий файрвол на {}: разрешён только SSH/{}", self.ssh.host, ssh_port)
         else:
-            logger.info(f"Permissive firewall on {self.ssh.host}: UFW policy unchanged")
+            logger.info("Мягкий файрвол на {}: политика UFW не изменена", self.ssh.host)
 
         policy = "strict" if strict else "permissive"
         await self._cmd(
@@ -447,24 +447,24 @@ class BaseInstaller:
             ports: List of (port, protocol) tuples to close in UFW.
         """
         name = _container_name(self.SERVICE_NAME)
-        logger.warning(f"Rollback: cleaning up {name}")
+        logger.warning("Откат: очистка контейнера {}", name)
 
         try:
             await self._cmd(f"docker rm -f {name} 2>/dev/null || true")
         except Exception as e:
-            logger.error(f"Failed to remove container {name}: {e}")
+            logger.error("Не удалось удалить контейнер {}: {}", name, e)
 
         for d in dirs or []:
             try:
                 await self._cmd(f"rm -rf {d}")
             except Exception as e:
-                logger.error(f"Failed to remove dir {d}: {e}")
+                logger.error("Не удалось удалить директорию {}: {}", d, e)
 
         for port, proto in ports or []:
             try:
                 await self.port_manager.close_port(port, proto)
             except Exception as e:
-                logger.error(f"Failed to close port {port}/{proto}: {e}")
+                logger.error("Не удалось закрыть порт {}/{}: {}", port, proto, e)
 
     # ── Helpers ───────────────────────────────────────────────────────
 
@@ -505,7 +505,7 @@ class BaseInstaller:
             ):
                 return True
         except Exception as e:
-            logger.error(f"SSH test on port {port} failed: {e}")
+            logger.error("Проверка SSH на порту {} не удалась: {}", port, e)
             return False
 
     async def change_ssh_port(self, new_port: int) -> tuple[bool, str]:
@@ -559,19 +559,19 @@ class BaseInstaller:
                 await self._cmd(f"ufw delete allow {old_port}/tcp || true")
                 await self._cmd("systemctl restart sshd || systemctl restart ssh")
 
-                logger.info(f"SSH port changed: {old_port} -> {new_port} on {host}")
+                logger.info("SSH-порт изменён: {} -> {} на {}", old_port, new_port, host)
                 return True, f"SSH порт изменён: {old_port} → {new_port}"
             else:
                 raise RuntimeError("Не удалось подключиться на новый порт")
 
         except Exception as e:
-            logger.error(f"SSH port change failed, reverting: {e}")
+            logger.error("Смена SSH-порта не удалась, откат: {}", e)
             try:
                 await self._write_file("/etc/ssh/sshd_config", config_backup)
                 await self._cmd("systemctl restart sshd || systemctl restart ssh")
                 await self._cmd(f"ufw delete allow {new_port}/tcp || true")
             except Exception as rollback_err:
-                logger.error(f"Rollback also failed: {rollback_err}")
+                logger.error("Откат тоже не удался: {}", rollback_err)
                 return False, f"Ошибка смены порта и отката: {rollback_err}"
 
             return False, f"Не удалось сменить SSH порт: {e}. Откачено к порту {old_port}."

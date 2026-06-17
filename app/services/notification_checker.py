@@ -101,12 +101,12 @@ class NotificationChecker:
                         await self.session.commit()
 
                     except Exception as e:
-                        logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
+                        logger.error("Ошибка проверки пользователя {}: {}", user.id, e, exc_info=True)
                         with contextlib.suppress(Exception):
                             await self.session.rollback()
 
             except Exception as e:
-                logger.error(f"Error in notification checker: {e}", exc_info=True)
+                logger.error("Ошибка в обработчике уведомлений: {}", e, exc_info=True)
 
     async def _cleanup_old_logs(self) -> None:
         """Delete notification logs older than 7 days."""
@@ -118,7 +118,7 @@ class NotificationChecker:
             await self.session.commit()
             logger.info("Cleaned up notification logs older than 7 days")
         except Exception as e:
-            logger.error(f"Failed to clean up old logs: {e}", exc_info=True)
+            logger.error("Ошибка очистки старых логов уведомлений: {}", e, exc_info=True)
             with contextlib.suppress(Exception):
                 await self.session.rollback()
 
@@ -404,40 +404,40 @@ class NotificationChecker:
         """
 
         if not hasattr(conn, "inbound") or not conn.inbound:
-            logger.warning(f"Connection {conn.id} has no eager loaded inbound")
+            logger.warning("Соединение {} не имеет предзагруженного inbound", conn.id)
             return None
 
         inbound = conn.inbound
 
         if not hasattr(inbound, "server") or not inbound.server:
-            logger.warning(f"Inbound {inbound.id} has no eager loaded server")
+            logger.warning("Inbound {} не имеет предзагруженного сервера", inbound.id)
             return None
 
         server = inbound.server
 
         if conn.type not in ("xui_inbound_connection",):
-            logger.debug(f"Skipping traffic for connection {conn.id} (type={conn.type})")
+            logger.debug("Пропуск трафика для соединения {} (тип={})", conn.id, conn.type)
             return None
 
         if getattr(server, "is_online", True) is False:
-            logger.debug(f"Skipping traffic for connection {conn.id} (server {server.id} offline)")
+            logger.debug("Пропуск трафика для соединения {} (сервер {} недоступен)", conn.id, server.id)
             return None
 
         try:
-            logger.debug(f"Getting traffic for connection {conn.id} (type={conn.type}, inbound={inbound.id}, server={server.id})")
+            logger.debug("Запрос трафика: соединение {}, тип={}, inbound={}, сервер={}", conn.id, conn.type, inbound.id, server.id)
 
             if server.id not in self._xui_clients:
                 from app.services.xui_service import XUIService
 
-                logger.debug(f"Creating new XUIService for server {server.id}")
+                logger.debug("Создание XUIService для сервера {}", server.id)
                 xui_service = XUIService(self.session)
-                logger.debug(f"Calling _get_client for server {server.id}, xui_panel={bool(server.xui_panel)}")
+                logger.debug("Вызов _get_client для сервера {}, xui_panel={}", server.id, bool(server.xui_panel))
                 self._xui_clients[server.id] = await xui_service._get_client(server)
-                logger.debug(f"XUI client created for server {server.id}")
+                logger.debug("XUI клиент создан для сервера {}", server.id)
 
             client = self._xui_clients[server.id]
 
-            logger.debug(f"Getting clients from XUI for inbound {inbound.id}, xui_id={getattr(inbound, 'xui_id', 'N/A')}")
+            logger.debug("Запрос клиентов XUI для inbound {}, xui_id={}", inbound.id, getattr(inbound, "xui_id", "N/A"))
             all_clients = await client.get_clients()
             # Filter panel-wide list to this inbound (each client has inboundIds: list[int])
             xui_id = getattr(inbound, "xui_id", None)
@@ -451,13 +451,13 @@ class NotificationChecker:
                     # nested "traffic" key or directly on the item.
                     traffic = xui_client.get("traffic") or xui_client
                     used_gb = (traffic.get("up", 0) + traffic.get("down", 0)) / (1024**3)
-                    logger.debug(f"Traffic for connection {conn.id}: {used_gb:.2f} GB")
+                    logger.debug("Трафик соединения {}: {:.2f} ГБ", conn.id, used_gb)
                     return {"used_gb": used_gb}
 
-            logger.debug(f"No matching XUI client found for connection {conn.id} uuid={conn.uuid}")
+            logger.debug("Клиент XUI не найден для соединения {} (uuid={})", conn.id, conn.uuid)
 
         except Exception as e:
-            logger.error(f"Error getting traffic for connection {conn.id} (type={conn.type}, server={server.id}): {e}", exc_info=True)
+            logger.error("Ошибка получения трафика для соединения {} (тип={}, сервер={}): {}", conn.id, conn.type, server.id, e, exc_info=True)
 
         return None
 
@@ -850,7 +850,7 @@ class NotificationChecker:
             # Flush to ensure the log is visible to subsequent checks within the same transaction
             await self.session.flush()
         except Exception as e:
-            logger.error(f"Failed to log notification: {e}", exc_info=True)
+            logger.error("Ошибка записи лога уведомления: {}", e, exc_info=True)
             # Don't rollback - let the caller handle it
 
     async def close(self) -> None:
@@ -859,5 +859,5 @@ class NotificationChecker:
             try:
                 await client.close()
             except Exception as e:
-                logger.error(f"Error closing XUI client: {e}", exc_info=True)
+                logger.error("Ошибка закрытия XUI клиента: {}", e, exc_info=True)
         self._xui_clients.clear()

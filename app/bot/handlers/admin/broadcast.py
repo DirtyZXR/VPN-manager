@@ -95,7 +95,7 @@ async def _run_broadcast(
             )
             success_count += 1
         except Exception as e:
-            logger.warning(f"Failed to send broadcast to {client.telegram_id}: {e}")
+            logger.warning("Не удалось отправить broadcast на {}: {}", client.telegram_id, e)
             fail_count += 1
 
         # Add a small delay to avoid hitting Telegram rate limits (30 msgs/sec max)
@@ -117,7 +117,7 @@ async def _run_broadcast(
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"Failed to edit broadcast status message: {e}")
+        logger.error("Не удалось отредактировать статусное сообщение рассылки: {}", e)
         # Fallback if editing is forbidden (e.g. older than 48h) or not modified
         await bot.send_message(
             chat_id=admin_chat_id,

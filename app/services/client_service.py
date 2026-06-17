@@ -276,12 +276,14 @@ class ClientService:
                 sub_service = NewSubscriptionService(self.session)
                 updated = await sub_service.sync_client_telegram_id(client_id)
                 logger.info(
-                    f"✅ Synced Telegram ID for client {client_id}, updated {updated} connections in XUI"
+                    "Telegram ID клиента {} синхронизирован, обновлено {} соединений в XUI",
+                    client_id, updated,
                 )
                 await sub_service.close_all_clients()
             except Exception as e:
                 logger.error(
-                    f"Failed to sync Telegram ID for client {client_id}: {e}", exc_info=True
+                    "Не удалось синхронизировать Telegram ID для клиента {}: {}",
+                    client_id, e, exc_info=True,
                 )
 
         return client

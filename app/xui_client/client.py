@@ -180,8 +180,7 @@ class XUIClient:
         url = f"{self.base_url.rstrip('/')}{path}"
 
         logger.debug(
-            f"[XUI REQUEST] method={method}, base_url={self.base_url!r}, "
-            f"path={path!r}, full_url={url!r}"
+            "XUI запрос: method={}, path={}", method, path,
         )
 
         request_cookies = {c.key: c.value for c in session.cookie_jar}
@@ -237,8 +236,7 @@ class XUIClient:
                 if response.status == 404:
                     location = response.headers.get("Location", "none")
                     logger.warning(
-                        f"[XUI 404] full_url={url}, path={path}, "
-                        f"location={location}"
+                        "XUI 404: path={}, location={}", path, location,
                     )
                     raise XUINotFoundError(f"Resource not found: {path}")
 
@@ -315,8 +313,7 @@ class XUIClient:
 
         self._cookies = {cookie.key: cookie.value for cookie in session.cookie_jar}
         logger.info(
-            f"Logged in to {self.base_url}, "
-            f"cookies={list(self._cookies.keys())}"
+            "Авторизация прошла успешно, cookies: {}", list(self._cookies.keys()),
         )
         return True
 
@@ -342,10 +339,9 @@ class XUIClient:
             XUIConnectionError: Connection failed
         """
         self._get_session()  # validate session is open
-        url = f"{self.base_url.rstrip('/')}/login"
 
-        logger.info(f"Login attempt to: {url}")
-        logger.info(f"Login: ssl_verify={self.verify_ssl}")
+        logger.info("Попытка авторизации на {}", self.base_url)
+        logger.debug("Параметры подключения: ssl_verify={}", self.verify_ssl)
 
         try:
             return await self._login_json()
@@ -370,7 +366,7 @@ class XUIClient:
                 if response.status == 200:
                     data = await response.json()
                     if data.get("success", False):
-                        logger.info(f"Saved session is valid for {self.base_url}")
+                        logger.info("Сохранённая сессия действительна для {}", self.base_url)
                         return True
 
             self._cookies = {}
@@ -478,7 +474,7 @@ class XUIClient:
         if not data.get("success", False):
             raise XUIError(data.get("msg", "Failed to add client"))
 
-        logger.info(f"Added client {client.email} to inbounds {inbound_ids}")
+        logger.info("Клиент {} добавлен в inbounds {}", client.email, inbound_ids)
         return True
 
     async def update_client(
@@ -510,7 +506,7 @@ class XUIClient:
         if not data.get("success", False):
             raise XUIError(data.get("msg", "Failed to update client"))
 
-        logger.info(f"Updated client {email}")
+        logger.info("Клиент {} обновлён", email)
         return True
 
     async def delete_client(
@@ -543,7 +539,7 @@ class XUIClient:
         if not data.get("success", False):
             raise XUIError(data.get("msg", "Failed to delete client"))
 
-        logger.info(f"Deleted client {email}")
+        logger.info("Клиент {} удалён", email)
         return True
 
     async def enable_client(
@@ -627,7 +623,7 @@ class XUIClient:
         if not data.get("success", False):
             raise XUIError(data.get("msg", "Failed to reset traffic"))
 
-        logger.info(f"Reset traffic for client {email}")
+        logger.info("Трафик клиента {} сброшен", email)
         return True
 
     async def add_inbound(self, payload: dict[str, Any]) -> dict:

@@ -97,7 +97,7 @@ async def process_ssh_auth(message: TgMessage, state: FSMContext) -> None:
     try:
         await message.delete()
     except Exception as e:
-        logger.warning(f"Could not delete message: {e}")
+        logger.warning("Не удалось удалить сообщение: {}", e)
         await message.answer(
             "⚠️ В целях безопасности, пожалуйста, удалите свое сообщение с паролем/ключом вручную."
         )

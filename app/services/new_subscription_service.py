@@ -228,14 +228,15 @@ class NewSubscriptionService:
                 removed_ok = await self.remove_inbound_from_subscription(subscription_id, ib_id)
                 if not removed_ok:
                     logger.error(
-                        f"rebuild_subscription: remove_inbound_from_subscription returned False "
-                        f"for inbound {ib_id} sub {subscription_id} (phantom marked error)"
+                        "rebuild_subscription: remove_inbound_from_subscription вернул False "
+                        "для inbound {} sub {} (phantom помечен error)",
+                        ib_id, subscription_id,
                     )
                     failed.append((ib_id, "db delete failed"))
             except Exception as e:
                 logger.error(
-                    f"rebuild_subscription: failed to remove inbound {ib_id} "
-                    f"for sub {subscription_id}: {e}"
+                    "rebuild_subscription: не удалось удалить inbound {} для sub {}: {}",
+                    ib_id, subscription_id, e,
                 )
                 failed.append((ib_id, str(e)))
 
@@ -255,8 +256,8 @@ class NewSubscriptionService:
                     await provider.update_client(inbound, conn, new_total_gb, expiry_date)
                 except Exception as e:
                     logger.error(
-                        f"rebuild_subscription: failed to update kept inbound {conn.inbound_id} "
-                        f"for sub {subscription_id}: {e}"
+                        "rebuild_subscription: не удалось обновить inbound {} для sub {}: {}",
+                        conn.inbound_id, subscription_id, e,
                     )
                     conn.sync_status = "error"
                     failed.append((conn.inbound_id, str(e)))
@@ -267,8 +268,8 @@ class NewSubscriptionService:
                 await self.add_inbound_to_subscription(subscription_id, ib_id, client_uuid=client_uuid)
             except Exception as e:
                 logger.error(
-                    f"rebuild_subscription: failed to add inbound {ib_id} "
-                    f"for sub {subscription_id}: {e}"
+                    "rebuild_subscription: не удалось добавить inbound {} для sub {}: {}",
+                    ib_id, subscription_id, e,
                 )
                 failed.append((ib_id, str(e)))
 
@@ -353,7 +354,7 @@ class NewSubscriptionService:
             client_email = client_data.get("email")
             provider_payload = client_data
         except Exception as e:
-            logger.error(f"Failed to create client in VPN panel: {e}", exc_info=True)
+            logger.error("Не удалось создать клиента на VPN-панели: {}", e, exc_info=True)
             raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
 
         # Build a temporary (not-in-session) connection object for compensation
@@ -437,7 +438,7 @@ class NewSubscriptionService:
                 return connection
 
             except Exception as db_error:
-                logger.error(f"Failed to save inbound connection: {db_error}", exc_info=True)
+                logger.error("Не удалось сохранить inbound-соединение: {}", db_error, exc_info=True)
                 # Saga compensation: remove the client we just created on the panel.
                 temp_conn = _build_temp_connection()
                 try:
@@ -678,10 +679,11 @@ class NewSubscriptionService:
                     deleted_count += 1
                 except Exception as e:
                     logger.warning(
-                        f"delete_client_all_connections: panel removal failed for connection "
-                        f"{connection.id} (email={getattr(connection, 'email', '?')}, "
-                        f"inbound_id={connection.inbound_id}): {e}. "
-                        f"Panel client may remain as zombie — will be cleaned by reconciliation."
+                        "delete_client_all_connections: не удалось удалить с панели connection_id={} "
+                        "(email={}, inbound_id={}): {}. Клиент может остаться как zombie — "
+                        "будет очищен реконсилятором.",
+                        connection.id, getattr(connection, "email", "?"),
+                        connection.inbound_id, e,
                     )
                 # Always remove the DB record to prevent orphan rows,
                 # even if the panel removal above failed.
@@ -741,11 +743,12 @@ class NewSubscriptionService:
                     )
                     updated_count += 1
                     logger.info(
-                        f"✅ Updated Telegram ID for client {client_id} in inbound {inbound.id}"
+                        "Telegram ID клиента {} обновлён в inbound {}",
+                        client_id, inbound.id,
                     )
 
                 except Exception as e:
-                    logger.warning(f"Failed to update Telegram ID for client {client_id}: {e}")
+                    logger.warning("Не удалось обновить Telegram ID для клиента {}: {}", client_id, e)
 
         return updated_count
 
@@ -778,7 +781,7 @@ class NewSubscriptionService:
             try:
                 await provider.close()
             except Exception as e:
-                logger.warning(f"Error closing VPN provider {server_id}: {e}")
+                logger.warning("Ошибка при закрытии VPN-провайдера {}: {}", server_id, e)
             finally:
                 self._providers.pop(server_id, None)
 
@@ -826,7 +829,7 @@ class NewSubscriptionService:
                     except Exception as e:
                         from loguru import logger
 
-                        logger.warning(f"Error getting config for conn {conn.id}: {e}")
+                        logger.warning("Ошибка получения конфига для conn {}: {}", conn.id, e)
 
             return urls
         finally:
@@ -868,7 +871,7 @@ class NewSubscriptionService:
                     except Exception as e:
                         from loguru import logger
 
-                        logger.warning(f"Error getting json config for conn {conn.id}: {e}")
+                        logger.warning("Ошибка получения JSON-конфига для conn {}: {}", conn.id, e)
 
             return urls
         finally:
@@ -1001,7 +1004,8 @@ class NewSubscriptionService:
                     connection.last_sync_at = datetime.now(UTC)
                 except Exception as e:
                     logger.warning(
-                        f"Failed to update VPN client for connection {connection.id}: {e}"
+                        "Не удалось обновить VPN-клиент для connection {}: {}",
+                        connection.id, e,
                     )
                     connection.sync_status = "error"
 
@@ -1078,7 +1082,10 @@ class NewSubscriptionService:
                     await provider.enable_client(connection.inbound, connection)
                     connection.is_enabled = True
             except Exception as e:
-                logger.warning(f"Failed to update VPN client for connection {connection.id}: {e}")
+                logger.warning(
+                    "Не удалось обновить VPN-клиент для connection {}: {}",
+                    connection.id, e,
+                )
                 connection.sync_status = "error"
 
         await self.session.flush()
@@ -1172,7 +1179,8 @@ class NewSubscriptionService:
                 await provider.reset_client_traffic(connection.inbound, connection)
             except Exception as e:
                 logger.warning(
-                    f"Failed to reset VPN client traffic for connection {connection.id}: {e}"
+                    "Не удалось сбросить трафик VPN-клиента для connection {}: {}",
+                    connection.id, e,
                 )
                 if base_days > 0:
                     connection.sync_status = "error"
@@ -1226,10 +1234,11 @@ class NewSubscriptionService:
                         inbound.client_count -= 1
             except Exception as e:
                 logger.warning(
-                    f"delete_subscription: panel removal failed for connection {connection.id} "
-                    f"(email={getattr(connection, 'email', '?')}, "
-                    f"inbound_id={connection.inbound_id}): {e}. "
-                    f"Panel client may remain as zombie — will be cleaned by reconciliation."
+                    "delete_subscription: не удалось удалить с панели connection_id={} "
+                    "(email={}, inbound_id={}): {}. Клиент может остаться как zombie — "
+                    "будет очищен реконсилятором.",
+                    connection.id, getattr(connection, "email", "?"),
+                    connection.inbound_id, e,
                 )
 
         # Delete from database regardless of panel errors to keep the bot state consistent.

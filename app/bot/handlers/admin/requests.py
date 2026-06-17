@@ -55,7 +55,7 @@ async def approve_request(callback: CallbackQuery):
             await callback.message.edit_text(t("admin.requests.approved", "✅ Запрос одобрен."))
             await callback.answer()
         except Exception as e:
-            logger.error(f"Failed to approve request {req_id}: {e}")
+            logger.error("Ошибка при одобрении запроса {}: {}", req_id, e)
             await callback.answer(
                 t("admin.requests.approve_error", "❌ Ошибка: {error}", error=str(e)),
                 show_alert=True,

@@ -191,8 +191,8 @@ class XUIInstaller(BaseInstaller):
         try:
             async with self.ssh:
                 logger.info(
-                    f"Installing 3x-ui on {self.ssh.host}, "
-                    f"domain={domain}, caddy_port={caddy_port}"
+                    "Установка 3x-ui на {}, domain={}, caddy_port={}",
+                    self.ssh.host, domain, caddy_port,
                 )
 
                 await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
@@ -200,7 +200,7 @@ class XUIInstaller(BaseInstaller):
 
                 if await self.check_already_installed():
                     if force:
-                        logger.warning(f"Force reinstall: removing existing vpnbot-xui/caddy on {self.ssh.host}")
+                        logger.warning("Принудительная переустановка: удаляю vpnbot-xui/caddy на {}", self.ssh.host)
                         await self._cmd("docker rm -f vpnbot-xui vpnbot-caddy 2>/dev/null || true")
                         await self._cmd("sleep 2")
                     else:
@@ -236,7 +236,7 @@ class XUIInstaller(BaseInstaller):
 
                 await self._progress(9, 9, "Установка завершена")
 
-                logger.info(f"3x-ui installed successfully on {self.ssh.host}")
+                logger.info("3x-ui установлен на {}", self.ssh.host)
 
                 return {
                     "containers": ["vpnbot-xui", "vpnbot-caddy"],
@@ -439,14 +439,14 @@ class XUIInstaller(BaseInstaller):
             raise RuntimeError(
                 f"Panel verification failed: HTTP {code} from {xui_url}"
             )
-        logger.info(f"Panel verified via internal port: HTTP {code}")
+        logger.info("Панель доступна через внутренний порт: HTTP {}", code)
 
         caddy_url = f"https://{domain}:{caddy_port}/{clean_web}/" if clean_web else f"https://{domain}:{caddy_port}/"
         caddy_result = await self._cmd(
             f"curl -sk -o /dev/null -w '%{{http_code}}' {caddy_url}"
         )
         caddy_code = caddy_result.strip().strip("'")
-        logger.info(f"Caddy proxy verified: HTTP {caddy_code} from {caddy_url}")
+        logger.info("Caddy-прокси доступен: HTTP {} ({})", caddy_code, caddy_url)
 
     @staticmethod
     def _hash_password_bcrypt(password: str) -> str:

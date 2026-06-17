@@ -590,7 +590,7 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
             finally:
                 await sub_service.close_all_clients()
         except Exception as e:
-            logger.error(f"Error creating subscription: {e}", exc_info=True)
+            logger.error("Ошибка создания подписки: {}", e, exc_info=True)
             await callback.answer(
                 t("admin.subscriptions.error", "❌ Ошибка: {error}", error=str(e)), show_alert=True
             )
@@ -720,7 +720,7 @@ async def show_subscription_details(callback: CallbackQuery) -> None:
         if "message is not modified" in str(e).lower():
             pass
         else:
-            logger.warning(f"Failed to edit message in show_subscription_details: {e}")
+            logger.warning("Не удалось обновить сообщение в show_subscription_details: {}", e)
             # Try to edit reply_markup only as fallback
             try:
                 await callback.message.edit_reply_markup(reply_markup=keyboard)
@@ -728,16 +728,16 @@ async def show_subscription_details(callback: CallbackQuery) -> None:
                 if "message is not modified" in str(e2).lower():
                     pass
                 else:
-                    logger.error(f"Failed to edit reply_markup: {e2}")
+                    logger.error("Не удалось обновить reply_markup: {}", e2)
             except Exception as e2:
-                logger.error(f"Failed to edit reply_markup: {e2}")
+                logger.error("Не удалось обновить reply_markup: {}", e2)
     except Exception as e:
-        logger.warning(f"Failed to edit message in show_subscription_details: {e}")
+        logger.warning("Не удалось обновить сообщение в show_subscription_details: {}", e)
         # Try to edit reply_markup only as fallback
         try:
             await callback.message.edit_reply_markup(reply_markup=keyboard)
         except Exception as e2:
-            logger.error(f"Failed to edit reply_markup: {e2}")
+            logger.error("Не удалось обновить reply_markup: {}", e2)
     await callback.answer()
 
 
@@ -866,7 +866,7 @@ async def show_subscription_inbounds(callback: CallbackQuery) -> None:
         if "message is not modified" in str(e).lower():
             pass
         else:
-            logger.warning(f"Failed to edit message in show_subscription_inbounds: {e}")
+            logger.warning("Не удалось обновить сообщение в show_subscription_inbounds: {}", e)
             # Try to edit reply_markup only as fallback
             try:
                 await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
@@ -874,16 +874,16 @@ async def show_subscription_inbounds(callback: CallbackQuery) -> None:
                 if "message is not modified" in str(e2).lower():
                     pass
                 else:
-                    logger.error(f"Failed to edit reply_markup: {e2}")
+                    logger.error("Не удалось обновить reply_markup: {}", e2)
             except Exception as e2:
-                logger.error(f"Failed to edit reply_markup: {e2}")
+                logger.error("Не удалось обновить reply_markup: {}", e2)
     except Exception as e:
-        logger.warning(f"Failed to edit message in show_subscription_inbounds: {e}")
+        logger.warning("Не удалось обновить сообщение в show_subscription_inbounds: {}", e)
         # Try to edit reply_markup only as fallback
         try:
             await callback.message.edit_reply_markup(reply_markup=builder.as_markup())
         except Exception as e2:
-            logger.error(f"Failed to edit reply_markup: {e2}")
+            logger.error("Не удалось обновить reply_markup: {}", e2)
     await callback.answer()
 
 
@@ -965,7 +965,7 @@ async def get_connection_config(callback: CallbackQuery) -> None:
                     parse_mode="HTML",
                 )
         except Exception as e:
-            logger.error(f"Failed to get config for connection {connection_id}: {e}", exc_info=True)
+            logger.error("Ошибка получения конфига для подключения {}: {}", connection_id, e, exc_info=True)
             await callback.message.answer(
                 t(
                     "admin.subscriptions.config_error",
@@ -1189,7 +1189,7 @@ async def _execute_add_inbounds(
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.error(f"Failed to add inbounds: {e}", exc_info=True)
+            logger.error("Ошибка добавления inbound к подписке: {}", e, exc_info=True)
             await callback.message.edit_text(
                 f"❌ Ошибка добавления подключений:\n\n<code>{str(e)[:300]}</code>",
                 reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
@@ -1222,7 +1222,7 @@ async def _execute_add_inbounds_by_message(
                 parse_mode="HTML",
             )
         except Exception as e:
-            logger.error(f"Failed to add inbounds: {e}", exc_info=True)
+            logger.error("Ошибка добавления inbound к подписке: {}", e, exc_info=True)
             await message.answer(
                 f"❌ Ошибка добавления подключений:\n\n<code>{str(e)[:300]}</code>",
                 reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
@@ -1416,7 +1416,7 @@ async def toggle_inbound_connection(callback: CallbackQuery) -> None:
             # await show_subscription_inbounds(callback, is_admin)  # Закомментировано
 
         except Exception as e:
-            logger.error(f"Error toggling connection: {e}", exc_info=True)
+            logger.error("Ошибка переключения состояния подключения: {}", e, exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
         finally:
             await service.close_all_clients()
@@ -1645,7 +1645,7 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
                     success_count += 1
 
                 except Exception as e:
-                    logger.warning(f"Failed to {action} connection {conn.id}: {e}")
+                    logger.warning("Не удалось {} подключение {}: {}", action, conn.id, e)
 
             for provider in providers.values():
                 await provider.close()
@@ -1734,7 +1734,7 @@ async def confirm_multi_select_action(callback: CallbackQuery, state: FSMContext
             )
 
         except Exception as e:
-            logger.error(f"Error in multi-select action: {e}", exc_info=True)
+            logger.error("Ошибка выполнения массового действия над подключениями: {}", e, exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
             await callback.message.edit_text(
                 t(
@@ -1980,7 +1980,7 @@ async def delete_inbound_connection(
             # await show_subscription_inbounds(callback, is_admin)
 
         except Exception as e:
-            logger.error(f"Error deleting connection: {e}", exc_info=True)
+            logger.error("Ошибка удаления подключения: {}", e, exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
 
             # Show error with back button to inbounds list
@@ -2376,7 +2376,7 @@ async def delete_subscription(callback: CallbackQuery, state: FSMContext) -> Non
             )
 
         except Exception as e:
-            logger.error(f"Error deleting subscription: {e}", exc_info=True)
+            logger.error("Ошибка удаления подписки: {}", e, exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
             await callback.message.edit_text(
                 t(
@@ -2406,7 +2406,7 @@ async def reset_subscription_handler(callback: CallbackQuery) -> None:
                 t("admin.subscriptions.reset_success", "✅ Подписка сброшена"), show_alert=True
             )
         except Exception as e:
-            logger.error(f"Error resetting subscription: {e}", exc_info=True)
+            logger.error("Ошибка сброса подписки: {}", e, exc_info=True)
             await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
             return
         finally:
@@ -2508,22 +2508,22 @@ async def reset_subscription_handler(callback: CallbackQuery) -> None:
                 if "message is not modified" in str(e).lower():
                     pass
                 else:
-                    logger.warning(f"Failed to edit message in reset_subscription_handler: {e}")
+                    logger.warning("Не удалось обновить сообщение в reset_subscription_handler: {}", e)
                     try:
                         await callback.message.edit_reply_markup(reply_markup=keyboard)
                     except TelegramBadRequest as e2:
                         if "message is not modified" in str(e2).lower():
                             pass
                         else:
-                            logger.error(f"Failed to edit reply_markup: {e2}")
+                            logger.error("Не удалось обновить reply_markup: {}", e2)
                     except Exception as e2:
-                        logger.error(f"Failed to edit reply_markup: {e2}")
+                        logger.error("Не удалось обновить reply_markup: {}", e2)
             except Exception as e:
-                logger.warning(f"Failed to edit message in reset_subscription_handler: {e}")
+                logger.warning("Не удалось обновить сообщение в reset_subscription_handler: {}", e)
                 try:
                     await callback.message.edit_reply_markup(reply_markup=keyboard)
                 except Exception as e2:
-                    logger.error(f"Failed to edit reply_markup: {e2}")
+                    logger.error("Не удалось обновить reply_markup: {}", e2)
 
         finally:
             await service.close_all_clients()
@@ -2617,7 +2617,7 @@ async def process_add_time_days(message: TgMessage, state: FSMContext) -> None:
                 )
             )
         except Exception as e:
-            logger.error(f"Error adding time to subscription: {e}", exc_info=True)
+            logger.error("Ошибка добавления времени к подписке: {}", e, exc_info=True)
             await message.answer(f"❌ Ошибка: {e}")
         finally:
             await service.close_all_clients()
@@ -2871,7 +2871,8 @@ async def rebuild_with_template(callback: CallbackQuery, state: FSMContext) -> N
 
     except Exception as e:
         logger.error(
-            f"Error rebuilding subscription {subscription_id} with template {template_id}: {e}",
+            "Ошибка пересборки подписки {} с шаблоном {}: {}",
+            subscription_id, template_id, e,
             exc_info=True,
         )
         await callback.message.edit_text(
@@ -3099,7 +3100,7 @@ async def rebuild_confirm_inbounds(
         )
 
     except Exception as e:
-        logger.error(f"Error rebuilding subscription manually: {e}", exc_info=True)
+        logger.error("Ошибка ручной пересборки подписки: {}", e, exc_info=True)
         await callback.message.edit_text(
             t(
                 "admin.subscriptions.rebuild_error",
