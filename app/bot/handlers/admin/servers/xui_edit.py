@@ -16,14 +16,8 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("server_edit_xui_"))
-async def edit_xui_service(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def edit_xui_service(callback: CallbackQuery, state: FSMContext) -> None:
     """Show XUI edit menu or desync menu if container is missing."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
     await state.update_data(server_id=server_id)
 
@@ -165,7 +159,7 @@ async def xui_toggle_ssl(callback: CallbackQuery, state: FSMContext) -> None:
             await session.commit()
 
             # Re-render the menu
-            await edit_xui_service(callback, state, is_admin=True)
+            await edit_xui_service(callback, state)
         else:
             await callback.answer("❌ Панель не найдена.", show_alert=True)
 

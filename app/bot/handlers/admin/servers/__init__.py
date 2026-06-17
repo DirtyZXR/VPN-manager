@@ -2,6 +2,7 @@
 
 from aiogram import Router
 
+from app.bot.filters import AdminFilter
 from app.bot.handlers.admin.servers import (
     awg,
     crud,
@@ -16,6 +17,8 @@ from app.bot.handlers.admin.servers import (
 )
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 for _module in (
     crud,

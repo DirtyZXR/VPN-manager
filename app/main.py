@@ -116,6 +116,15 @@ async def background_notification_wrapper() -> None:
         logger.info("Background notification wrapper stopped")
 
 
+def build_dispatcher() -> Dispatcher:
+    """Собрать Dispatcher: AuthMiddleware как outer (is_admin доступен фильтрам) + роутеры."""
+    dp = Dispatcher()
+    dp.message.outer_middleware(AuthMiddleware())
+    dp.callback_query.outer_middleware(AuthMiddleware())
+    dp.include_router(create_router())
+    return dp
+
+
 def setup_logging() -> None:
     """Configure loguru logging."""
     settings = get_settings()
@@ -171,16 +180,8 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    # Create dispatcher
-    dp = Dispatcher()
-
-    # Setup middleware
-    dp.message.middleware(AuthMiddleware())
-    dp.callback_query.middleware(AuthMiddleware())
-
-    # Setup router
-    router = create_router()
-    dp.include_router(router)
+    # Собрать dispatcher (outer-middleware + роутеры)
+    dp = build_dispatcher()
 
     # Start tasks
     logger.info("Starting polling, background sync and notifications...")

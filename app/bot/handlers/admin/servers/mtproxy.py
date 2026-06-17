@@ -17,14 +17,8 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("server_edit_mtproxy_"))
-async def edit_mtproxy_service(callback: CallbackQuery, is_admin: bool) -> None:
+async def edit_mtproxy_service(callback: CallbackQuery) -> None:
     """Edit MTProxy service or show desync menu."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
     msg = await callback.message.edit_text("🔍 Проверка состояния MTProxy на сервере...")
 
@@ -91,14 +85,8 @@ async def edit_mtproxy_service(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("server_install_mtproxy_"))
-async def start_mtproxy_install(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
+async def start_mtproxy_install(callback: CallbackQuery, state: FSMContext) -> None:
     """Start MTProxy installation."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -896,8 +884,7 @@ async def mtproxy_force_reinstall(callback: CallbackQuery, state: FSMContext) ->
 # ── Desync Recovery Handlers ──────────────────────────────────────
 
 @router.callback_query(F.data.startswith("mtp_desync_remove_db_"))
-async def mtp_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def mtp_desync_remove_db(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
     async with async_session_factory() as session:
         from sqlalchemy import delete
@@ -907,11 +894,10 @@ async def mtp_desync_remove_db(callback: CallbackQuery, state: FSMContext, is_ad
         await session.execute(delete(Inbound).where(Inbound.server_id == server_id, Inbound.protocol == "mtproto"))
         await session.commit()
     await callback.answer("✅ MTProxy удален из БД", show_alert=True)
-    await show_server_services(callback, state, is_admin)
+    await show_server_services(callback, state)
 
 @router.callback_query(F.data.startswith("mtp_desync_restore_db_"))
-async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext, is_admin: bool) -> None:
-    if not is_admin: return
+async def mtp_desync_restore_db(callback: CallbackQuery, state: FSMContext) -> None:
     server_id = int(callback.data.split("_")[-1])
 
     msg = await callback.message.edit_text("🔄 <b>Восстановление MTProxy из БД...</b>\n\nНачинаю установку...", parse_mode="HTML")

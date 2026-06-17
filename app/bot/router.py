@@ -2,7 +2,7 @@
 
 from aiogram import Router
 
-from app.bot.handlers import common, registration
+from app.bot.handlers import common, fallback, registration
 from app.bot.handlers.admin import (
     broadcast,
     clients,
@@ -15,26 +15,25 @@ from app.bot.handlers.admin import (
 )
 from app.bot.handlers.user import subscriptions as user_subscriptions
 
+_SUB_ROUTERS = [
+    common.router,
+    registration.router,
+    dashboard.router,
+    broadcast.router,
+    servers.router,
+    clients.router,
+    subscriptions.router,
+    sync.router,
+    templates.router,
+    requests.router,
+    user_subscriptions.router,
+    fallback.router,
+]
+
 
 def create_router() -> Router:
-    """Create main router with all handlers.
-
-    Returns:
-        Configured router
-    """
+    """Собрать главный роутер из всех хэндлеров."""
     router = Router()
-
-    # Include all handlers
-    router.include_router(common.router)
-    router.include_router(registration.router)
-    router.include_router(dashboard.router)
-    router.include_router(broadcast.router)
-    router.include_router(servers.router)
-    router.include_router(clients.router)
-    router.include_router(subscriptions.router)
-    router.include_router(sync.router)
-    router.include_router(templates.router)
-    router.include_router(requests.router)
-    router.include_router(user_subscriptions.router)
-
+    for sub in _SUB_ROUTERS:
+        router.include_router(sub)
     return router

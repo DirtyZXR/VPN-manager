@@ -7,23 +7,20 @@ from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards import get_back_keyboard
 from app.database import async_session_factory
 from app.services import SyncService
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_sync")
-async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_sync_menu(callback: CallbackQuery) -> None:
     """Меню синхронизации."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.sync.access_denied", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     keyboard = InlineKeyboardBuilder()
     keyboard.button(
         text=t("admin.sync.btn_sync_servers", "🖥️ Синхронизировать сервера"),
@@ -53,14 +50,8 @@ async def show_sync_menu(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data == "sync_servers")
-async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
+async def sync_servers(callback: CallbackQuery) -> None:
     """Синхронизировать все сервера."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.sync.access_denied", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     try:
         # Сначала отправляем ответ на callback, чтобы не истекло время
         await callback.answer(t("admin.sync.sync_started_alert", "⏳ Синхронизация запущена..."))
@@ -107,14 +98,8 @@ async def sync_servers(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data == "sync_integrity")
-async def check_integrity(callback: CallbackQuery, is_admin: bool) -> None:
+async def check_integrity(callback: CallbackQuery) -> None:
     """Проверить целостность данных."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.sync.access_denied", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     try:
         # Сначала отправляем ответ на callback
         await callback.answer(

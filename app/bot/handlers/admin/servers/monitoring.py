@@ -15,14 +15,8 @@ router = Router()
 
 
 @router.callback_query(F.data.startswith("server_sync_"))
-async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
+async def sync_server(callback: CallbackQuery) -> None:
     """Sync server inbounds and clients."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     await callback.answer(
@@ -73,14 +67,8 @@ async def sync_server(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("server_test_"))
-async def test_server(callback: CallbackQuery, is_admin: bool) -> None:
+async def test_server(callback: CallbackQuery) -> None:
     """Test server connection."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -107,14 +95,8 @@ async def test_server(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("server_inbounds_"))
-async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_server_inbounds(callback: CallbackQuery) -> None:
     """Show inbounds for a server with detailed information."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -185,14 +167,8 @@ async def show_server_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
 
 
 @router.callback_query(F.data.startswith("cleanup_inbounds_"))
-async def cleanup_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
+async def cleanup_inbounds(callback: CallbackQuery) -> None:
     """Cleanup inactive inbounds for a server."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:
@@ -209,18 +185,12 @@ async def cleanup_inbounds(callback: CallbackQuery, is_admin: bool) -> None:
         t("admin.servers.inbounds.cleanup_success", "✅ Удаленные inbounds очищены"),
         show_alert=True,
     )
-    await show_server_inbounds(callback, is_admin)
+    await show_server_inbounds(callback)
 
 
 @router.callback_query(F.data.startswith("inbound_stats_"))
-async def show_inbound_stats(callback: CallbackQuery, is_admin: bool) -> None:
+async def show_inbound_stats(callback: CallbackQuery) -> None:
     """Show live statistics for inbounds from XUI panel."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.errors.no_rights", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     server_id = int(callback.data.split("_")[-1])
 
     async with async_session_factory() as session:

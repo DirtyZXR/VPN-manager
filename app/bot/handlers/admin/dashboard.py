@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from sqlalchemy import func, select
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards.inline import (
     get_admin_clients_menu_keyboard,
     get_admin_dashboard_keyboard,
@@ -18,17 +19,13 @@ from app.database.models import Client, Server, Subscription
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_menu")
-async def show_admin_dashboard(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def show_admin_dashboard(callback: CallbackQuery, state: FSMContext) -> None:
     """Show the main admin dashboard with statistics."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -71,14 +68,8 @@ async def show_admin_dashboard(callback: CallbackQuery, is_admin: bool, state: F
 
 
 @router.callback_query(F.data == "admin_clients_menu")
-async def show_clients_menu(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def show_clients_menu(callback: CallbackQuery, state: FSMContext) -> None:
     """Show clients management submenu."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -96,14 +87,8 @@ async def show_clients_menu(callback: CallbackQuery, is_admin: bool, state: FSMC
 
 
 @router.callback_query(F.data == "admin_infra_menu")
-async def show_infra_menu(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def show_infra_menu(callback: CallbackQuery, state: FSMContext) -> None:
     """Show infrastructure management submenu."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -121,14 +106,8 @@ async def show_infra_menu(callback: CallbackQuery, is_admin: bool, state: FSMCon
 
 
 @router.callback_query(F.data == "admin_system_menu")
-async def show_system_menu(callback: CallbackQuery, is_admin: bool, state: FSMContext) -> None:
+async def show_system_menu(callback: CallbackQuery, state: FSMContext) -> None:
     """Show system and settings submenu."""
-    if not is_admin:
-        await callback.answer(
-            t("errors.admin_only", "❌ У вас нет прав администратора."), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
