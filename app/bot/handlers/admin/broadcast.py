@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from loguru import logger
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards.inline import get_back_keyboard, get_confirm_keyboard
 from app.bot.states.admin import BroadcastManagement
 from app.database import async_session_factory
@@ -14,6 +15,8 @@ from app.services.client_service import ClientService
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_broadcast")

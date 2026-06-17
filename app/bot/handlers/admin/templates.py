@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
@@ -29,6 +30,8 @@ from app.utils.texts import t
 from app.xui_client.exceptions import XUIError
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_templates")

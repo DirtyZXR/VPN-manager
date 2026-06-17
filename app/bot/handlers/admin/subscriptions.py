@@ -10,6 +10,7 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
@@ -24,6 +25,8 @@ from app.services.xui_service import XUIService
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 # Handlers starting from select_server_for_subscription

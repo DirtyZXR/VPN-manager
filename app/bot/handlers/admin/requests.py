@@ -4,6 +4,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from loguru import logger
 
+from app.bot.filters import AdminFilter
 from app.database import async_session_factory
 from app.services.notification_service import NotificationService
 from app.services.subscription_request_service import SubscriptionRequestService
@@ -11,6 +12,8 @@ from app.services.subscription_template_service import SubscriptionTemplateServi
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data.startswith("admin_req_approve_"))

@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from sqlalchemy import func, select
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards.inline import (
     get_admin_clients_menu_keyboard,
     get_admin_dashboard_keyboard,
@@ -18,6 +19,8 @@ from app.database.models import Client, Server, Subscription
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_menu")
