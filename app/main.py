@@ -2,7 +2,6 @@
 
 import asyncio
 import contextlib
-import logging
 import sys
 from pathlib import Path
 
@@ -15,24 +14,10 @@ from app.bot.middlewares import AuthMiddleware
 from app.bot.router import create_router
 from app.config import get_settings
 from app.database import async_session_factory, init_db
+from app.logging_config import setup_logging
 from app.services import SyncService
 from app.services.notification_checker import NotificationChecker
 from app.services.notification_service import close_shared_bot
-
-
-class InterceptHandler(logging.Handler):
-    """Bridge stdlib logging records into loguru sinks (with rotation, format, etc.)."""
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-        frame, depth = logging.currentframe(), 2
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-        logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
 
 # Flags to control background tasks
 _background_sync_running = False
@@ -124,36 +109,6 @@ def build_dispatcher() -> Dispatcher:
     dp.include_router(create_router())
     return dp
 
-
-def setup_logging() -> None:
-    """Configure loguru logging."""
-    settings = get_settings()
-
-    # Remove default handler
-    logger.remove()
-
-    # Add console handler
-    logger.add(
-        sys.stdout,
-        level=settings.log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-    )
-
-    # Add file handler
-    log_path = Path("logs")
-    log_path.mkdir(exist_ok=True)
-
-    logger.add(
-        log_path / "app.log",
-        level=settings.log_level,
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}",
-        rotation="10 MB",
-        retention="7 days",
-    )
-
-    # Route all stdlib logging (aiogram, sqlalchemy, asyncssh, aiohttp, etc.)
-    # through loguru so they land in the same sinks with rotation.
-    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
 
 
 async def main() -> None:
