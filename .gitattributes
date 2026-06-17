@@ -1,0 +1,7 @@
+# Файлы, используемые в Linux-контейнере/сборке, всегда с LF
+# (CRLF ломает shebang в *.sh и рецепты в Makefile)
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf
+*.yml text eol=lf

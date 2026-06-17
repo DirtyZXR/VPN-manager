@@ -96,6 +96,41 @@ mkdir data logs
 python -m app.main
 ```
 
+## Запуск в Docker
+
+Самый простой способ для сервера — Docker Compose. Миграции применяются автоматически при старте контейнера, SQLite-БД и логи хранятся в именованных томах (переживают пересоздание контейнера).
+
+### 1. Подготовка `.env`
+
+```bash
+cp .env.example .env
+# заполнить BOT_TOKEN, ADMIN_TELEGRAM_IDS, ENCRYPTION_KEY (см. выше про генерацию ключа)
+```
+
+### 2. Сборка и запуск
+
+```bash
+docker compose build
+docker compose up -d
+```
+
+Или через `make`:
+
+```bash
+make build && make up
+make logs      # хвост логов
+make ps        # статус
+make down      # остановить
+```
+
+### Заметки
+
+- **Тома:** `vpn_data` (БД `/app/data/vpn_manager.db`) и `vpn_logs` (`/app/logs`). Не удаляются при `docker compose down` (удалить вместе с данными — `docker compose down -v`).
+- **Bind-mount вместо именованных томов** (если хочется видеть файлы на хосте, напр. `./data:/app/data`): контейнер работает под uid `10001`, поэтому хостовые каталоги нужно сделать записываемыми заранее — `mkdir -p data logs && sudo chown -R 10001:10001 data logs`, иначе миграции упадут при старте.
+- **Миграции:** прогоняются в entrypoint (`alembic upgrade head`) при каждом старте, идемпотентно.
+- **Часовой пояс:** задать `TZ` в `.env` (напр. `Europe/Moscow`) — влияет на метки времени в логах.
+- **Образ** собирается без секретов: `.env`, `data/`, `logs/`, `tests/` исключены через `.dockerignore`; контейнер работает под непривилегированным пользователем.
+
 ## Использование
 
 ### Первый запуск

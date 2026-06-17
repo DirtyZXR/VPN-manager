@@ -1,0 +1,25 @@
+services:
+  bot:
+    build: .
+    image: vpn-manager:latest
+    container_name: vpn-manager
+    restart: unless-stopped
+    # init: PID 1 (tini) — корректная обработка сигналов и зомби-процессов
+    init: true
+    env_file:
+      - .env
+    volumes:
+      - vpn_data:/app/data
+      - vpn_logs:/app/logs
+    healthcheck:
+      # Базовая проверка: SQLite-БД доступна (read-only, чтобы не создавать пустой файл).
+      # Не ловит «завис, но жив» — это известное ограничение, не замена мониторингу.
+      test: ["CMD", "python", "-c", "import sqlite3; sqlite3.connect('file:/app/data/vpn_manager.db?mode=ro', uri=True).execute('select 1')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  vpn_data:
+  vpn_logs:
