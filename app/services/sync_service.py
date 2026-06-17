@@ -54,28 +54,28 @@ class SyncService:
     async def start_background_sync(self) -> None:
         """Запустить фоновую синхронизацию."""
         if self._is_running:
-            logger.warning("[WARN] Фоновая синхронизация уже запущена")
+            logger.warning("Фоновая синхронизация уже запущена")
             return
 
         self._is_running = True
-        logger.info("[SYNC] Запуск фоновой синхронизации данных")
+        logger.info("Запуск фоновой синхронизации данных")
 
         while self._is_running:
             try:
                 await self._sync_cycle(force=False)
                 # Wait for SYNC_INTERVAL (5 minutes) between cycles
-                logger.debug("Waiting for next sync cycle...")
+                logger.debug("Ожидание следующего цикла синхронизации...")
                 await asyncio.sleep(self.SYNC_INTERVAL.total_seconds())
             except Exception as e:
-                logger.error(f"[ERROR] Ошибка цикла синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
+                logger.error("Ошибка цикла синхронизации: {} - {}", type(e).__name__, str(e), exc_info=True)
                 await asyncio.sleep(60)  # 1 минута при ошибке
 
-        logger.info("[STOP] Фоновая синхронизация остановлена")
+        logger.info("Фоновая синхронизация остановлена")
 
     async def stop_background_sync(self) -> None:
         """Остановить фоновую синхронизацию."""
         self._is_running = False
-        logger.info("[STOP] Остановка фоновой синхронизации")
+        logger.info("Остановка фоновой синхронизации")
 
     async def close_xui_clients(self) -> None:
         """Закрыть все XUI клиенты для предотвращения утечек ресурсов."""
@@ -94,16 +94,14 @@ class SyncService:
         """
         # Проверить, есть ли другая активная синхронизация
         if self._sync_lock.locked():
-            logger.debug(
-                "[PAUSE] Пропуск цикла синхронизации - другая синхронизация уже выполняется"
-            )
+            logger.debug("Пропуск цикла синхронизации — другая синхронизация уже выполняется")
             return {"servers": 0, "clients": 0}
 
         async with self._sync_lock:
             cycle_id = uuid.uuid4().hex[:8]
             with logger.contextualize(cycle=cycle_id):
                 start_time = datetime.now(UTC)
-                logger.info(f"[SYNC] Начало цикла синхронизации в {start_time} (force={force})")
+                logger.info("Начало цикла синхронизации (force={})", force)
 
                 try:
                     # 1. Синхронизировать сервера и inbounds (включая клиентов)
@@ -119,14 +117,14 @@ class SyncService:
                     # 4. Логировать результаты
                     duration = (datetime.now(UTC) - start_time).total_seconds()
                     logger.info(
-                        f"[OK] Цикл синхронизации завершен за {duration:.2f}s. "
-                        f"Серверов: {servers_synced}, Целостность: {integrity_ok}"
+                        "Цикл синхронизации завершён за {:.2f}s. Серверов: {}, целостность: {}",
+                        duration, servers_synced, integrity_ok,
                     )
 
                     return {"servers": servers_synced}
 
                 except Exception as e:
-                    logger.error(f"[ERROR] Ошибка в цикле синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
+                    logger.error("Ошибка в цикле синхронизации: {} - {}", type(e).__name__, str(e), exc_info=True)
                     return {"servers": 0, "error": f"{type(e).__name__}: {str(e)}"}
 
     # === SERVER SYNC ===
@@ -147,9 +145,7 @@ class SyncService:
         ids_result = await self.session.execute(select(Server.id).where(Server.is_active))
         server_ids = ids_result.scalars().all()
 
-        logger.info(
-            f"[LOG] sync_all_servers: найдено {len(server_ids)} активных серверов, force={force}"
-        )
+        logger.info("Активных серверов: {} (force={})", len(server_ids), force)
 
         synced_count = 0
         for i, server_id in enumerate(server_ids, 1):
@@ -159,26 +155,20 @@ class SyncService:
                     continue
                 server_name = server.name
                 try:
-                    logger.info(
-                        f"[LOG] sync_all_servers: сервер {i}/{len(server_ids)} - {server_name} (ID: {server_id})"
-                    )
+                    logger.debug("Сервер {}/{}: {}", i, len(server_ids), server_name)
                     synced = await self.sync_server(server, force=force)
                     if synced:
                         synced_count += 1
-                        logger.info(f"[OK] Сервер {server_name} успешно синхронизирован")
+                        logger.info("Сервер {} синхронизирован", server_name)
                     else:
-                        logger.info(
-                            f"[SKIP] Сервер {server_name} пропущен (не нужна синхронизация или ошибка)"
-                        )
+                        logger.debug("Сервер {} пропущен (актуален или ошибка)", server_name)
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации сервера {server_id}: {type(e).__name__} - {str(e)}",
+                        "Ошибка синхронизации сервера {}: {} - {}", server_id, type(e).__name__, str(e),
                         exc_info=True,
                     )
 
-        logger.info(
-            f"[LOG] sync_all_servers завершен: {synced_count}/{len(server_ids)} серверов синхронизировано"
-        )
+        logger.info("Завершено: {}/{} серверов синхронизировано", synced_count, len(server_ids))
         return synced_count
 
     async def _load_server_for_sync(self, server_id: int) -> Server | None:
@@ -221,10 +211,10 @@ class SyncService:
         try:
             # Проверить, нужна ли синхронизация
             if not force and not self._needs_sync(server):
-                logger.debug(f"✓ Сервер {server_id} в актуальном состоянии")
+                logger.debug("Сервер {} в актуальном состоянии", server.name)
                 return False
 
-            logger.info(f"[SYNC] Синхронизация сервера {server_id}: {server.name}")
+            logger.info("Синхронизация сервера {}", server.name)
 
             # Ping the server to update its online status
             if server.ip_address:
@@ -238,7 +228,7 @@ class SyncService:
                     host = host.split(":")[0]
                 is_online = await ServerMonitor.ping(host)
                 server.is_online = is_online
-                logger.debug(f"[SYNC] Сервер {server.id} ping: {'Успешно' if is_online else 'Неудачно'}")
+                logger.debug("Ping {}: {}", server.name, "доступен" if is_online else "недоступен")
 
             xui_client = None
             if server.is_online and server.xui_panel and server.xui_panel.url and server.xui_panel.username:
@@ -247,7 +237,7 @@ class SyncService:
                 # Синхронизировать inbounds
                 await self._sync_server_inbounds(server, xui_client)
             else:
-                logger.debug(f"Сервер {server.id} не имеет XUI панели (или не настроена), пропуск XUI inbounds синхронизации")
+                logger.debug("Сервер {} не имеет настроенной XUI-панели, пропуск XUI inbounds", server.name)
 
             # Синхронизация клиентов для всех inbounds этого сервера
             from sqlalchemy import select
@@ -268,20 +258,16 @@ class SyncService:
             inbounds = inbounds_result.scalars().all()
 
             clients_synced = 0
-            logger.info(
-                f"[LOG] sync_server: найдено {len(inbounds)} активных inbounds для сервера {server.id}"
-            )
+            logger.debug("Активных inbounds на сервере {}: {}", server.name, len(inbounds))
             for inbound in inbounds:
                 try:
-                    logger.info(
-                        f"[LOG] sync_server: синхронизация клиентов для inbound {inbound.id} ({inbound.remark})"
-                    )
+                    logger.debug("Синхронизация клиентов inbound {} ({})", inbound.id, inbound.remark)
                     synced = await self._sync_inbound_clients(inbound)
                     clients_synced += synced
-                    logger.info(f"[OK] Inbound {inbound.id}: {synced} клиентов синхронизировано")
+                    logger.debug("Inbound {}: {} клиентов синхронизировано", inbound.id, synced)
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
+                        "Ошибка синхронизации клиентов inbound {}: {} - {}", inbound.id, type(e).__name__, str(e),
                         exc_info=True,
                     )
 
@@ -297,13 +283,13 @@ class SyncService:
             await self.session.flush()
             # Единственный commit после полной успешной синхронизации сервера
             await self.session.commit()
-            logger.info(f"[OK] Сервер {server_id} синхронизирован (клиентов: {clients_synced})")
+            logger.info("Сервер {} синхронизирован, клиентов: {}", server_id, clients_synced)
             return True
 
         except XUIConnectionError as e:
             new_status = "offline"
             new_error = f"Connection failed: {str(e)}"
-            logger.warning(f"[WARN] Сервер {server_id} недоступен")
+            logger.warning("Сервер недоступен (XUI): {}", e)
             await self.session.rollback()
             await self._save_server_error_status(server_id, new_status, new_error)
             return False
@@ -311,7 +297,7 @@ class SyncService:
         except XUIError as e:
             new_status = "error"
             new_error = str(e)
-            logger.error(f"[ERROR] Ошибка XUI сервера {server_id}: {e}")
+            logger.warning("Ошибка XUI-сервера: {}", e)
             await self.session.rollback()
             await self._save_server_error_status(server_id, new_status, new_error)
             return False
@@ -321,20 +307,20 @@ class SyncService:
             if type(e).__name__ == "AmneziaConnectionError":
                 new_status = "offline"
                 new_error = f"Connection failed: {str(e)}"
-                logger.warning(f"[WARN] Сервер {server_id} недоступен (Amnezia)")
+                logger.warning("Сервер недоступен (Amnezia): {}", e)
                 await self.session.rollback()
                 await self._save_server_error_status(server_id, new_status, new_error)
                 return False
             elif type(e).__name__ == "AmneziaError":
                 new_status = "error"
                 new_error = str(e)
-                logger.error(f"[ERROR] Ошибка Amnezia сервера {server_id}: {e}")
+                logger.warning("Ошибка Amnezia-сервера: {}", e)
                 await self.session.rollback()
                 await self._save_server_error_status(server_id, new_status, new_error)
                 return False
 
             logger.error(
-                f"[ERROR] Неожиданная ошибка сервера {server_id}: {type(e).__name__} - {str(e)}",
+                "Неожиданная ошибка при синхронизации сервера: {} - {}", type(e).__name__, str(e),
                 exc_info=True,
             )
             await self.session.rollback()
@@ -369,13 +355,9 @@ class SyncService:
                 srv.sync_error = sync_error
                 srv.last_sync_at = datetime.now(UTC)
                 await self.session.commit()
-                logger.debug(
-                    f"[SYNC] Статус ошибки сервера {server_id} сохранён: {sync_status}"
-                )
+                logger.debug("Статус ошибки сервера {} сохранён: {}", server_id, sync_status)
         except Exception as status_err:
-            logger.warning(
-                f"[SYNC] Не удалось сохранить статус ошибки сервера {server_id}: {status_err}"
-            )
+            logger.warning("Не удалось сохранить статус ошибки сервера {}: {}", server_id, status_err)
             with contextlib.suppress(Exception):
                 await self.session.rollback()
 
@@ -417,20 +399,20 @@ class SyncService:
 
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
+                        "Ошибка синхронизации клиентов inbound {}: {} - {}", inbound.id, type(e).__name__, str(e),
                         exc_info=True,
                     )
                     await self.session.commit()
 
         except Exception as e:
-            logger.error(f"[ERROR] Ошибка в sync_all_clients: {type(e).__name__} - {str(e)}", exc_info=True)
+            logger.error("Ошибка в sync_all_clients: {} - {}", type(e).__name__, str(e), exc_info=True)
 
         # Don't close clients - keep them cached for reuse
         # finally:
         #     if xui_service:
         #         await xui_service.close_all_clients()
 
-        logger.info(f"Синхронизировано {total_synced} клиентов")
+        logger.info("Синхронизировано клиентов: {}", total_synced)
         return total_synced
 
     async def sync_server_clients(self, server_id: int) -> int:
@@ -457,7 +439,7 @@ class SyncService:
             ],
         )
         if not server:
-            logger.warning(f"Сервер {server_id} не найден")
+            logger.warning("Сервер {} не найден", server_id)
             return 0
 
         inbound_poly = with_polymorphic(Inbound, "*")
@@ -485,20 +467,20 @@ class SyncService:
                     await self.session.commit()
                 except Exception as e:
                     logger.error(
-                        f"[ERROR] Ошибка синхронизации клиентов для inbound {inbound.id}: {type(e).__name__} - {str(e)}",
+                        "Ошибка синхронизации клиентов inbound {}: {} - {}", inbound.id, type(e).__name__, str(e),
                         exc_info=True,
                     )
                     await self.session.commit()
 
         except Exception as e:
-            logger.error(f"[ERROR] Ошибка в sync_server_clients: {e}", exc_info=True)
+            logger.error("Ошибка в sync_server_clients: {}", e, exc_info=True)
 
         # Don't close clients - keep them cached for reuse
         # finally:
         #     if xui_service:
         #         await xui_service.close_all_clients()
 
-        logger.info(f"[OK] Синхронизировано {total_synced} клиентов на сервере {server_id}")
+        logger.info("Синхронизировано клиентов на сервере {}: {}", server_id, total_synced)
         return total_synced
 
     def _needs_sync(self, model: object) -> bool:
@@ -583,9 +565,9 @@ class SyncService:
                     db_ib.updated_at = datetime.now(UTC)
                     db_ib.sync_status = "synced"
                     db_ib.last_sync_at = datetime.now(UTC)
-                    logger.info(f"[SYNC] Inbound {db_ib.id} обновлен из XUI")
+                    logger.debug("Inbound {} обновлён из XUI", db_ib.id)
                 else:
-                    logger.debug(f"✓ Inbound {db_ib.id} актуален")
+                    logger.debug("Inbound {} актуален", db_ib.id)
                     db_ib.sync_status = "synced"
                     db_ib.last_sync_at = datetime.now(UTC)
             else:
@@ -604,7 +586,7 @@ class SyncService:
                     last_sync_at=datetime.now(UTC),
                 )
                 self.session.add(new_ib)
-                logger.info(f"➕ Inbound {new_ib.id} создан из XUI")
+                logger.info("Создан новый inbound из XUI: remark={}", xui_ib.remark)
 
         await self.session.flush()
 
@@ -656,7 +638,7 @@ class SyncService:
         from app.database.models.inbound import XUIInbound
         from app.database.models.inbound_connection import XUIInboundConnection
 
-        logger.info(f"[RECONCILE] Начало реконсиляции для сервера {server.id} ({server.name})")
+        logger.debug("Начало реконсиляции для сервера {}", server.name)
 
         # -----------------------------------------------------------------------
         # Единый надёжный снимок панели.
@@ -666,15 +648,15 @@ class SyncService:
             panel_clients = await xui_client.get_clients()
         except Exception as e:
             logger.warning(
-                f"[RECONCILE] Не удалось получить список клиентов панели для сервера {server.id}: {e}. "
-                f"Реконсиляция пропущена (ничего не удаляется)."
+                "Не удалось получить список клиентов панели сервера {}, реконсиляция пропущена: {}",
+                server.name, e,
             )
             return
 
         if panel_clients is None:
             logger.warning(
-                f"[RECONCILE] get_clients() вернул None для сервера {server.id}. "
-                f"Реконсиляция пропущена."
+                "get_clients() вернул None для сервера {}, реконсиляция пропущена",
+                server.name,
             )
             return
 
@@ -684,9 +666,8 @@ class SyncService:
         # При настоящей пустой панели нечего удалять — пропуск безопасен.
         if not panel_clients:
             logger.warning(
-                f"[RECONCILE] get_clients() вернул пустой снимок для сервера {server.id}. "
-                f"Реконсиляция пропущена (возможен сбой API или пустая панель). "
-                f"Ничего не удаляется."
+                "get_clients() вернул пустой снимок для сервера {}, реконсиляция пропущена (возможен сбой API)",
+                server.name,
             )
             return
 
@@ -712,27 +693,27 @@ class SyncService:
         )
         error_connections = phantom_result.scalars().all()
 
-        logger.info(
-            f"[RECONCILE] Найдено {len(error_connections)} соединений со статусом 'error' для сервера {server.id}"
+        logger.debug(
+            "Соединений со статусом 'error' для сервера {}: {}", server.name, len(error_connections)
         )
 
         for conn in error_connections:
             c_email = getattr(conn, "email", None)
             if not c_email:
-                logger.debug(f"[RECONCILE] Соединение {conn.id} без email, пропуск")
+                logger.debug("Соединение {} без email, пропуск", conn.id)
                 continue
             if c_email.lower() not in panel_emails:
                 # Клиента нет на панели — фантом, удаляем из БД
                 logger.info(
-                    f"[RECONCILE] Фантом: соединение {conn.id} (email={c_email}) "
-                    f"отсутствует на панели → удаление из БД"
+                    "Фантом: соединение {} (email={}) отсутствует на панели, удаление из БД",
+                    conn.id, c_email,
                 )
                 self.session.delete(conn)
             else:
                 # Клиент есть на панели — восстанавливаем статус
                 logger.info(
-                    f"[RECONCILE] Соединение {conn.id} (email={c_email}) "
-                    f"найдено на панели → sync_status='synced'"
+                    "Соединение {} (email={}) найдено на панели, восстановление sync_status='synced'",
+                    conn.id, c_email,
                 )
                 conn.sync_status = "synced"
 
@@ -774,19 +755,15 @@ class SyncService:
 
             if not sub_id_field:
                 # Нет subId → не бот-клиент, не трогаем
-                logger.debug(
-                    f"[RECONCILE] Клиент '{email}' без subId — пропуск (не бот-клиент)"
-                )
+                logger.debug("Клиент '{}' без subId — пропуск (не бот-клиент)", email)
                 continue
 
             if sub_id_field not in token_to_sub_id:
                 # subId не совпадает ни с одной подпиской в БД
                 # Может быть ручным клиентом или зомби от удалённой подписки — НЕ удалять
                 logger.warning(
-                    f"[RECONCILE] Клиент '{email}' (subId={sub_id_field!r}) "
-                    f"на сервере {server.id}: subId не совпадает ни с одной подпиской в БД. "
-                    f"Оставляем (возможно ручной или зомби удалённой подписки). "
-                    f"Проверьте вручную."
+                    "Клиент '{}' (subId={!r}) на сервере {}: subId не совпадает ни с одной подпиской в БД, оставляем",
+                    email, sub_id_field, server.name,
                 )
                 warnings_logged += 1
                 continue
@@ -799,15 +776,15 @@ class SyncService:
             created_at_ms = panel_client.get("createdAt") or 0
             if not created_at_ms:
                 logger.debug(
-                    f"[RECONCILE] Клиент '{email}' (subId={sub_id_field!r}) "
-                    f"без createdAt — пропуск (безопаснее не удалять)"
+                    "Клиент '{}' (subId={!r}) без createdAt — пропуск",
+                    email, sub_id_field,
                 )
                 continue
             age_ms = now_ms - created_at_ms
             if age_ms < grace_ms:
                 logger.debug(
-                    f"[RECONCILE] Клиент '{email}' (subId={sub_id_field!r}) "
-                    f"моложе grace-period ({age_ms/1000:.0f}s < {ZOMBIE_GRACE_PERIOD.total_seconds():.0f}s) — пропуск"
+                    "Клиент '{}' моложе grace-period ({:.0f}s < {:.0f}s) — пропуск",
+                    email, age_ms / 1000, ZOMBIE_GRACE_PERIOD.total_seconds(),
                 )
                 continue
 
@@ -817,35 +794,32 @@ class SyncService:
                 if inbound_db_id is None:
                     # Инбаунд не в нашей БД — не трогаем
                     logger.debug(
-                        f"[RECONCILE] Инбаунд xui_id={xui_inbound_id} не найден в БД сервера {server.id}, пропуск"
+                        "Inbound xui_id={} не найден в БД сервера {}, пропуск",
+                        xui_inbound_id, server.name,
                     )
                     continue
 
                 if (subscription_id, inbound_db_id) not in existing_pairs:
                     # Орфан: наш токен (bot-подпись), но нет InboundConnection
                     if not email:
-                        logger.debug(
-                            f"[RECONCILE] XUI-зомби (subId={sub_id_field!r}) с пустым email — пропуск"
-                        )
+                        logger.debug("XUI-зомби (subId={!r}) с пустым email — пропуск", sub_id_field)
                         break
                     logger.info(
-                        f"[RECONCILE] XUI-зомби: клиент '{email}' (subId={sub_id_field!r}) "
-                        f"на inbound xui_id={xui_inbound_id} сервера {server.id}: "
-                        f"подписка {subscription_id} существует в БД, но нет InboundConnection → удаление с панели"
+                        "XUI-зомби: клиент '{}' (subId={!r}) на inbound xui_id={} сервера {}: "
+                        "подписка {} в БД есть, InboundConnection нет — удаление с панели",
+                        email, sub_id_field, xui_inbound_id, server.name, subscription_id,
                     )
                     try:
                         await xui_client.delete_client(email)
                         orphans_deleted += 1
                     except Exception as e:
-                        logger.error(
-                            f"[RECONCILE] Не удалось удалить зомби '{email}' с панели: {e}"
-                        )
+                        logger.error("Не удалось удалить зомби '{}' с панели: {}", email, e)
                     # Удаляем по email — не продолжаем проверять остальные inbounds
                     break
 
         logger.info(
-            f"[RECONCILE] Сервер {server.id}: удалено зомби={orphans_deleted}, "
-            f"предупреждений о неизвестных клиентах={warnings_logged}"
+            "Реконсиляция сервера {}: удалено зомби={}, предупреждений={}",
+            server.name, orphans_deleted, warnings_logged,
         )
 
         # -----------------------------------------------------------------------
@@ -881,7 +855,8 @@ class SyncService:
             if ref_ts is None:
                 # Нет временной метки — пропускаем (безопаснее не трогать)
                 logger.debug(
-                    f"[RECONCILE] Соединение {conn.id} (email={c_email}) без временной метки — пропуск"
+                    "Соединение {} (email={}) без временной метки — пропуск",
+                    conn.id, c_email,
                 )
                 continue
 
@@ -893,16 +868,15 @@ class SyncService:
             if age < grace:
                 # Соединение слишком свежее — могло ещё не синхронизироваться
                 logger.debug(
-                    f"[RECONCILE] Соединение {conn.id} (email={c_email}) "
-                    f"моложе grace-period ({age.total_seconds():.0f}s < {grace.total_seconds():.0f}s) — пропуск"
+                    "Соединение {} (email={}) моложе grace-period ({:.0f}s < {:.0f}s) — пропуск",
+                    conn.id, c_email, age.total_seconds(), grace.total_seconds(),
                 )
                 continue
 
             # Помечаем как error (удалит шаг 2a на следующем проходе реконсилятора)
             logger.info(
-                f"[RECONCILE] Зеркало: соединение {conn.id} (email={c_email}) "
-                f"отсутствует на панели сервера {server.id}, возраст {age.total_seconds():.0f}s "
-                f"→ sync_status='error' (удаление — на следующем проходе)"
+                "Зеркало: соединение {} (email={}) отсутствует на панели {}, возраст {:.0f}s — помечаем error",
+                conn.id, c_email, server.name, age.total_seconds(),
             )
             conn.sync_status = "error"
 
@@ -921,8 +895,8 @@ class SyncService:
         if marked_for_notify:
             await self.session.flush()
             logger.info(
-                f"[RECONCILE] Сервер {server.id}: помечено как missing-on-panel={len(marked_for_notify)}, "
-                f"отправка уведомления администраторам"
+                "Сервер {}: помечено missing-on-panel={}, отправка уведомления администраторам",
+                server.name, len(marked_for_notify),
             )
             try:
                 from app.services.notification_service import NotificationService
@@ -933,13 +907,11 @@ class SyncService:
                 )
             except Exception as e:
                 logger.error(
-                    f"[RECONCILE] Не удалось отправить уведомление администраторам "
-                    f"о пропавших клиентах на сервере {server.id}: {e}"
+                    "Не удалось отправить уведомление о пропавших клиентах сервера {}: {}",
+                    server.name, e,
                 )
         else:
-            logger.debug(
-                f"[RECONCILE] Сервер {server.id}: все synced-соединения присутствуют на панели"
-            )
+            logger.debug("Сервер {}: все synced-соединения присутствуют на панели", server.name)
 
     async def _sync_inbound_clients(self, inbound: Inbound, xui_client: object | None = None) -> int:
         """Dispatch client sync to the appropriate protocol handler.
@@ -953,7 +925,7 @@ class SyncService:
         """
         handler = for_inbound(inbound)
         if handler is None:
-            logger.debug(f"[SYNC] No handler for inbound type '{inbound.type}', skipping {inbound.id}")
+            logger.debug("Нет обработчика для inbound типа '{}', пропуск {}", inbound.type, inbound.id)
             return 0
         return await handler.sync_clients(self.session, inbound, xui_service=self._xui_service)
 
@@ -1008,10 +980,10 @@ class SyncService:
                             stats["error"] += 1
 
                 except Exception as e:
-                    logger.debug(f"Не удалось проверить {connection.uuid}: {e}")
+                    logger.debug("Не удалось проверить {}: {}", connection.uuid, e)
 
         await self.session.flush()
-        logger.info(f"[STATS] Статистика целостности: {stats}")
+        logger.info("Статистика целостности: {}", stats)
         return stats["error"] == 0
 
     # === MANUAL SYNC ===
@@ -1028,34 +1000,27 @@ class SyncService:
         """
         results = {"synced": 0, "errors": 0, "details": []}
 
-        logger.info(
-            f"[LOG] manual_sync вызван с параметрами: entity_type={entity_type}, entity_id={entity_id}"
-        )
+        logger.debug("manual_sync: entity_type={}, entity_id={}", entity_type, entity_id)
 
         if entity_type == "all":
             # Полная синхронизация
-            logger.info("[LOG] Запуск _sync_cycle с force=True")
+            logger.debug("Запуск _sync_cycle с force=True")
             sync_result = await self._sync_cycle(force=True)
             results["synced"] = sync_result.get("servers", 0)
-            logger.info(f"[LOG] _sync_cycle завершен, sync_result={sync_result}")
+            logger.debug("_sync_cycle завершён, результат={}", sync_result)
             return results
 
         if self._sync_lock.locked():
-            logger.warning(
-                "[PAUSE] Пропуск ручной синхронизации - другая синхронизация уже выполняется"
-            )
+            logger.warning("Пропуск ручной синхронизации — другая синхронизация уже выполняется")
             results["errors"] += 1
             results["details"].append("Синхронизация уже выполняется")
             return results
 
-        # Использовать блокировку для предотвращения конфликтов с фоновой синхронизацией
-        logger.info("[LOG] Попытка получить блокировку для manual_sync")
         async with self._sync_lock:
-            logger.info(f"[LOG] Блокировка получена, начало обработки entity_type={entity_type}")
             try:
                 if entity_type == "server":
                     if entity_id:
-                        logger.info(f"[LOG] Синхронизация сервера {entity_id} (с клиентами)")
+                        logger.debug("Ручная синхронизация сервера {}", entity_id)
                         server = await self.session.get(
                             Server,
                             entity_id,
@@ -1072,14 +1037,14 @@ class SyncService:
                         else:
                             results["errors"] += 1
                     else:
-                        logger.info("[LOG] Синхронизация всех серверов (с клиентами)")
+                        logger.debug("Ручная синхронизация всех серверов")
                         # sync_all_servers уже синхронизирует клиентов внутри sync_server
                         synced_servers = await self.sync_all_servers(force=True)
                         results["synced"] = synced_servers
-                        logger.info(f"[LOG] Синхронизировано {synced_servers} серверов с клиентами")
+                        logger.debug("Синхронизировано серверов: {}", synced_servers)
 
                 elif entity_type == "connection" and entity_id:
-                    logger.info(f"[LOG] Синхронизация подключения {entity_id}")
+                    logger.debug("Ручная синхронизация подключения {}", entity_id)
                     connection = await self.session.get(InboundConnection, entity_id)
                     if connection:
                         # TODO: Реализовать двустороннюю синхронизацию подключений
@@ -1090,11 +1055,11 @@ class SyncService:
                         results["errors"] += 1
 
             except Exception as e:
-                logger.error(f"[ERROR] Ошибка ручной синхронизации: {type(e).__name__} - {str(e)}", exc_info=True)
+                logger.error("Ошибка ручной синхронизации: {} - {}", type(e).__name__, str(e), exc_info=True)
                 results["errors"] += 1
                 results["details"].append(f"{type(e).__name__}: {str(e)}")
 
-        logger.info(f"[LOG] manual_sync завершен, финальные results={results}")
+        logger.debug("manual_sync завершён, результат={}", results)
         return results
 
 
