@@ -507,11 +507,26 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                     ib for ib in all_inbounds if ib.id in data.get("selected_inbounds", set())
                 ]
 
+                # XUI-inbound'ы одной панели создаём ОДНИМ клиентом (inboundIds),
+                # иначе панель v3.2.5+ отвергает повторный subId. AWG/MTProxy — по одному.
                 created_connections = []
+                xui_ids_by_server: dict[int, list[int]] = {}
+                other_inbounds = []
                 for inbound in selected_inbounds:
+                    if getattr(inbound, "type", None) == "xui_inbound":
+                        xui_ids_by_server.setdefault(inbound.server_id, []).append(inbound.id)
+                    else:
+                        other_inbounds.append(inbound)
+
+                for inbound_ids in xui_ids_by_server.values():
+                    conns = await sub_service.add_xui_inbounds_to_subscription(
+                        subscription.id, inbound_ids
+                    )
+                    created_connections.extend(conns)
+
+                for inbound in other_inbounds:
                     connection = await sub_service.add_inbound_to_subscription(
-                        subscription.id,
-                        inbound.id,
+                        subscription.id, inbound.id
                     )
                     created_connections.append(connection)
 
