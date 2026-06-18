@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import signal
 import sys
 from pathlib import Path
 
@@ -170,12 +171,20 @@ async def main() -> None:
             logger.warning("Ошибка при закрытии singleton Bot уведомлений: {}", exc)
 
 
+def _handle_sigterm(signum: int, frame: object) -> None:
+    """SIGTERM (docker stop) → KeyboardInterrupt, чтобы отработал graceful-shutdown."""
+    raise KeyboardInterrupt
+
+
 def run() -> None:
     """Run the bot."""
+    # SIGTERM от `docker stop` приводим к тому же пути, что и Ctrl+C (SIGINT),
+    # чтобы finally в main() корректно закрыл сессии бота.
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Бот остановлен пользователем")
+        logger.info("Бот остановлен (SIGINT/SIGTERM)")
     except Exception as e:
         logger.exception("Бот аварийно завершился: {}", e)
         sys.exit(1)
