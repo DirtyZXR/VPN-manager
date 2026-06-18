@@ -591,9 +591,8 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                 await sub_service.close_all_clients()
         except Exception as e:
             logger.error("Ошибка создания подписки: {}", e, exc_info=True)
-            await callback.answer(
-                t("admin.subscriptions.error", "❌ Ошибка: {error}", error=str(e)), show_alert=True
-            )
+            # callback уже отвечён в начале обработчика; повторный answer() на
+            # протухшем query бросал TelegramBadRequest и не давал показать ошибку.
             client_id = data.get("client_id")
             back_target = f"client_subscriptions_{client_id}" if client_id else "admin_clients"
             await callback.message.edit_text(
@@ -607,8 +606,9 @@ async def create_subscription(callback: CallbackQuery, state: FSMContext) -> Non
         finally:
             await xui_service.close_all_clients()
 
+    # callback уже отвечён в начале обработчика; повторный answer() здесь — после
+    # длительной операции — ловил «query is too old» и засорял лог трейсбеком.
     await state.clear()
-    await callback.answer()
 
 
 # Additional subscription management handlers
