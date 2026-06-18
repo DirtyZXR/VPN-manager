@@ -72,20 +72,34 @@ class MTProxyProtocolSync(ProtocolSyncBase):
                     should_be_enabled = False
 
                 if conn.is_enabled and not should_be_enabled:
-                    await provider.disable_client(inbound, conn)
-                    conn.is_enabled = False
-                    conn.sync_status = "synced"
-                    conn.last_sync_at = now
-                    logger.info("MTProxy: подключение {} отключено (истёк срок)", conn.id)
-                    synced += 1
+                    if await provider.disable_client(inbound, conn):
+                        conn.is_enabled = False
+                        conn.sync_status = "synced"
+                        conn.last_sync_at = now
+                        logger.info("MTProxy: подключение {} отключено (истёк срок)", conn.id)
+                        synced += 1
+                    else:
+                        logger.warning(
+                            "MTProxy: не удалось отключить подключение {} на сервере — "
+                            "оставляю включённым (повтор в следующем цикле)",
+                            conn.id,
+                        )
 
                 elif not conn.is_enabled and should_be_enabled:
-                    await provider.enable_client(inbound, conn)
-                    conn.is_enabled = True
-                    conn.sync_status = "synced"
-                    conn.last_sync_at = now
-                    logger.info("MTProxy: подключение {} включено (подписка возобновлена)", conn.id)
-                    synced += 1
+                    if await provider.enable_client(inbound, conn):
+                        conn.is_enabled = True
+                        conn.sync_status = "synced"
+                        conn.last_sync_at = now
+                        logger.info(
+                            "MTProxy: подключение {} включено (подписка возобновлена)", conn.id
+                        )
+                        synced += 1
+                    else:
+                        logger.warning(
+                            "MTProxy: не удалось включить подключение {} на сервере "
+                            "(повтор в следующем цикле)",
+                            conn.id,
+                        )
 
             except Exception as e:
                 logger.warning("MTProxy sync: ошибка обработки подключения {}: {}", conn.id, e)

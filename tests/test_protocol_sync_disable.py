@@ -1,0 +1,92 @@
+"""Регресс: protocol-sync (AWG/MTProxy) не помечает соединение отключённым в БД,
+если серверная операция disable_client() провалилась (вернула False).
+
+Иначе истёкший клиент остаётся активным на сервере, а в БД числится отключённым
+(подписка кончилась, но VPN продолжает работать).
+"""
+
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from app.database.models import (
+    AWGInbound,
+    AWGInboundConnection,
+    Client,
+    Server,
+    Subscription,
+)
+from app.database.models.inbound import Inbound
+from app.services.protocol_sync.awg_sync import AWGProtocolSync
+
+
+async def _setup_expired(session, inbound_cls, conn_cls, uid, **conn_kwargs):
+    """Создать истёкшее, но включённое соединение нужного протокола."""
+    server = Server(name="S", ip_address="1.2.3.4", is_active=True)
+    session.add(server)
+    await session.flush()
+    inbound = inbound_cls(server_id=server.id, remark="r", protocol="p", is_active=True)
+    session.add(inbound)
+    client = Client(
+        name="C", email=f"c{uid}@example.com", telegram_id=uid, is_admin=False, is_active=True
+    )
+    session.add(client)
+    await session.flush()
+    sub = Subscription(
+        client_id=client.id,
+        name="sub",
+        subscription_token=f"tok{uid}",
+        total_gb=1,
+        expiry_date=datetime.now(UTC) + timedelta(days=30),
+        is_active=True,
+    )
+    session.add(sub)
+    await session.flush()
+    conn = conn_cls(
+        subscription_id=sub.id,
+        inbound_id=inbound.id,
+        is_enabled=True,
+        expiry_date=datetime.now(UTC) - timedelta(days=1),  # истёк
+        **conn_kwargs,
+    )
+    session.add(conn)
+    await session.flush()
+    inbound = (
+        await session.execute(
+            select(inbound_cls)
+            .where(inbound_cls.id == inbound.id)
+            .options(selectinload(Inbound.server))
+        )
+    ).scalar_one()
+    return inbound, conn
+
+
+@pytest.mark.asyncio
+async def test_awg_sync_keeps_enabled_when_disable_fails(test_session, mock_settings, monkeypatch):
+    """AWG: при провале disable_client() (сервер вернул False) соединение
+    НЕ должно помечаться отключённым в БД — иначе истёкший клиент остаётся
+    активным на сервере, а бот думает, что отключил.
+
+    (mtproxy_sync содержит идентичный паттерн и правится тем же фиксом.)
+    """
+    inbound, conn = await _setup_expired(
+        test_session, AWGInbound, AWGInboundConnection, 990001, public_key="pk"
+    )
+
+    provider = AsyncMock()
+    provider.disable_client = AsyncMock(return_value=False)  # сервер НЕ отключил
+    provider.close = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.vpn_providers.factory.get_vpn_provider",
+        lambda *a, **k: provider,
+    )
+
+    synced = await AWGProtocolSync().sync_clients(test_session, inbound)
+
+    # sync_clients модифицирует тот же объект conn в сессии — проверяем напрямую
+    assert conn.is_enabled is True, "is_enabled нельзя флипать при провале disable_client"
+    assert synced == 0
+    provider.disable_client.assert_awaited_once()
