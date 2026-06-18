@@ -1,11 +1,27 @@
 """XUI VPN Provider implementation."""
 
+import re
 import uuid
 from typing import Any
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.vpn_providers.base import BaseVPNProvider
 from app.xui_client import XUIAddClientRequest, XUIClient
+
+
+def _sanitize_panel_email(raw: str) -> str:
+    """Привести имя к идентификатору, пригодному для поля email в панели.
+
+    Панель (xray) отвергает в email пробелы и управляющие символы, поэтому
+    «сырое» имя клиента может оказаться невалидным. Оставляем буквы и цифры
+    (в том числе кириллицу), а также '.', '-', '_'; пробельные последовательности
+    схлопываем в '_', прочее отбрасываем.
+    """
+    collapsed = re.sub(r"\s+", "_", raw.strip())
+    safe = re.sub(r"[^\w.\-]", "", collapsed)
+    # Отбрасываем краевые разделители: '-'/'.' от пустых частей имени дают
+    # бессмысленный идентификатор вроде '-', который лучше заменить фолбэком.
+    return safe.strip("._-")
 
 
 class XUIProvider(BaseVPNProvider):
@@ -83,7 +99,10 @@ class XUIProvider(BaseVPNProvider):
         client = await self._get_client()
 
         client_uuid = client_uuid or str(uuid.uuid4())
-        base_email = email or f"{subscription.name}-{subscription.client.name}"
+        raw_email = email or f"{subscription.name}-{subscription.client.name}"
+        # Имена могут содержать пробелы/переводы строк/легаси-мусор — панель такой
+        # email отвергает; чистим и подстраховываемся токеном подписки.
+        base_email = _sanitize_panel_email(raw_email) or subscription.subscription_token
 
         # Calculate expiry
         expiry_time = 0

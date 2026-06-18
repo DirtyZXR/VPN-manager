@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.services.vpn_providers.xui_provider import XUIProvider
+from app.services.vpn_providers.xui_provider import XUIProvider, _sanitize_panel_email
 
 
 def _make_inbound(xui_id: int = 5, internal_id: int = 1) -> SimpleNamespace:
@@ -233,3 +233,82 @@ async def test_add_client_exhausts_all_attempts_raises_value_error():
 async def test_add_inbound_creates_unique_email():
     """Placeholder kept for future integration test with a real XUI panel."""
     pytest.skip("Requires a running XUI panel — integration test only")
+
+
+# ---------------------------------------------------------------------------
+# Санитизация email-идентификатора: панель отвергает пробелы и управляющие
+# символы. Имя должно превращаться в валидный идентификатор (кириллица — ок).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("Телефон-Николай Коля\n", "Телефон-Николай_Коля"),  # пробел + хвостовой \n
+        ("  Alice  ", "Alice"),                               # обрезка краёв
+        ("a\tb\nc", "a_b_c"),                                 # таб и перевод строки
+        ("name@with#bad$chars", "namewithbadchars"),          # пунктуация отбрасывается
+        ("Sub.Name-1_2", "Sub.Name-1_2"),                     # допустимые символы сохраняются
+        ("   ", ""),                                          # только пробелы → пусто
+        ("кириллица", "кириллица"),                           # юникод-буквы сохраняются
+    ],
+)
+def test_sanitize_panel_email(raw, expected):
+    assert _sanitize_panel_email(raw) == expected
+
+
+@pytest.mark.asyncio
+async def test_add_client_sanitizes_invalid_name():
+    """Имя с пробелом и хвостовым '\\n' даёт валидный идентификатор для панели.
+
+    Регресс: панель отвергала email вида 'Телефон-Николай Коля\\n'
+    ('client email contains an invalid character').
+    """
+    inbound = _make_inbound(xui_id=3)
+    subscription = _make_subscription(name="Телефон", client_name="Николай Коля\n")
+    expected_email = "Телефон-Николай_Коля"
+
+    traffic_calls: dict[str, int] = {}
+
+    async def probe_side_effect(email: str):
+        traffic_calls[email] = traffic_calls.get(email, 0) + 1
+        if traffic_calls[email] == 1:
+            return None  # email свободен
+        return {"uuid": "real-panel-uuid", "email": email}
+
+    provider, mock_client = _make_provider_with_mock_client(
+        get_traffic_side_effect=probe_side_effect
+    )
+
+    result = await provider.add_client(inbound, subscription)
+
+    assert result["email"] == expected_email
+    # add_client на панель ушёл с очищенным email, без пробелов и '\n'
+    mock_client.add_client.assert_called_once()
+    sent_req = mock_client.add_client.call_args[0][0]
+    assert sent_req.email == expected_email
+
+
+@pytest.mark.asyncio
+async def test_add_client_empty_name_falls_back_to_token():
+    """Если после очистки имя пустое (например, только пробелы) — фолбэк на токен."""
+    inbound = _make_inbound(xui_id=3)
+    subscription = _make_subscription(
+        name="   ", client_name="   ", subscription_token="tok_fallback"
+    )
+
+    traffic_calls: dict[str, int] = {}
+
+    async def probe_side_effect(email: str):
+        traffic_calls[email] = traffic_calls.get(email, 0) + 1
+        if traffic_calls[email] == 1:
+            return None
+        return {"uuid": "real-panel-uuid", "email": email}
+
+    provider, mock_client = _make_provider_with_mock_client(
+        get_traffic_side_effect=probe_side_effect
+    )
+
+    result = await provider.add_client(inbound, subscription)
+
+    assert result["email"] == "tok_fallback"
