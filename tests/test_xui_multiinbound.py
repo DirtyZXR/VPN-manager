@@ -208,3 +208,121 @@ async def test_add_xui_inbounds_compensates_on_db_failure(monkeypatch):
 
     # компенсация ровно один раз
     assert mock_provider.remove_client.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_subscription_removes_shared_client_once():
+    from unittest.mock import patch
+
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    def _conn(inbound_id):
+        c = MagicMock()
+        c.id = inbound_id
+        c.email = "Sub-Alice"  # общий email у всех соединений подписки
+        c.inbound_id = inbound_id
+        c.inbound = MagicMock()
+        c.inbound.server = MagicMock()
+        # все соединения — на ОДНОЙ панели, ключ дедупа (server_id, email) совпадает
+        c.inbound.server_id = 1
+        return c
+
+    sub = MagicMock()
+    sub.inbound_connections = [_conn(10), _conn(11), _conn(12)]
+
+    mock_session = AsyncMock()
+    mock_session.delete = AsyncMock()
+    mock_session.flush = AsyncMock()
+
+    svc = NewSubscriptionService(mock_session)
+    provider = AsyncMock()
+    provider.remove_client = AsyncMock(return_value=True)
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=provider)):
+        await svc.delete_subscription(sub)
+
+    # общий панельный клиент снимается ровно один раз
+    assert provider.remove_client.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_subscription_removes_per_panel_when_email_collides():
+    """Один email на ДВУХ панелях (разный server_id) — клиент снимается на каждой.
+
+    Email уникален лишь в рамках панели, поэтому при совпадении email на разных
+    серверах дедуп не должен пропускать снятие на второй панели (иначе там zombie).
+    """
+    from unittest.mock import patch
+
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    def _conn(conn_id, server_id):
+        c = MagicMock()
+        c.id = conn_id
+        c.email = "Sub-Alice"  # одинаковый email на обеих панелях
+        c.inbound_id = conn_id
+        c.inbound = MagicMock()
+        c.inbound.server = MagicMock()  # своя панель у каждого соединения
+        c.inbound.server_id = server_id
+        return c
+
+    sub = MagicMock()
+    sub.inbound_connections = [_conn(10, 1), _conn(11, 2)]
+
+    mock_session = AsyncMock()
+    mock_session.delete = AsyncMock()
+    mock_session.flush = AsyncMock()
+
+    svc = NewSubscriptionService(mock_session)
+    provider = AsyncMock()
+    provider.remove_client = AsyncMock(return_value=True)
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=provider)):
+        await svc.delete_subscription(sub)
+
+    # на каждой панели свой клиент — должно быть два снятия
+    assert provider.remove_client.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_client_all_connections_dedups_shared_client_per_panel():
+    """Два соединения с общим email на ОДНОЙ панели → один remove_client,
+    но обе DB-строки удаляются (дедуп не пропускает удаление строк)."""
+    from unittest.mock import patch
+
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    def _conn(conn_id):
+        c = MagicMock()
+        c.id = conn_id
+        c.email = "Sub-Alice"  # общий email
+        c.inbound_id = conn_id
+        c.inbound = MagicMock()
+        c.inbound.server = MagicMock()
+        c.inbound.server_id = 1  # одна и та же панель
+        return c
+
+    conn1, conn2 = _conn(10), _conn(11)
+    mock_sub = MagicMock()
+    mock_sub.inbound_connections = [conn1, conn2]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = [mock_sub]
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+    mock_session.delete = AsyncMock()
+    mock_session.flush = AsyncMock()
+
+    svc = NewSubscriptionService(mock_session)
+    provider = AsyncMock()
+    provider.remove_client = AsyncMock(return_value=True)
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=provider)):
+        await svc.delete_client_all_connections(client_id=1)
+
+    # общий клиент снят один раз, но обе строки удалены из БД
+    assert provider.remove_client.await_count == 1
+    assert mock_session.delete.await_count == 2
+    mock_session.delete.assert_any_await(conn1)
+    mock_session.delete.assert_any_await(conn2)

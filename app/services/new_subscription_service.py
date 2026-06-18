@@ -775,13 +775,29 @@ class NewSubscriptionService:
         subscriptions = result.scalars().all()
 
         deleted_count = 0
+        # Один панельный клиент может быть общим для нескольких inbound'ов ОДНОЙ
+        # панели (ключ — server_id+email), поэтому снимаем его один раз. На разных
+        # панелях email может совпадать (он уникален лишь в рамках панели), поэтому
+        # в ключ дедупа входит server_id — иначе на второй панели клиент останется
+        # zombie. DB-строки соединений удаляем всегда, дедуп только пропускает
+        # повторный вызов remove_client на той же панели.
+        removed_keys: set[tuple] = set()
         for subscription in subscriptions:
             for connection in subscription.inbound_connections:
                 # Delete from provider
                 inbound = connection.inbound
+                email = getattr(connection, "email", None)
+                server_id = getattr(inbound, "server_id", None)
+                key = (server_id, email)
+                if email and key in removed_keys:
+                    # Панельный клиент общий для нескольких inbound'ов панели — уже снят.
+                    await self.session.delete(connection)
+                    continue
                 try:
                     provider = await self._get_provider(inbound.server, inbound=inbound)
                     await provider.remove_client(inbound, connection)
+                    if email:
+                        removed_keys.add(key)
                     deleted_count += 1
                 except Exception as e:
                     logger.warning(
@@ -1330,13 +1346,28 @@ class NewSubscriptionService:
             if not subscription:
                 return False
 
+        # Один панельный клиент может быть общим для нескольких inbound'ов ОДНОЙ
+        # панели (ключ — server_id+email), поэтому такого клиента снимаем один раз.
+        # На разных панелях email может совпадать (он уникален лишь в рамках панели),
+        # поэтому в ключ дедупа обязательно входит server_id — иначе на второй панели
+        # клиент останется zombie.
+        removed_keys: set[tuple] = set()
         for connection in subscription.inbound_connections:
             try:
                 inbound = connection.inbound
+                email = getattr(connection, "email", None)
+                server_id = getattr(inbound, "server_id", None)
+                key = (server_id, email)
+                if email and key in removed_keys:
+                    if inbound and hasattr(inbound, "client_count") and inbound.client_count is not None:
+                        inbound.client_count -= 1
+                    continue
                 if inbound and inbound.server:
                     provider = await self._get_provider(inbound.server, inbound=inbound)
                     await provider.remove_client(inbound, connection)
-                    if hasattr(inbound, "client_count"):
+                    if email:
+                        removed_keys.add(key)
+                    if hasattr(inbound, "client_count") and inbound.client_count is not None:
                         inbound.client_count -= 1
             except Exception as e:
                 logger.warning(
