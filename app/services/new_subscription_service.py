@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
@@ -458,6 +459,111 @@ class NewSubscriptionService:
                         comp_error,
                     )
                 raise XUIError(f"Failed to save inbound connection: {str(db_error)}") from db_error
+
+    async def add_xui_inbounds_to_subscription(
+        self, subscription_id: int, inbound_ids: list[int]
+    ) -> list[InboundConnection]:
+        """Создать ОДИН панельный клиент на все переданные XUI-inbound'ы одной
+        панели и сохранить по строке на каждый inbound (общие uuid/email).
+
+        Все inbound_ids должны принадлежать одной XUI-панели (одному серверу) —
+        вызывающий код группирует их по серверу. Так панель v3.2.5+ не отвергает
+        повторный subId: один клиент (один subId) привязан сразу ко всем
+        inbound'ам через inboundIds.
+        """
+        if not inbound_ids:
+            return []
+
+        subscription = await self.get_subscription(subscription_id)
+        if not subscription:
+            raise XUIError("Subscription not found")
+
+        # Пропускаем inbound'ы, уже привязанные к этой подписке.
+        existing_result = await self.session.execute(
+            select(InboundConnection.inbound_id).where(
+                InboundConnection.subscription_id == subscription_id,
+                InboundConnection.inbound_id.in_(inbound_ids),
+            )
+        )
+        already = set(existing_result.scalars().all())
+        target_ids = [i for i in inbound_ids if i not in already]
+        if not target_ids:
+            return []
+
+        inbound_result = await self.session.execute(
+            select(Inbound).where(Inbound.id.in_(target_ids)).options(
+                selectinload(Inbound.server).selectinload(Server.xui_panel),
+                selectinload(Inbound.server).selectinload(Server.awg_service),
+                selectinload(Inbound.server).selectinload(Server.mtproxy_service),
+            )
+        )
+        inbounds = list(inbound_result.scalars().all())
+        if not inbounds:
+            raise XUIError("Inbounds not found")
+
+        server = inbounds[0].server
+        # Все inbound'ы должны быть одной панели: провайдер берётся по первому.
+        if any(ib.server_id != server.id for ib in inbounds):
+            raise XUIError("add_xui_inbounds_to_subscription: inbound'ы из разных панелей")
+        try:
+            provider = await self._get_provider(server, inbound=inbounds[0])
+        except Exception as e:
+            raise XUIError(f"Failed to get VPN provider: {e}") from e
+
+        try:
+            client_data = await provider.add_client_to_inbounds(inbounds, subscription)
+        except Exception as e:
+            logger.error("Не удалось создать клиента на VPN-панели: {}", e, exc_info=True)
+            raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
+
+        shared_uuid = client_data.get("uuid")
+        shared_email = client_data.get("email")
+
+        connections: list[InboundConnection] = []
+        async with self.session.begin_nested():
+            try:
+                for inbound in inbounds:
+                    connection = XUIInboundConnection(
+                        subscription_id=subscription_id,
+                        inbound_id=inbound.id,
+                        is_enabled=True,
+                        total_gb=subscription.total_gb,
+                        expiry_date=subscription.expiry_date,
+                        sync_status="synced",
+                        last_sync_at=datetime.now(UTC),
+                        provider_payload=client_data,
+                        uuid=shared_uuid,
+                        email=shared_email,
+                        xui_client_id=client_data.get("xui_client_id", shared_uuid),
+                    )
+                    connection.inbound = inbound
+                    connection.subscription = subscription
+                    self.session.add(connection)
+                    if hasattr(inbound, "client_count") and inbound.client_count is not None:
+                        inbound.client_count += 1
+                    connections.append(connection)
+                await self.session.flush()
+                return connections
+            except Exception as db_error:
+                logger.error(
+                    "Не удалось сохранить XUI-соединения для подписки {} (inbounds={}): {}",
+                    subscription_id, target_ids, db_error, exc_info=True,
+                )
+                # Saga: снять созданного на панели клиента один раз (общий email).
+                tmp = SimpleNamespace(
+                    email=shared_email, uuid=shared_uuid, provider_payload=client_data
+                )
+                try:
+                    await provider.remove_client(inbounds[0], tmp)
+                except Exception:
+                    logger.critical(
+                        "Zombie-клиент {} остался на панели (подписка {}): компенсация "
+                        "не удалась, будет очищен реконсилятором.",
+                        shared_email, subscription_id, exc_info=True,
+                    )
+                raise XUIError(
+                    f"Failed to save inbound connections: {str(db_error)}"
+                ) from db_error
 
     async def remove_inbound_from_subscription(
         self,
