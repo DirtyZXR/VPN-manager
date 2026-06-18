@@ -39,7 +39,9 @@ async def _check_first_setup(
 
     ok, err_msg = await installer.preflight_check()
     if not ok:
-        await message.answer(f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", parse_mode="HTML")
+        await callback.message.answer(
+            f"❌ Ошибка проверки прав SSH:\n<code>{err_msg}</code>", parse_mode="HTML"
+        )
         return False
 
     policy = await installer.get_firewall_policy()
@@ -238,6 +240,9 @@ async def _continue_to_installer(message, state: FSMContext) -> None:
     elif target == "xui":
         from app.bot.handlers.admin.servers.xui_install import _xui_ask_domain
         await _xui_ask_domain(message, state)
+    elif target == "mtproxy":
+        from app.bot.handlers.admin.servers.mtproxy import _mtproxy_ask_implementation
+        await _mtproxy_ask_implementation(message, state)
     else:
         server_id = data.get("server_id", 0)
         await state.clear()
