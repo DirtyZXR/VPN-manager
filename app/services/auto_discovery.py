@@ -4,13 +4,12 @@ Uses installer discover_existing() methods to read configuration from
 vpnbot-* containers.
 """
 
-import logging
 from typing import Any
+
+from loguru import logger
 
 from app.database.models import Server
 from app.services.ssh_service import SSHManager
-
-logger = logging.getLogger(__name__)
 
 
 class AutoDiscoveryService:
@@ -33,6 +32,8 @@ class AutoDiscoveryService:
     async def discover_all(self) -> dict[str, dict[str, Any]]:
         """Run all discovery checks.
 
+        Uses a single persistent SSH connection for all sub-discovery calls.
+
         Returns:
             Dict of discovered services and their details:
             {
@@ -41,26 +42,27 @@ class AutoDiscoveryService:
                 "mtproxy": {"port": ..., "implementation": ..., ...}
             }
         """
-        containers = await self._vpnbot_containers()
-        if not containers:
-            return {}
+        async with self.ssh:
+            containers = await self._vpnbot_containers()
+            if not containers:
+                return {}
 
-        discovered: dict[str, dict[str, Any]] = {}
+            discovered: dict[str, dict[str, Any]] = {}
 
-        if "vpnbot-xui" in containers:
-            details = await self.discover_xui()
-            if details:
-                discovered["3x-ui"] = details
+            if "vpnbot-xui" in containers:
+                details = await self.discover_xui()
+                if details:
+                    discovered["3x-ui"] = details
 
-        if "vpnbot-awg" in containers:
-            details = await self.discover_amnezia_awg()
-            if details:
-                discovered["amnezia-awg"] = details
+            if "vpnbot-awg" in containers:
+                details = await self.discover_amnezia_awg()
+                if details:
+                    discovered["amnezia-awg"] = details
 
-        if "vpnbot-mtproxy" in containers:
-            details = await self.discover_mtproxy()
-            if details:
-                discovered["mtproxy"] = details
+            if "vpnbot-mtproxy" in containers:
+                details = await self.discover_mtproxy()
+                if details:
+                    discovered["mtproxy"] = details
 
         return discovered
 
@@ -72,7 +74,7 @@ class AutoDiscoveryService:
             installer = XUIInstaller(self.ssh)
             return await installer.discover_existing()
         except Exception as e:
-            logger.debug(f"XUI discovery failed on server {self.server.id}: {e}")
+            logger.debug("XUI discovery не удался на сервере {}: {}", self.server.id, e)
             return None
 
     async def discover_amnezia_awg(self) -> dict[str, Any] | None:
@@ -83,7 +85,7 @@ class AutoDiscoveryService:
             installer = AWGInstaller(self.ssh)
             return await installer.discover_existing()
         except Exception as e:
-            logger.debug(f"AWG discovery failed on server {self.server.id}: {e}")
+            logger.debug("AWG discovery не удался на сервере {}: {}", self.server.id, e)
             return None
 
     async def discover_mtproxy(self) -> dict[str, Any] | None:
@@ -94,5 +96,5 @@ class AutoDiscoveryService:
             installer = MTProxyInstaller(self.ssh)
             return await installer.discover_existing()
         except Exception as e:
-            logger.debug(f"MTProxy discovery failed on server {self.server.id}: {e}")
+            logger.debug("MTProxy discovery не удался на сервере {}: {}", self.server.id, e)
             return None

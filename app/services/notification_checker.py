@@ -2,6 +2,7 @@
 
 import contextlib
 import hashlib
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,7 @@ from app.database.models.notification_log import (
     NotificationType,
 )
 from app.services import NotificationService
+from app.utils.date_utils import ensure_utc
 
 if TYPE_CHECKING:
     from app.xui_client import XUIClient
@@ -57,53 +59,54 @@ class NotificationChecker:
 
     async def check_and_notify(self) -> None:
         """Check all subscriptions and send notifications if needed."""
-        try:
-            await self._cleanup_old_logs()
+        with logger.contextualize(cycle=uuid.uuid4().hex[:8]):
+            try:
+                await self._cleanup_old_logs()
 
-            clients_result = await self.session.execute(
-                select(Client)
-                .where(Client.telegram_id.isnot(None))
-                .where(Client.is_active)
-                .options(
-                    selectinload(Client.subscriptions)
-                    .selectinload(Subscription.inbound_connections)
-                    .selectinload(InboundConnection.inbound)
-                    .selectinload(Inbound.server)
-                    .selectinload(Server.xui_panel),
+                clients_result = await self.session.execute(
+                    select(Client)
+                    .where(Client.telegram_id.isnot(None))
+                    .where(Client.is_active)
+                    .options(
+                        selectinload(Client.subscriptions)
+                        .selectinload(Subscription.inbound_connections)
+                        .selectinload(InboundConnection.inbound)
+                        .selectinload(Inbound.server)
+                        .selectinload(Server.xui_panel),
+                    )
                 )
-            )
-            clients = list(clients_result.scalars())
+                clients = list(clients_result.scalars())
 
-            for user in clients:
-                try:
-                    subscriptions = [s for s in user.subscriptions if s.is_active]
-                    if not subscriptions:
-                        continue
+                for user in clients:
+                    try:
+                        subscriptions = [s for s in user.subscriptions if s.is_active]
+                        if not subscriptions:
+                            continue
 
-                    subs_with_conns = []
-                    for sub in subscriptions:
-                        connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
-                        subs_with_conns.append({"subscription": sub, "connections": connections})
+                        subs_with_conns = []
+                        for sub in subscriptions:
+                            connections = [conn for conn in sub.inbound_connections if conn.is_enabled]
+                            subs_with_conns.append({"subscription": sub, "connections": connections})
 
-                    for notification_type, (
-                        window_min,
-                        window_max,
-                    ) in self.EXPIRY_THRESHOLDS.items():
-                        await self._check_expiry_notifications(
-                            user, subs_with_conns, notification_type.value, window_min, window_max
-                        )
+                        for notification_type, (
+                            window_min,
+                            window_max,
+                        ) in self.EXPIRY_THRESHOLDS.items():
+                            await self._check_expiry_notifications(
+                                user, subs_with_conns, notification_type.value, window_min, window_max
+                            )
 
-                    await self._check_traffic_notifications(user, subs_with_conns)
+                        await self._check_traffic_notifications(user, subs_with_conns)
 
-                    await self.session.commit()
+                        await self.session.commit()
 
-                except Exception as e:
-                    logger.error(f"Error checking user {user.id}: {e}", exc_info=True)
-                    with contextlib.suppress(Exception):
-                        await self.session.rollback()
+                    except Exception as e:
+                        logger.error("Ошибка проверки пользователя {}: {}", user.id, e, exc_info=True)
+                        with contextlib.suppress(Exception):
+                            await self.session.rollback()
 
-        except Exception as e:
-            logger.error(f"Error in notification checker: {e}", exc_info=True)
+            except Exception as e:
+                logger.error("Ошибка в обработчике уведомлений: {}", e, exc_info=True)
 
     async def _cleanup_old_logs(self) -> None:
         """Delete notification logs older than 7 days."""
@@ -115,7 +118,7 @@ class NotificationChecker:
             await self.session.commit()
             logger.info("Cleaned up notification logs older than 7 days")
         except Exception as e:
-            logger.error(f"Failed to clean up old logs: {e}", exc_info=True)
+            logger.error("Ошибка очистки старых логов уведомлений: {}", e, exc_info=True)
             with contextlib.suppress(Exception):
                 await self.session.rollback()
 
@@ -219,10 +222,8 @@ class NotificationChecker:
             if not subscription.expiry_date:
                 continue
 
-            # Handle timezone-aware vs naive datetimes
-            expiry_date = subscription.expiry_date
-            if expiry_date.tzinfo is None:
-                expiry_date = expiry_date.replace(tzinfo=UTC)
+            # Normalise timezone (legacy naive rows treated as UTC)
+            expiry_date = ensure_utc(subscription.expiry_date)
 
             # Check if within threshold window
             if expiry_date <= now + window_min or expiry_date > now + window_max:
@@ -403,51 +404,60 @@ class NotificationChecker:
         """
 
         if not hasattr(conn, "inbound") or not conn.inbound:
-            logger.warning(f"Connection {conn.id} has no eager loaded inbound")
+            logger.warning("Соединение {} не имеет предзагруженного inbound", conn.id)
             return None
 
         inbound = conn.inbound
 
         if not hasattr(inbound, "server") or not inbound.server:
-            logger.warning(f"Inbound {inbound.id} has no eager loaded server")
+            logger.warning("Inbound {} не имеет предзагруженного сервера", inbound.id)
             return None
 
         server = inbound.server
 
         if conn.type not in ("xui_inbound_connection",):
-            logger.debug(f"Skipping traffic for connection {conn.id} (type={conn.type})")
+            logger.debug("Пропуск трафика для соединения {} (тип={})", conn.id, conn.type)
             return None
 
         if getattr(server, "is_online", True) is False:
-            logger.debug(f"Skipping traffic for connection {conn.id} (server {server.id} offline)")
+            logger.debug("Пропуск трафика для соединения {} (сервер {} недоступен)", conn.id, server.id)
             return None
 
         try:
-            logger.debug(f"Getting traffic for connection {conn.id} (type={conn.type}, inbound={inbound.id}, server={server.id})")
+            logger.debug("Запрос трафика: соединение {}, тип={}, inbound={}, сервер={}", conn.id, conn.type, inbound.id, server.id)
 
             if server.id not in self._xui_clients:
                 from app.services.xui_service import XUIService
 
-                logger.debug(f"Creating new XUIService for server {server.id}")
+                logger.debug("Создание XUIService для сервера {}", server.id)
                 xui_service = XUIService(self.session)
-                logger.debug(f"Calling _get_client for server {server.id}, xui_panel={bool(server.xui_panel)}")
+                logger.debug("Вызов _get_client для сервера {}, xui_panel={}", server.id, bool(server.xui_panel))
                 self._xui_clients[server.id] = await xui_service._get_client(server)
-                logger.debug(f"XUI client created for server {server.id}")
+                logger.debug("XUI клиент создан для сервера {}", server.id)
 
             client = self._xui_clients[server.id]
 
-            logger.debug(f"Getting clients from XUI for inbound {inbound.id}, xui_id={getattr(inbound, 'xui_id', 'N/A')}")
-            clients = await client.get_clients(inbound.xui_id)
+            logger.debug("Запрос клиентов XUI для inbound {}, xui_id={}", inbound.id, getattr(inbound, "xui_id", "N/A"))
+            all_clients = await client.get_clients()
+            # Filter panel-wide list to this inbound (each client has inboundIds: list[int])
+            xui_id = getattr(inbound, "xui_id", None)
+            clients = [
+                c for c in all_clients
+                if xui_id is not None and xui_id in c.get("inboundIds", [])
+            ]
             for xui_client in clients:
-                if xui_client.get("id") == conn.uuid:
-                    used_gb = (xui_client.get("up", 0) + xui_client.get("down", 0)) / (1024**3)
-                    logger.debug(f"Traffic for connection {conn.id}: {used_gb:.2f} GB")
+                if xui_client.get("uuid") == conn.uuid or xui_client.get("id") == conn.uuid:
+                    # In the panel-wide list, traffic counters may be under a
+                    # nested "traffic" key or directly on the item.
+                    traffic = xui_client.get("traffic") or xui_client
+                    used_gb = (traffic.get("up", 0) + traffic.get("down", 0)) / (1024**3)
+                    logger.debug("Трафик соединения {}: {:.2f} ГБ", conn.id, used_gb)
                     return {"used_gb": used_gb}
 
-            logger.debug(f"No matching XUI client found for connection {conn.id} uuid={conn.uuid}")
+            logger.debug("Клиент XUI не найден для соединения {} (uuid={})", conn.id, conn.uuid)
 
         except Exception as e:
-            logger.error(f"Error getting traffic for connection {conn.id} (type={conn.type}, server={server.id}): {e}", exc_info=True)
+            logger.error("Ошибка получения трафика для соединения {} (тип={}, сервер={}): {}", conn.id, conn.type, server.id, e, exc_info=True)
 
         return None
 
@@ -606,14 +616,14 @@ class NotificationChecker:
             )
 
             logger.info(
-                f"✅ Sent expiry notification to user {user.id} "
-                f"(Telegram ID: {user.telegram_id}) "
-                f"for {len(subscriptions)} subscription(s)"
+                "Уведомление об истечении отправлено пользователю {} (telegram_id={}), подписок: {}",
+                user.id, user.telegram_id, len(subscriptions),
             )
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send expiry notification to user {user.id}: {e}", exc_info=True
+                "Не удалось отправить уведомление об истечении пользователю {}: {}",
+                user.id, e, exc_info=True,
             )
             raise
 
@@ -655,14 +665,14 @@ class NotificationChecker:
             )
 
             logger.info(
-                f"✅ Sent traffic notification to user {user.id} "
-                f"(Telegram ID: {user.telegram_id}) "
-                f"for {len(subscriptions)} subscription(s)"
+                "Уведомление о трафике отправлено пользователю {} (telegram_id={}), подписок: {}",
+                user.id, user.telegram_id, len(subscriptions),
             )
 
         except Exception as e:
             logger.error(
-                f"❌ Failed to send traffic notification to user {user.id}: {e}", exc_info=True
+                "Не удалось отправить уведомление о трафике пользователю {}: {}",
+                user.id, e, exc_info=True,
             )
             raise
 
@@ -687,9 +697,9 @@ class NotificationChecker:
         # notification_type is already a string
         notification_type_str = notification_type
 
-        if notification_type_str == NotificationType.EXPIRY_24H:
+        if notification_type_str == NotificationType.EXPIRY_24H.value:
             time_text = "через 24 часа"
-        elif notification_type_str == NotificationType.EXPIRY_12H:
+        elif notification_type_str == NotificationType.EXPIRY_12H.value:
             time_text = "через 12 часов"
         else:  # EXPIRY_1H
             time_text = "через 1 час"
@@ -840,7 +850,7 @@ class NotificationChecker:
             # Flush to ensure the log is visible to subsequent checks within the same transaction
             await self.session.flush()
         except Exception as e:
-            logger.error(f"Failed to log notification: {e}", exc_info=True)
+            logger.error("Ошибка записи лога уведомления: {}", e, exc_info=True)
             # Don't rollback - let the caller handle it
 
     async def close(self) -> None:
@@ -849,5 +859,5 @@ class NotificationChecker:
             try:
                 await client.close()
             except Exception as e:
-                logger.error(f"Error closing XUI client: {e}", exc_info=True)
+                logger.error("Ошибка закрытия XUI клиента: {}", e, exc_info=True)
         self._xui_clients.clear()

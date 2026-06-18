@@ -37,12 +37,12 @@ class AuthMiddleware(BaseMiddleware):
         if not tg_user:
             return await handler(event, data)
 
-        logger.debug(f"Checking client: ID={tg_user.id}, full_name={tg_user.full_name}")
+        logger.debug("Проверка клиента: ID={}, full_name={}", tg_user.id, tg_user.full_name)
         settings = get_settings()
 
         # Check if client is admin by telegram ID from config
         is_admin = settings.is_admin(tg_user.id)
-        logger.debug(f"Client is_admin={is_admin}, admin_ids={settings.admin_ids}")
+        logger.debug("Клиент is_admin={}", is_admin)
 
         async with async_session_factory() as session:
             client_service = ClientService(session)
@@ -52,7 +52,7 @@ class AuthMiddleware(BaseMiddleware):
 
             if not client and is_admin:
                 # Auto-create admin client
-                logger.info(f"Auto-creating admin client: {tg_user.full_name} (ID: {tg_user.id})")
+                logger.info("Авто-создание клиента-администратора: {} (ID: {})", tg_user.full_name, tg_user.id)
                 client = await client_service.create_client(
                     name=tg_user.full_name,
                     telegram_id=tg_user.id,

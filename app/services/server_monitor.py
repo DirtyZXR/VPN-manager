@@ -1,13 +1,12 @@
 """Server monitor service for pinging and checking host availability."""
 
 import asyncio
-import logging
 import platform
+
+from loguru import logger
 
 from app.database import async_session_factory
 from app.database.models import Server
-
-logger = logging.getLogger(__name__)
 
 
 class ServerMonitor:
@@ -46,7 +45,7 @@ class ServerMonitor:
             await process.communicate()
             return process.returncode == 0
         except Exception as e:
-            logger.error(f"Ping failed for host {host}: {e}")
+            logger.error("Ping не удался для хоста {}: {}", host, e)
             return False
 
     @classmethod

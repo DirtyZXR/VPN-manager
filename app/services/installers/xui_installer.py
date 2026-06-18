@@ -13,13 +13,10 @@ Container names: vpnbot-xui (3x-ui), vpnbot-caddy (Caddy)
 Config dir on server: /opt/vpnbot/xui/
 """
 
-import logging
-
 import bcrypt
+from loguru import logger
 
 from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
-
-logger = logging.getLogger(__name__)
 
 XUI_SERVICE_DIR = f"{BASE_DIR}/xui"
 XUI_CONTAINER = "xui"
@@ -27,6 +24,11 @@ CADDY_CONTAINER = "caddy"
 
 XUI_INTERNAL_PORT = 2053
 XUI_SUB_PORT = 2096
+
+
+def _sql_str(value: str) -> str:
+    """Escape a string for safe inlining into a single-quoted SQLite literal."""
+    return value.replace("'", "''")
 
 
 def _parse_port_ranges(text: str) -> list[tuple[int, int]]:
@@ -93,43 +95,44 @@ class XUIInstaller(BaseInstaller):
         """
         import re
 
-        caddyfile = await self._cmd(f"cat {XUI_SERVICE_DIR}/caddy/Caddyfile")
+        async with self.ssh:
+            caddyfile = await self._cmd(f"cat {XUI_SERVICE_DIR}/caddy/Caddyfile")
 
-        port_match = re.search(r"^([\w.\-]+):(\d+)\s*\{", caddyfile, re.MULTILINE)
-        domain = port_match.group(1) if port_match else None
-        caddy_port = int(port_match.group(2)) if port_match else 8443
+            port_match = re.search(r"^([\w.\-]+):(\d+)\s*\{", caddyfile, re.MULTILINE)
+            domain = port_match.group(1) if port_match else None
+            caddy_port = int(port_match.group(2)) if port_match else 8443
 
-        web_path = "/"
-        sub_path = "/sub/"
-        sub_json_path = "/json/"
-        username = "admin"
+            web_path = "/"
+            sub_path = "/sub/"
+            sub_json_path = "/json/"
+            username = "admin"
 
-        try:
-            db = "docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db"
+            try:
+                db = "docker exec -i vpnbot-xui sqlite3 /etc/x-ui/x-ui.db"
 
-            row = await self._cmd(f'{db} "SELECT username FROM users LIMIT 1"')
-            if row.strip():
-                username = row.strip()
+                row = await self._cmd(f'{db} "SELECT username FROM users LIMIT 1"')
+                if row.strip():
+                    username = row.strip()
 
-            row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='webBasePath'\"")
-            if row.strip():
-                web_path = row.strip()
-                if not web_path.endswith("/"):
-                    web_path += "/"
+                row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='webBasePath'\"")
+                if row.strip():
+                    web_path = row.strip()
+                    if not web_path.endswith("/"):
+                        web_path += "/"
 
-            row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='subPath'\"")
-            if row.strip():
-                sub_path = row.strip()
-                if not sub_path.endswith("/"):
-                    sub_path += "/"
+                row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='subPath'\"")
+                if row.strip():
+                    sub_path = row.strip()
+                    if not sub_path.endswith("/"):
+                        sub_path += "/"
 
-            row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='subJsonPath'\"")
-            if row.strip():
-                sub_json_path = row.strip()
-                if not sub_json_path.endswith("/"):
-                    sub_json_path += "/"
-        except Exception:
-            pass
+                row = await self._cmd(f"{db} \"SELECT value FROM settings WHERE key='subJsonPath'\"")
+                if row.strip():
+                    sub_json_path = row.strip()
+                    if not sub_json_path.endswith("/"):
+                        sub_json_path += "/"
+            except Exception:
+                pass
 
         return {
             "domain": domain or self.ssh.host,
@@ -186,65 +189,66 @@ class XUIInstaller(BaseInstaller):
                 ports_to_clean.append((port, "udp"))
 
         try:
-            logger.info(
-                f"Installing 3x-ui on {self.ssh.host}, "
-                f"domain={domain}, caddy_port={caddy_port}"
-            )
+            async with self.ssh:
+                logger.info(
+                    "Установка 3x-ui на {}, domain={}, caddy_port={}",
+                    self.ssh.host, domain, caddy_port,
+                )
 
-            await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
-            await self.prepare_host()
+                await self._progress(1, 9, "Подготовка сервера (Docker, утилиты)...")
+                await self.prepare_host()
 
-            if await self.check_already_installed():
-                if force:
-                    logger.warning(f"Force reinstall: removing existing vpnbot-xui/caddy on {self.ssh.host}")
-                    await self._cmd("docker rm -f vpnbot-xui vpnbot-caddy 2>/dev/null || true")
-                    await self._cmd("sleep 2")
-                else:
-                    raise AlreadyInstalledError(
-                        f"3x-ui уже установлен на {self.ssh.host}. "
-                        "Для переустановки нажмите кнопку ниже."
-                    )
+                if await self.check_already_installed():
+                    if force:
+                        logger.warning("Принудительная переустановка: удаляю vpnbot-xui/caddy на {}", self.ssh.host)
+                        await self._cmd("docker rm -f vpnbot-xui vpnbot-caddy 2>/dev/null || true")
+                        await self._cmd("sleep 2")
+                    else:
+                        raise AlreadyInstalledError(
+                            f"3x-ui уже установлен на {self.ssh.host}. "
+                            "Для переустановки нажмите кнопку ниже."
+                        )
 
-            if not await self.check_port_free(caddy_port):
-                raise RuntimeError(f"Port {caddy_port} is occupied on {self.ssh.host}")
+                if not await self.check_port_free(caddy_port):
+                    raise RuntimeError(f"Port {caddy_port} is occupied on {self.ssh.host}")
 
-            await self._progress(2, 9, "Открытие портов в файрволе...")
-            await self._open_firewall_ports(caddy_port, inbound_ranges)
-            await self._block_internal_ports()
+                await self._progress(2, 9, "Открытие портов в файрволе...")
+                await self._open_firewall_ports(caddy_port, inbound_ranges)
+                await self._block_internal_ports()
 
-            await self._progress(3, 9, "Создание директорий...")
-            await self._create_dirs(service_dir)
+                await self._progress(3, 9, "Создание директорий...")
+                await self._create_dirs(service_dir)
 
-            await self._progress(4, 9, "Запись docker-compose.yml...")
-            await self._write_compose_file(service_dir, domain, caddy_port)
+                await self._progress(4, 9, "Запись docker-compose.yml...")
+                await self._write_compose_file(service_dir, domain, caddy_port)
 
-            await self._progress(5, 9, "Запись Caddyfile...")
-            await self._write_caddyfile(service_dir, domain, caddy_port, sub_path, sub_json_path, web_path)
+                await self._progress(5, 9, "Запись Caddyfile...")
+                await self._write_caddyfile(service_dir, domain, caddy_port, sub_path, sub_json_path, web_path)
 
-            await self._progress(6, 9, "Запуск контейнеров (может занять 1-2 мин)...")
-            await self._start_containers(service_dir)
+                await self._progress(6, 9, "Запуск контейнеров (может занять 1-2 мин)...")
+                await self._start_containers(service_dir)
 
-            await self._progress(7, 9, "Настройка 3x-ui (credentials, пути, порты)...")
-            await self._configure_xui(username, password, web_path, sub_path, sub_json_path, domain, caddy_port)
+                await self._progress(7, 9, "Настройка 3x-ui (credentials, пути, порты)...")
+                await self._configure_xui(username, password, web_path, sub_path, sub_json_path, domain, caddy_port)
 
-            await self._progress(8, 9, "Проверка доступности панели...")
-            await self._verify_panel(caddy_port, domain, web_path)
+                await self._progress(8, 9, "Проверка доступности панели...")
+                await self._verify_panel(caddy_port, domain, web_path)
 
-            await self._progress(9, 9, "Установка завершена")
+                await self._progress(9, 9, "Установка завершена")
 
-            logger.info(f"3x-ui installed successfully on {self.ssh.host}")
+                logger.info("3x-ui установлен на {}", self.ssh.host)
 
-            return {
-                "containers": ["vpnbot-xui", "vpnbot-caddy"],
-                "domain": domain,
-                "caddy_port": caddy_port,
-                "web_path": web_path,
-                "sub_path": sub_path,
-                "sub_json_path": sub_json_path,
-                "username": username,
-                "inbound_ranges": inbound_ranges,
-                "service_dir": service_dir,
-            }
+                return {
+                    "containers": ["vpnbot-xui", "vpnbot-caddy"],
+                    "domain": domain,
+                    "caddy_port": caddy_port,
+                    "web_path": web_path,
+                    "sub_path": sub_path,
+                    "sub_json_path": sub_json_path,
+                    "username": username,
+                    "inbound_ranges": inbound_ranges,
+                    "service_dir": service_dir,
+                }
         except Exception:
             logger.exception("3x-ui installation failed, running cleanup")
             await self.cleanup(
@@ -393,13 +397,13 @@ class XUIInstaller(BaseInstaller):
 
         sql_ins = (
             f"INSERT INTO settings (key, value) VALUES "
-            f"('webBasePath', '{clean_web}'), "
-            f"('subPath', '{clean_sub}'), "
-            f"('subJsonPath', '{clean_json}'), "
+            f"('webBasePath', '{_sql_str(clean_web)}'), "
+            f"('subPath', '{_sql_str(clean_sub)}'), "
+            f"('subJsonPath', '{_sql_str(clean_json)}'), "
             f"('subEnable', 'true'), "
             f"('subJsonEnable', 'true'), "
-            f"('subURI', '{sub_uri}'), "
-            f"('subJsonURI', '{sub_json_uri}'), "
+            f"('subURI', '{_sql_str(sub_uri)}'), "
+            f"('subJsonURI', '{_sql_str(sub_json_uri)}'), "
             f"('webPort', '{XUI_INTERNAL_PORT}'), "
             f"('subPort', '{XUI_SUB_PORT}')"
         )
@@ -409,8 +413,8 @@ class XUIInstaller(BaseInstaller):
         )
 
         sql_user = (
-            f"UPDATE users SET username='{username}', "
-            f"password='{self._hash_password_bcrypt(password)}' "
+            f"UPDATE users SET username='{_sql_str(username)}', "
+            f"password='{_sql_str(self._hash_password_bcrypt(password))}' "
             f"WHERE id=1"
         )
         await self._cmd(
@@ -435,14 +439,14 @@ class XUIInstaller(BaseInstaller):
             raise RuntimeError(
                 f"Panel verification failed: HTTP {code} from {xui_url}"
             )
-        logger.info(f"Panel verified via internal port: HTTP {code}")
+        logger.info("Панель доступна через внутренний порт: HTTP {}", code)
 
         caddy_url = f"https://{domain}:{caddy_port}/{clean_web}/" if clean_web else f"https://{domain}:{caddy_port}/"
         caddy_result = await self._cmd(
             f"curl -sk -o /dev/null -w '%{{http_code}}' {caddy_url}"
         )
         caddy_code = caddy_result.strip().strip("'")
-        logger.info(f"Caddy proxy verified: HTTP {caddy_code} from {caddy_url}")
+        logger.info("Caddy-прокси доступен: HTTP {} ({})", caddy_code, caddy_url)
 
     @staticmethod
     def _hash_password_bcrypt(password: str) -> str:

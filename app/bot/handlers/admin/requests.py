@@ -4,6 +4,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 from loguru import logger
 
+from app.bot.filters import AdminFilter
 from app.database import async_session_factory
 from app.services.notification_service import NotificationService
 from app.services.subscription_request_service import SubscriptionRequestService
@@ -11,17 +12,13 @@ from app.services.subscription_template_service import SubscriptionTemplateServi
 from app.utils.texts import t
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data.startswith("admin_req_approve_"))
-async def approve_request(callback: CallbackQuery, is_admin: bool):
+async def approve_request(callback: CallbackQuery):
     """Approve subscription request."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.requests.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     req_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:
@@ -58,7 +55,7 @@ async def approve_request(callback: CallbackQuery, is_admin: bool):
             await callback.message.edit_text(t("admin.requests.approved", "✅ Запрос одобрен."))
             await callback.answer()
         except Exception as e:
-            logger.error(f"Failed to approve request {req_id}: {e}")
+            logger.error("Ошибка при одобрении запроса {}: {}", req_id, e)
             await callback.answer(
                 t("admin.requests.approve_error", "❌ Ошибка: {error}", error=str(e)),
                 show_alert=True,
@@ -66,14 +63,8 @@ async def approve_request(callback: CallbackQuery, is_admin: bool):
 
 
 @router.callback_query(F.data.startswith("admin_req_reject_"))
-async def reject_request(callback: CallbackQuery, is_admin: bool):
+async def reject_request(callback: CallbackQuery):
     """Reject subscription request."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.requests.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     req_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:

@@ -276,12 +276,14 @@ class ClientService:
                 sub_service = NewSubscriptionService(self.session)
                 updated = await sub_service.sync_client_telegram_id(client_id)
                 logger.info(
-                    f"✅ Synced Telegram ID for client {client_id}, updated {updated} connections in XUI"
+                    "Telegram ID клиента {} синхронизирован, обновлено {} соединений в XUI",
+                    client_id, updated,
                 )
                 await sub_service.close_all_clients()
             except Exception as e:
                 logger.error(
-                    f"Failed to sync Telegram ID for client {client_id}: {e}", exc_info=True
+                    "Не удалось синхронизировать Telegram ID для клиента {}: {}",
+                    client_id, e, exc_info=True,
                 )
 
         return client
@@ -435,6 +437,7 @@ class ClientService:
         from sqlalchemy import or_
 
         from app.database.models import InboundConnection, Subscription
+        from app.database.models.inbound_connection import XUIInboundConnection
 
         # If query is purely numeric, search only by telegram_id
         if query.strip().isdigit():
@@ -467,13 +470,13 @@ class ClientService:
 
         all_conditions.append(Client.telegram_username_lower.like(f"%{query_lower}%"))
 
-        xui_email_condition = InboundConnection.email.like(f"%{normalized_email}%")
+        xui_email_condition = XUIInboundConnection.email.like(f"%{normalized_email}%")
 
         search_query = select(Client).options(selectinload(Client.subscriptions))
 
-        search_query = search_query.join(Subscription, Client.id == Subscription.client_id).join(
-            InboundConnection, Subscription.id == InboundConnection.subscription_id
-        )
+        search_query = search_query.outerjoin(
+            Subscription, Client.id == Subscription.client_id
+        ).outerjoin(InboundConnection, Subscription.id == InboundConnection.subscription_id)
 
         direct_conditions = or_(*all_conditions)
         final_condition = or_(direct_conditions, xui_email_condition)

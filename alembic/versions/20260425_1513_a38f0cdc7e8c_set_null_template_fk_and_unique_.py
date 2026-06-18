@@ -5,9 +5,8 @@ Revises: 1ab520fe48a5
 Create Date: 2026-04-25 15:13:17.778448
 
 """
-from alembic import op
-import sqlalchemy as sa
 
+from alembic import op
 
 revision = 'a38f0cdc7e8c'
 down_revision = '1ab520fe48a5'

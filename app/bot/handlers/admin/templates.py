@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
+from app.bot.filters import AdminFilter
 from app.bot.keyboards import (
     get_back_keyboard,
     get_confirm_keyboard,
@@ -29,17 +30,13 @@ from app.utils.texts import t
 from app.xui_client.exceptions import XUIError
 
 router = Router()
+router.message.filter(AdminFilter())
+router.callback_query.filter(AdminFilter())
 
 
 @router.callback_query(F.data == "admin_templates")
-async def show_templates(callback: CallbackQuery, is_admin: bool, state: FSMContext):
+async def show_templates(callback: CallbackQuery, state: FSMContext):
     """Show templates list."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     current_state = await state.get_state()
     if current_state:
         await state.clear()
@@ -79,14 +76,8 @@ async def show_templates(callback: CallbackQuery, is_admin: bool, state: FSMCont
 
 
 @router.callback_query(F.data == "template_add")
-async def start_template_creation(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_template_creation(callback: CallbackQuery, state: FSMContext):
     """Start template creation."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     await state.clear()
     await state.set_state(TemplateManagement.waiting_for_template_name)
 
@@ -281,7 +272,7 @@ async def handle_template_notes(message: Message, state: FSMContext):
             )
             await session.commit()
 
-            logger.info(f"✅ Template created: {template.name} (ID: {template.id})")
+            logger.info("Шаблон {} создан (ID: {})", template.name, template.id)
 
         await state.clear()
 
@@ -320,11 +311,11 @@ async def handle_template_notes(message: Message, state: FSMContext):
 
     except XUIError as e:
         await state.clear()
-        logger.info(f"Template creation failed: {str(e)}")
+        logger.warning("Создание шаблона не удалось: {}", e)
         await message.answer(t("admin.templates.error_prefix", "❌ {error}", error=str(e)))
     except Exception as e:
         await state.clear()
-        logger.error(f"Error creating template: {e}", exc_info=True)
+        logger.error("Ошибка создания шаблона: {}", e, exc_info=True)
         await message.answer(
             t(
                 "admin.templates.create_error",
@@ -337,14 +328,8 @@ async def handle_template_notes(message: Message, state: FSMContext):
 @router.callback_query(
     F.data.startswith("template_select_") & ~F.data.startswith("template_select_inbound_")
 )
-async def show_template_details(callback: CallbackQuery, is_admin: bool):
+async def show_template_details(callback: CallbackQuery):
     """Show template details."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[2])
 
     async with async_session_factory() as session:
@@ -395,14 +380,8 @@ async def show_template_details(callback: CallbackQuery, is_admin: bool):
 
 
 @router.callback_query(F.data.startswith("admin_tpl_toggle_public_"))
-async def toggle_template_public_status(callback: CallbackQuery, is_admin: bool):
+async def toggle_template_public_status(callback: CallbackQuery):
     """Toggle template public status."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[4])
 
     async with async_session_factory() as session:
@@ -451,15 +430,9 @@ async def toggle_template_public_status(callback: CallbackQuery, is_admin: bool)
 
 @router.callback_query(F.data.startswith("template_create_subscription_"))
 async def start_subscription_from_template(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ):
     """Start subscription creation from template."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[3])
 
     await state.update_data(template_id=template_id)
@@ -638,7 +611,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
             from app.services.new_subscription_service import NewSubscriptionService
             sub_service = NewSubscriptionService(session)
             subscription = await sub_service.get_subscription_by_id(subscription.id)
-            
+
             connections = list(subscription.inbound_connections)
 
             # Get client for notification
@@ -655,7 +628,7 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
                     subscription=subscription,
                     connections=connections,
                 )
-                
+
             # Extract properties needed for message before committing (which expires objects)
             sub_total_gb = subscription.total_gb
             sub_expiry_date = subscription.expiry_date
@@ -714,21 +687,15 @@ async def handle_template_subscription_name(message: Message, state: FSMContext)
         return
     except Exception as e:
         await state.clear()
-        logger.error(f"Error creating subscription from template: {e}", exc_info=True)
+        logger.error("Ошибка создания подписки из шаблона: {}", e, exc_info=True)
         await message.answer(
             t("admin.templates.create_sub_error", "❌ Произошла ошибка при создании подписки")
         )
 
 
 @router.callback_query(F.data.startswith("template_add_inbound_"))
-async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_add_inbound_to_template(callback: CallbackQuery, state: FSMContext):
     """Start adding inbound to template - show multi-select for available inbounds."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:
@@ -904,7 +871,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
                     )
                     added_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to add inbound {inbound_id} to template: {e}")
+                    logger.warning("Не удалось добавить inbound {} в шаблон: {}", inbound_id, e)
 
             await session.commit()
 
@@ -918,9 +885,9 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
                             removed_inbound_ids=set(),
                         )
                         await bg_session.commit()
-                        logger.info("✅ Background task completed successfully")
+                        logger.debug("Фоновая задача добавления inbound завершена")
                 except Exception as e:
-                    logger.error(f"❌ Background task failed: {e}")
+                    logger.warning("Фоновая задача добавления inbound завершилась с ошибкой: {}", e)
 
             asyncio.create_task(run_bg())
 
@@ -928,7 +895,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
             template = await template_service.get_template(template_id)
             await template_service.get_template_inbounds(template_id)
 
-            logger.info(f"✅ Added {added_count} inbounds to template {template.name}")
+            logger.info("Добавлено {} inbound к шаблону {}", added_count, template.name)
 
         # Show success message and return to server selection
         await state.clear()
@@ -976,7 +943,7 @@ async def confirm_add_inbounds_to_template(callback: CallbackQuery, state: FSMCo
         await callback.answer()
     except Exception as e:
         await state.clear()
-        logger.error(f"Error adding inbounds to template: {e}", exc_info=True)
+        logger.error("Ошибка добавления inbound к шаблону: {}", e, exc_info=True)
         await callback.message.edit_text(
             t(
                 "admin.templates.add_inbounds_error",
@@ -1003,14 +970,8 @@ async def get_template_inbounds(template_id: int) -> set:
 
 
 @router.callback_query(F.data.startswith("template_delete_"))
-async def start_delete_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_delete_template(callback: CallbackQuery, state: FSMContext):
     """Start template deletion."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[2])
 
     async with async_session_factory() as session:
@@ -1041,14 +1002,8 @@ async def start_delete_template(callback: CallbackQuery, state: FSMContext, is_a
 
 
 @router.callback_query(F.data == "confirm_confirm_delete_template")
-async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def confirm_delete_template(callback: CallbackQuery, state: FSMContext):
     """Confirm and delete template."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     data = await state.get_data()
     template_id = data["template_id"]
 
@@ -1059,7 +1014,7 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
             await session.commit()
 
         if deleted:
-            logger.info(f"✅ Template deleted: {data.get('template_name')}")
+            logger.info("Шаблон '{}' удалён", data.get('template_name'))
 
         await state.clear()
 
@@ -1080,7 +1035,7 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
 
     except Exception as e:
         await state.clear()
-        logger.error(f"Error deleting template: {e}", exc_info=True)
+        logger.error("Ошибка удаления шаблона: {}", e, exc_info=True)
         await callback.message.edit_text(
             t("admin.templates.delete_error", "❌ Произошла ошибка при удалении шаблона")
         )
@@ -1090,14 +1045,8 @@ async def confirm_delete_template(callback: CallbackQuery, state: FSMContext, is
 @router.callback_query(
     F.data.startswith("template_edit_") & ~F.data.startswith("template_edit_menu_")
 )
-async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_edit_template(callback: CallbackQuery, state: FSMContext):
     """Start editing template."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     parts = callback.data.split("_")
 
     # Validate callback data format
@@ -1241,14 +1190,8 @@ async def start_edit_template(callback: CallbackQuery, state: FSMContext, is_adm
 
 
 @router.callback_query(F.data.startswith("template_edit_menu_"))
-async def show_template_edit_menu(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def show_template_edit_menu(callback: CallbackQuery, state: FSMContext):
     """Show template edit menu with field options."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     parts = callback.data.split("_")
 
     # Validate callback data format
@@ -1327,7 +1270,7 @@ async def process_edit_template_name(message: Message, state: FSMContext):
             )
             await session.commit()
 
-        logger.info(f"✅ Template name updated: {template.name}")
+        logger.info("Название шаблона обновлено: {}", template.name)
 
         await message.answer(
             t("admin.templates.name_updated", "✅ Название изменено на: {name}", name=new_name)
@@ -1335,7 +1278,7 @@ async def process_edit_template_name(message: Message, state: FSMContext):
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
-        logger.error(f"Error updating template name: {e}", exc_info=True)
+        logger.error("Ошибка обновления названия шаблона: {}", e, exc_info=True)
         await message.answer(
             t("admin.templates.update_name_error", "❌ Произошла ошибка при изменении названия")
         )
@@ -1372,13 +1315,13 @@ async def process_edit_template_description(message: Message, state: FSMContext)
             )
             await session.commit()
 
-        logger.info(f"✅ Template description updated: {template.name}")
+        logger.info("Описание шаблона обновлено: {}", template.name)
 
         await message.answer(t("admin.templates.desc_updated", "✅ Описание изменено"))
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
-        logger.error(f"Error updating template description: {e}", exc_info=True)
+        logger.error("Ошибка обновления описания шаблона: {}", e, exc_info=True)
         await message.answer(
             t("admin.templates.edit_error", "❌ Произошла ошибка при обновлении шаблона")
         )
@@ -1442,13 +1385,13 @@ async def process_edit_default_traffic(message: Message, state: FSMContext):
                             template_id, old_gb, traffic, old_days, old_days
                         )
                         await bg_session.commit()
-                        logger.info("✅ Background task completed successfully")
+                        logger.debug("Фоновая задача обновления трафика завершена")
                 except Exception as e:
-                    logger.error(f"❌ Background task failed: {e}")
+                    logger.warning("Фоновая задача обновления трафика завершилась с ошибкой: {}", e)
 
             asyncio.create_task(run_bg())
 
-        logger.info(f"✅ Template traffic updated: {template.name}")
+        logger.info("Лимит трафика шаблона обновлён: {}", template.name)
 
         traffic_text = t(
             "admin.templates.traffic_format",
@@ -1466,7 +1409,7 @@ async def process_edit_default_traffic(message: Message, state: FSMContext):
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
-        logger.error(f"Error updating template traffic: {e}", exc_info=True)
+        logger.error("Ошибка обновления трафика шаблона: {}", e, exc_info=True)
         await message.answer(
             t(
                 "admin.templates.update_traffic_error",
@@ -1536,13 +1479,13 @@ async def process_edit_default_expiry(message: Message, state: FSMContext):
                             template_id, old_gb, old_gb, old_days, expiry
                         )
                         await bg_session.commit()
-                        logger.info("✅ Background task completed successfully")
+                        logger.debug("Фоновая задача обновления срока завершена")
                 except Exception as e:
-                    logger.error(f"❌ Background task failed: {e}")
+                    logger.warning("Фоновая задача обновления срока завершилась с ошибкой: {}", e)
 
             asyncio.create_task(run_bg())
 
-        logger.info(f"✅ Template expiry updated: {template.name}")
+        logger.info("Срок действия шаблона обновлён: {}", template.name)
 
         expiry_text = (
             t("admin.templates.days_format", "{count} дн.", count=expiry)
@@ -1559,7 +1502,7 @@ async def process_edit_default_expiry(message: Message, state: FSMContext):
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
-        logger.error(f"Error updating template expiry: {e}", exc_info=True)
+        logger.error("Ошибка обновления срока шаблона: {}", e, exc_info=True)
         await message.answer(
             t(
                 "admin.templates.update_expiry_error",
@@ -1599,13 +1542,13 @@ async def process_edit_template_notes(message: Message, state: FSMContext):
             )
             await session.commit()
 
-        logger.info(f"✅ Template notes updated: {template.name}")
+        logger.info("Заметки шаблона обновлены: {}", template.name)
 
         await message.answer(t("admin.templates.notes_updated", "✅ Заметки изменены"))
         await show_template_details_edit_menu(message, state)
 
     except Exception as e:
-        logger.error(f"Error updating template notes: {e}", exc_info=True)
+        logger.error("Ошибка обновления заметок шаблона: {}", e, exc_info=True)
         await message.answer(
             t("admin.templates.update_notes_error", "❌ Произошла ошибка при изменении заметок")
         )
@@ -1642,15 +1585,9 @@ async def show_template_details_edit_menu(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("template_inbound_remove_"))
 async def start_remove_inbound_from_template(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ):
     """Start removing inbound from template."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     parts = callback.data.split("_")
     template_id = int(parts[3])
     inbound_id = int(parts[4])
@@ -1683,14 +1620,8 @@ async def start_remove_inbound_from_template(
 
 
 @router.callback_query(F.data == "confirm_confirm_remove_inbound")
-async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext):
     """Confirm and remove inbound from template."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     data = await state.get_data()
     template_id = data["template_id"]
     inbound_id = data["inbound_id"]
@@ -1711,13 +1642,13 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
                             template_id, added_inbound_ids=set(), removed_inbound_ids={inbound_id}
                         )
                         await bg_session.commit()
-                        logger.info("✅ Background task completed successfully")
+                        logger.debug("Фоновая задача удаления inbound завершена")
                 except Exception as e:
-                    logger.error(f"❌ Background task failed: {e}")
+                    logger.warning("Фоновая задача удаления inbound завершилась с ошибкой: {}", e)
 
             asyncio.create_task(run_bg())
 
-            logger.info(f"✅ Inbound {inbound_id} removed from template {template_id}")
+            logger.info("Inbound {} удалён из шаблона {}", inbound_id, template_id)
 
         await state.clear()
 
@@ -1767,7 +1698,7 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
 
     except Exception as e:
         await state.clear()
-        logger.error(f"Error removing inbound from template: {e}", exc_info=True)
+        logger.error("Ошибка удаления inbound из шаблона: {}", e, exc_info=True)
         await callback.message.edit_text(
             t(
                 "admin.templates.remove_inbound_error",
@@ -1778,14 +1709,8 @@ async def confirm_remove_inbound(callback: CallbackQuery, state: FSMContext, is_
 
 
 @router.callback_query(F.data.startswith("template_client_search_"))
-async def start_template_client_search(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_template_client_search(callback: CallbackQuery, state: FSMContext):
     """Start client search for template subscription creation."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     parts = callback.data.split("_")
     template_id = int(parts[3])
 
@@ -1868,21 +1793,15 @@ async def process_template_client_search(message: Message, state: FSMContext):
         await message.answer(text, reply_markup=builder.as_markup())
 
     except Exception as e:
-        logger.error(f"Error processing client search: {e}", exc_info=True)
+        logger.error("Ошибка поиска клиентов: {}", e, exc_info=True)
         await message.answer(
             t("admin.templates.search_error", "❌ Произошла ошибка при поиске клиентов")
         )
 
 
 @router.callback_query(F.data == "template_no_inbounds")
-async def handle_template_no_inbounds(callback: CallbackQuery, is_admin: bool):
+async def handle_template_no_inbounds(callback: CallbackQuery):
     """Handle template no inbounds button click."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     await callback.answer(
         t(
             "admin.templates.no_inbounds_alert",
@@ -1894,15 +1813,9 @@ async def handle_template_no_inbounds(callback: CallbackQuery, is_admin: bool):
 
 @router.callback_query(F.data.startswith("template_multi_select_mode_"))
 async def enter_template_multi_select_mode(
-    callback: CallbackQuery, state: FSMContext, is_admin: bool
+    callback: CallbackQuery, state: FSMContext
 ):
     """Enter multi-select mode for template inbounds."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[4])
     await state.update_data(template_id=template_id, selected_inbound_ids=set())
     await state.set_state(TemplateManagement.inbounds_multi_select_mode)
@@ -2048,7 +1961,7 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
                         await template_service.remove_inbound_from_template(template_id, inbound_id)
                         deleted_count += 1
                     except Exception as e:
-                        logger.warning(f"Failed to remove inbound {inbound_id} from template: {e}")
+                        logger.warning("Не удалось удалить inbound {} из шаблона: {}", inbound_id, e)
 
                 await session.commit()
 
@@ -2063,9 +1976,9 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
                                 removed_inbound_ids=set(selected_inbound_ids),
                             )
                             await bg_session.commit()
-                            logger.info("✅ Background task completed successfully")
+                            logger.debug("Фоновая задача массового удаления inbound завершена")
                     except Exception as e:
-                        logger.error(f"❌ Background task failed: {e}")
+                        logger.warning("Фоновая задача массового удаления inbound завершилась с ошибкой: {}", e)
 
                 asyncio.create_task(run_bg())
 
@@ -2110,7 +2023,7 @@ async def confirm_template_multi_action(callback: CallbackQuery, state: FSMConte
             )
 
         except Exception as e:
-            logger.error(f"Error in template multi-delete: {e}", exc_info=True)
+            logger.error("Ошибка массового удаления inbound из шаблона: {}", e, exc_info=True)
             await callback.answer(
                 t("admin.templates.error_prefix", "❌ Ошибка: {error}", error=str(e)),
                 show_alert=True,
@@ -2200,14 +2113,8 @@ async def exit_template_multi_select_mode(callback: CallbackQuery, state: FSMCon
 
 # Обработчики для редактирования подключений шаблона
 @router.callback_query(F.data.startswith("template_manage_inbounds_"))
-async def start_edit_template_inbounds(callback: CallbackQuery, state: FSMContext, is_admin: bool):
+async def start_edit_template_inbounds(callback: CallbackQuery, state: FSMContext):
     """Start editing template inbounds - show servers list."""
-    if not is_admin:
-        await callback.answer(
-            t("admin.templates.access_denied", "⛔ Доступ запрещен"), show_alert=True
-        )
-        return
-
     template_id = int(callback.data.split("_")[3])
 
     async with async_session_factory() as session:
@@ -2439,26 +2346,25 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
                     )
                     added_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to add inbound {inbound_id} to template: {e}")
+                    logger.warning("Не удалось добавить inbound {} в шаблон: {}", inbound_id, e)
 
             await session.commit()
 
             # Запускаем фоновое обновление для привязанных подписок
             async def run_bg():
                 try:
-                    logger.info(f"🚀 [TOTAL LOG] Starting background task run_bg for template_id={template_id}. Added: {inbounds_to_add}")
+                    logger.debug("Фоновая задача bulk-add inbound запущена для шаблона {}", template_id)
                     async with async_session_factory() as bg_session:
                         bg_service = SubscriptionTemplateService(bg_session)
-                        logger.info(f"🚀 [TOTAL LOG] Calling _apply_template_inbounds_change...")
                         await bg_service._apply_template_inbounds_change(
                             template_id,
                             added_inbound_ids=set(inbounds_to_add),
                             removed_inbound_ids=set(),
                         )
                         await bg_session.commit()
-                        logger.info("✅ [TOTAL LOG] Background task completed successfully")
+                        logger.debug("Фоновая задача bulk-add inbound завершена")
                 except Exception as e:
-                    logger.error(f"❌ [TOTAL LOG] Background task failed: {e}", exc_info=True)
+                    logger.warning("Фоновая задача bulk-add inbound завершилась с ошибкой: {}", e, exc_info=True)
 
             asyncio.create_task(run_bg())
 
@@ -2466,7 +2372,7 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
             template = await template_service.get_template(template_id)
             await template_service.get_template_inbounds(template_id)
 
-            logger.info(f"✅ Added {added_count} inbounds to template {template.name}")
+            logger.info("Добавлено {} inbound к шаблону {}", added_count, template.name)
 
         # Show success message and return to server selection
         await state.clear()
@@ -2513,7 +2419,7 @@ async def add_selected_inbounds_to_template(callback: CallbackQuery, state: FSMC
         await callback.answer()
     except Exception as e:
         await state.clear()
-        logger.error(f"Error adding inbounds to template: {e}", exc_info=True)
+        logger.error("Ошибка добавления inbound к шаблону: {}", e, exc_info=True)
         await callback.message.edit_text(
             t(
                 "admin.templates.add_inbounds_error",
@@ -2559,7 +2465,7 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
                     await template_service.remove_inbound_from_template(template_id, inbound_id)
                     removed_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to remove inbound {inbound_id} from template: {e}")
+                    logger.warning("Не удалось удалить inbound {} из шаблона: {}", inbound_id, e)
 
             await session.commit()
 
@@ -2574,9 +2480,9 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
                             removed_inbound_ids=set(inbounds_to_remove),
                         )
                         await bg_session.commit()
-                        logger.info("✅ Background task completed successfully")
+                        logger.debug("Фоновая задача bulk-remove inbound завершена")
                 except Exception as e:
-                    logger.error(f"❌ Background task failed: {e}")
+                    logger.warning("Фоновая задача bulk-remove inbound завершилась с ошибкой: {}", e)
 
             asyncio.create_task(run_bg())
 
@@ -2584,7 +2490,7 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
             template = await template_service.get_template(template_id)
             await template_service.get_template_inbounds(template_id)
 
-            logger.info(f"✅ Removed {removed_count} inbounds from template {template.name}")
+            logger.info("Удалено {} inbound из шаблона {}", removed_count, template.name)
 
         # Show success message and return to server selection
         await state.clear()
@@ -2631,7 +2537,7 @@ async def remove_selected_inbounds_from_template(callback: CallbackQuery, state:
         await callback.answer()
     except Exception as e:
         await state.clear()
-        logger.error(f"Error removing inbounds from template: {e}", exc_info=True)
+        logger.error("Ошибка удаления inbound из шаблона: {}", e, exc_info=True)
         await callback.message.edit_text(
             t(
                 "admin.templates.remove_inbounds_error",

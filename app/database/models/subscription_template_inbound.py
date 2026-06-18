@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Integer
+from sqlalchemy import ForeignKey, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, TimestampMixin
@@ -16,6 +16,9 @@ class SubscriptionTemplateInbound(Base, TimestampMixin):
     """Relationship between subscription template and inbound."""
 
     __tablename__ = "subscription_template_inbounds"
+    __table_args__ = (
+        UniqueConstraint("template_id", "inbound_id", name="uq_template_inbound"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     template_id: Mapped[int] = mapped_column(

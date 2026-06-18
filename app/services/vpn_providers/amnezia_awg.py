@@ -4,7 +4,6 @@ import base64
 import io
 import ipaddress
 import json
-import logging
 import re
 import struct
 import uuid
@@ -13,12 +12,11 @@ from datetime import datetime
 from typing import Any
 
 import qrcode
+from loguru import logger
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.base import BaseVPNProvider
-
-logger = logging.getLogger(__name__)
 
 I1_DEFAULT = "<r 2><b 0x858000010001000000000669636c6f756403636f6d0000010001c00c000100010000105a00044d583737>"
 
@@ -54,7 +52,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         try:
             return await self._cmd(cmd)
         except Exception:
-            logger.warning("Failed to read PSK from server, generating a new one.")
+            logger.warning("Не удалось прочитать PSK с сервера, генерирую новый")
             return await self._cmd(f"docker exec -i {self.container_name} awg genpsk")
 
     async def _get_server_public_key(self) -> str:
@@ -147,17 +145,6 @@ class AmneziaAWGProvider(BaseVPNProvider):
         config_text = await self._cmd(
             f"docker exec -i {self.container_name} cat {self.config_path}"
         )
-        await self._cmd(sync_cmd)
-
-    async def _add_peer_to_config(self, public_key: str, psk: str, client_ip: str) -> None:
-        peer_block = f"\n[Peer]\nPublicKey = {public_key}\nPresharedKey = {psk}\nAllowedIPs = {client_ip}/32\n"
-        append_cmd = f"docker exec -i {self.container_name} bash -c 'echo -e \"{peer_block}\" >> {self.config_path}'"
-        await self._cmd(append_cmd)
-
-    async def _remove_peer_from_config(self, public_key: str) -> None:
-        config_text = await self._cmd(
-            f"docker exec -i {self.container_name} cat {self.config_path}"
-        )
 
         blocks = config_text.split("[Peer]")
         new_blocks = [blocks[0]]
@@ -192,10 +179,10 @@ class AmneziaAWGProvider(BaseVPNProvider):
         priv_key_cmd = f"docker exec -i {self.container_name} awg genkey"
         private_key = (await self._cmd(priv_key_cmd)).strip()
 
-        pub_key_cmd = (
-            f"docker exec -i {self.container_name} bash -c 'echo \"{private_key}\" | awg pubkey'"
-        )
-        public_key = (await self._cmd(pub_key_cmd)).strip()
+        public_key = (await self._cmd(
+            f"docker exec -i {self.container_name} awg pubkey",
+            input_data=private_key,
+        )).strip()
 
         psk = (await self._get_server_psk()).strip()
         next_ip = await self._find_next_free_ip(inbound)
@@ -225,7 +212,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             await self._sync_config()
             return True
         except Exception as e:
-            logger.error(f"Failed to remove AWG client: {e}")
+            logger.error("Не удалось удалить AWG-клиента: {}", e)
             return False
 
     async def update_client(
@@ -243,7 +230,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
         client_ip = connection.client_ip
 
         if not public_key or not psk or not client_ip:
-            logger.error("Missing keys or IP in AWG client connection.")
+            logger.error("Отсутствуют ключи или IP в AWG-соединении клиента")
             return False
 
         try:
@@ -252,7 +239,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             await self._sync_config()
             return True
         except Exception as e:
-            logger.error(f"Failed to enable AWG client: {e}")
+            logger.error("Не удалось включить AWG-клиента: {}", e)
             return False
 
     async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:
@@ -266,7 +253,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             await self._sync_config()
             return True
         except Exception as e:
-            logger.error(f"Failed to disable AWG client: {e}")
+            logger.error("Не удалось отключить AWG-клиента: {}", e)
             return False
 
     async def reset_client_traffic(

@@ -68,7 +68,7 @@ def _ensure_loaded() -> None:
 
 def register(inbound_type: str, sync_service: ProtocolSyncBase) -> None:
     _REGISTRY[inbound_type] = sync_service
-    logger.debug(f"[protocol_sync] Registered sync for '{inbound_type}': {sync_service.__class__.__name__}")
+    logger.debug("Зарегистрирован sync для '{}': {}", inbound_type, sync_service.__class__.__name__)
 
 
 def for_inbound(inbound: "Inbound") -> ProtocolSyncBase | None:

@@ -7,6 +7,8 @@ from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Uni
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, SyncMixin, TimestampMixin
+from app.utils import decrypt_password, encrypt_password
+from app.utils.date_utils import ensure_utc
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound
@@ -41,7 +43,7 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
 
     # Per-connection traffic and expiry settings (can differ per inbound)
     total_gb: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0 = unlimited
-    expiry_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __mapper_args__ = {
         "polymorphic_on": "type",
@@ -67,26 +69,19 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
     @property
     def is_expired(self) -> bool:
         """Check if connection has expired."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return False
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
-
         return datetime.now(UTC) > expiry
 
     @property
     def remaining_days(self) -> int | None:
         """Calculate remaining days until expiry."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return None
 
         import math
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
 
         now = datetime.now(UTC)
         delta = expiry - now
@@ -100,14 +95,11 @@ class InboundConnection(Base, TimestampMixin, SyncMixin):
     @property
     def remaining_days_with_sign(self) -> int | None:
         """Calculate remaining days until expiry (can be negative)."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return None
 
         import math
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
 
         now = datetime.now(UTC)
         delta = expiry - now
@@ -134,7 +126,13 @@ class XUIInboundConnection(InboundConnection):
 
 
 class AWGInboundConnection(InboundConnection):
-    """AmneziaWG specific inbound connection."""
+    """AmneziaWG specific inbound connection.
+
+    ``private_key`` and ``psk`` are stored encrypted (Fernet) in the DB.
+    The Python properties transparently encrypt on write and decrypt on read,
+    so all consumers continue to use ``connection.private_key`` / ``connection.psk``
+    without any changes.
+    """
 
     __tablename__ = "awg_inbound_connections"
 
@@ -143,12 +141,54 @@ class AWGInboundConnection(InboundConnection):
     )
     client_ip: Mapped[str | None] = mapped_column(String(50), nullable=True)
     public_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    private_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    psk: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    _private_key_encrypted: Mapped[str | None] = mapped_column(
+        "private_key", String(250), nullable=True
+    )
+    _psk_encrypted: Mapped[str | None] = mapped_column(
+        "psk", String(250), nullable=True
+    )
 
     __mapper_args__ = {
         "polymorphic_identity": "awg_inbound_connection",
     }
+
+    @property
+    def private_key(self) -> str | None:
+        """Return decrypted private key."""
+        if self._private_key_encrypted is None:
+            return None
+        try:
+            return decrypt_password(self._private_key_encrypted)
+        except Exception:
+            # Already plaintext (pre-migration rows) — return as-is
+            return self._private_key_encrypted
+
+    @private_key.setter
+    def private_key(self, value: str | None) -> None:
+        """Encrypt and store private key."""
+        if value is None:
+            self._private_key_encrypted = None
+        else:
+            self._private_key_encrypted = encrypt_password(value)
+
+    @property
+    def psk(self) -> str | None:
+        """Return decrypted PSK."""
+        if self._psk_encrypted is None:
+            return None
+        try:
+            return decrypt_password(self._psk_encrypted)
+        except Exception:
+            # Already plaintext (pre-migration rows) — return as-is
+            return self._psk_encrypted
+
+    @psk.setter
+    def psk(self, value: str | None) -> None:
+        """Encrypt and store PSK."""
+        if value is None:
+            self._psk_encrypted = None
+        else:
+            self._psk_encrypted = encrypt_password(value)
 
 
 class MTProxyInboundConnection(InboundConnection):

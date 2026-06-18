@@ -66,7 +66,7 @@ class XUIService:
         try:
             return self._cipher.decrypt(encrypted.encode()).decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt password: {e}")
+            logger.error("Ошибка расшифровки пароля: {}", e)
             raise ValueError(
                 f"Password decryption failed — password may be stored as plain text. "
                 f"Re-save the panel credentials to fix. Error: {e}"
@@ -609,7 +609,8 @@ class XUIService:
             return []
 
         client = await self._get_client(inbound.server)
-        clients = await client.get_clients(inbound.xui_id)
+        all_clients = await client.get_clients()
+        clients = [c for c in all_clients if inbound.xui_id in c.get("inboundIds", [])]
 
         return clients
 

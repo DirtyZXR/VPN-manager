@@ -13,12 +13,11 @@ Config dir on server: /opt/vpnbot/awg/
 """
 
 import contextlib
-import logging
 import random
 
-from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from app.services.installers.base import BASE_DIR, AlreadyInstalledError, BaseInstaller
 
 AWG_SERVICE_DIR = f"{BASE_DIR}/awg"
 AWG_CONTAINER_NAME = "awg"
@@ -81,26 +80,27 @@ class AWGInstaller(BaseInstaller):
         """
         import re
 
-        config = await self._cmd(f"cat {AWG_SERVICE_DIR}/data/awg0.conf")
+        async with self.ssh:
+            config = await self._cmd(f"cat {AWG_SERVICE_DIR}/data/awg0.conf")
 
-        port_match = re.search(r"ListenPort\s*=\s*(\d+)", config)
-        addr_match = re.search(r"Address\s*=\s*([\d.]+)/(\d+)", config)
-        pk_match = re.search(r"PrivateKey\s*=\s*(\S+)", config)
+            port_match = re.search(r"ListenPort\s*=\s*(\d+)", config)
+            addr_match = re.search(r"Address\s*=\s*([\d.]+)/(\d+)", config)
+            pk_match = re.search(r"PrivateKey\s*=\s*(\S+)", config)
 
-        obfuscation = {}
-        for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"):
-            m = re.search(rf"{key}\s*=\s*(.+)", config)
-            if m:
-                obfuscation[key] = m.group(1).strip()
-        for key in ("I1", "I2", "I3", "I4", "I5"):
-            m = re.search(rf"{key}\s*=\s*(.*)", config)
-            obfuscation[key] = m.group(1).strip() if m else ""
+            obfuscation = {}
+            for key in ("Jc", "Jmin", "Jmax", "S1", "S2", "S3", "S4", "H1", "H2", "H3", "H4"):
+                m = re.search(rf"{key}\s*=\s*(.+)", config)
+                if m:
+                    obfuscation[key] = m.group(1).strip()
+            for key in ("I1", "I2", "I3", "I4", "I5"):
+                m = re.search(rf"{key}\s*=\s*(.*)", config)
+                obfuscation[key] = m.group(1).strip() if m else ""
 
-        public_key = ""
-        with contextlib.suppress(Exception):
-            public_key = (await self._cmd(
-                f"cat {AWG_SERVICE_DIR}/data/wireguard_server_public_key.key"
-            )).strip()
+            public_key = ""
+            with contextlib.suppress(Exception):
+                public_key = (await self._cmd(
+                    f"cat {AWG_SERVICE_DIR}/data/wireguard_server_public_key.key"
+                )).strip()
 
         return {
             "port": int(port_match.group(1)) if port_match else 51820,
@@ -140,77 +140,78 @@ class AWGInstaller(BaseInstaller):
         ports_to_clean: list[tuple[int, str]] = []
 
         try:
-            logger.info(
-                f"Installing AWG on {self.ssh.host}:{port} "
-                f"subnet={subnet_ip}/{subnet_cidr}"
-            )
+            async with self.ssh:
+                logger.info(
+                    "Установка AWG на {}:{}, subnet={}/{}",
+                    self.ssh.host, port, subnet_ip, subnet_cidr,
+                )
 
-            await self._progress(1, 11, "Подготовка сервера (Docker, утилиты)...")
-            await self.prepare_host()
+                await self._progress(1, 11, "Подготовка сервера (Docker, утилиты)...")
+                await self.prepare_host()
 
-            if await self.check_already_installed():
-                if force:
-                    logger.warning(f"Force reinstall: removing existing vpnbot-awg on {self.ssh.host}")
-                    await self._cmd("docker rm -f vpnbot-awg 2>/dev/null || true")
-                    await self._cmd("sleep 2")
-                else:
-                    raise AlreadyInstalledError(
-                        f"AmneziaWG уже установлен на {self.ssh.host}. "
-                        "Для переустановки нажмите кнопку ниже."
-                    )
+                if await self.check_already_installed():
+                    if force:
+                        logger.warning("Принудительная переустановка: удаляю vpnbot-awg на {}", self.ssh.host)
+                        await self._cmd("docker rm -f vpnbot-awg 2>/dev/null || true")
+                        await self._cmd("sleep 2")
+                    else:
+                        raise AlreadyInstalledError(
+                            f"AmneziaWG уже установлен на {self.ssh.host}. "
+                            "Для переустановки нажмите кнопку ниже."
+                        )
 
-            if not await self.check_port_free(port):
-                raise RuntimeError(f"Port {port}/udp is occupied on {self.ssh.host}")
+                if not await self.check_port_free(port):
+                    raise RuntimeError(f"Port {port}/udp is occupied on {self.ssh.host}")
 
-            if obfuscation is None:
-                obfuscation = generate_obfuscation_params()
+                if obfuscation is None:
+                    obfuscation = generate_obfuscation_params()
 
-            dirs_to_clean = [service_dir]
-            ports_to_clean = [(port, "udp")]
+                dirs_to_clean = [service_dir]
+                ports_to_clean = [(port, "udp")]
 
-            await self._progress(2, 11, "Открытие портов в файрволе...")
-            await self._open_firewall_port(port)
+                await self._progress(2, 11, "Открытие портов в файрволе...")
+                await self._open_firewall_port(port)
 
-            await self._progress(3, 11, "Создание директорий...")
-            await self._create_service_dir(service_dir)
+                await self._progress(3, 11, "Создание директорий...")
+                await self._create_service_dir(service_dir)
 
-            await self._progress(4, 11, "Запись Dockerfile...")
-            await self._write_dockerfile(service_dir)
+                await self._progress(4, 11, "Запись Dockerfile...")
+                await self._write_dockerfile(service_dir)
 
-            await self._progress(5, 11, "Запись стартового скрипта...")
-            await self._write_start_script(service_dir, subnet_ip, subnet_cidr)
+                await self._progress(5, 11, "Запись стартового скрипта...")
+                await self._write_start_script(service_dir, subnet_ip, subnet_cidr)
 
-            await self._progress(6, 11, "Запись docker-compose.yml...")
-            await self._write_compose_file(service_dir, port)
+                await self._progress(6, 11, "Запись docker-compose.yml...")
+                await self._write_compose_file(service_dir, port)
 
-            await self._progress(7, 11, "Сборка Docker-образа (может занять 1-2 мин)...")
-            await self._build_image()
+                await self._progress(7, 11, "Сборка Docker-образа (может занять 1-2 мин)...")
+                await self._build_image()
 
-            await self._progress(8, 11, "Запуск контейнера...")
-            await self._start_container(port)
+                await self._progress(8, 11, "Запуск контейнера...")
+                await self._start_container(port)
 
-            await self._progress(9, 11, "Генерация ключей и конфигурации...")
-            keys = await self._generate_keys_and_config(
-                port, subnet_ip, subnet_cidr, obfuscation
-            )
+                await self._progress(9, 11, "Генерация ключей и конфигурации...")
+                keys = await self._generate_keys_and_config(
+                    port, subnet_ip, subnet_cidr, obfuscation
+                )
 
-            await self._progress(10, 11, "Перезапуск с конфигурацией...")
-            await self._restart_container()
+                await self._progress(10, 11, "Перезапуск с конфигурацией...")
+                await self._restart_container()
 
-            await self._progress(11, 11, "Установка завершена")
+                await self._progress(11, 11, "Установка завершена")
 
-            logger.info(f"AWG installed successfully on {self.ssh.host}:{port}")
+                logger.info("AWG установлен на {}:{}", self.ssh.host, port)
 
-            return {
-                "container_name": f"vpnbot-{AWG_CONTAINER_NAME}",
-                "port": port,
-                "subnet_ip": subnet_ip,
-                "subnet_cidr": subnet_cidr,
-                "obfuscation": obfuscation,
-                "service_dir": service_dir,
-                "server_private_key": keys["server_private_key"],
-                "server_public_key": keys["server_public_key"],
-            }
+                return {
+                    "container_name": f"vpnbot-{AWG_CONTAINER_NAME}",
+                    "port": port,
+                    "subnet_ip": subnet_ip,
+                    "subnet_cidr": subnet_cidr,
+                    "obfuscation": obfuscation,
+                    "service_dir": service_dir,
+                    "server_private_key": keys["server_private_key"],
+                    "server_public_key": keys["server_public_key"],
+                }
         except Exception:
             logger.exception("AWG installation failed, running cleanup")
             await self.cleanup(
@@ -304,7 +305,8 @@ tail -f /dev/null
             f"docker exec -i {name} awg genkey"
         )
         public_key = await self._cmd(
-            f"docker exec -i {name} bash -c 'echo \"{private_key}\" | awg pubkey'"
+            f"docker exec -i {name} awg pubkey",
+            input_data=private_key.strip(),
         )
         psk = await self._cmd(
             f"docker exec -i {name} awg genpsk"

@@ -7,6 +7,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.models.base import Base, TimestampMixin
+from app.utils.date_utils import ensure_utc
 
 if TYPE_CHECKING:
     from app.database.models.client import Client
@@ -37,7 +38,7 @@ class Subscription(Base, TimestampMixin):
         unique=True,
     )
     total_gb: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0 = unlimited
-    expiry_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expiry_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -51,20 +52,14 @@ class Subscription(Base, TimestampMixin):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Subscription(id={self.id}, name='{self.name}', token='{self.subscription_token}')>"
-        )
+        return f"<Subscription(id={self.id}, name='{self.name}')>"
 
     @property
     def is_expired(self) -> bool:
         """Check if subscription has expired."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return False
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
-
         return datetime.now(UTC) > expiry
 
     @property
@@ -75,14 +70,11 @@ class Subscription(Base, TimestampMixin):
     @property
     def remaining_days(self) -> int | None:
         """Calculate remaining days until expiry."""
-        if self.expiry_date is None:
+        expiry = ensure_utc(self.expiry_date)
+        if expiry is None:
             return None
 
         import math
-
-        expiry = self.expiry_date
-        if expiry.tzinfo is None:
-            expiry = expiry.replace(tzinfo=UTC)
 
         delta = expiry - datetime.now(UTC)
         return max(0, math.ceil(delta.total_seconds() / 86400))

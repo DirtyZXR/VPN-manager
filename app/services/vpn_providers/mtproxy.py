@@ -7,18 +7,16 @@ Supports two implementations:
 
 import base64
 import io
-import logging
 import uuid
 from datetime import datetime
 from typing import Any
 
 import qrcode
+from loguru import logger
 
 from app.database.models import Inbound, InboundConnection, Server, Subscription
 from app.services.ssh_service import SSHManager
 from app.services.vpn_providers.base import BaseVPNProvider
-
-logger = logging.getLogger(__name__)
 
 
 class MTProxyProvider(BaseVPNProvider):
@@ -112,7 +110,7 @@ class MTProxyProvider(BaseVPNProvider):
             await self._restart_container()
             return True
         except Exception as e:
-            logger.error(f"Failed to remove MTProxy secret: {e}")
+            logger.error("Не удалось удалить MTProxy secret: {}", e)
             return False
 
     async def update_client(
@@ -140,7 +138,7 @@ class MTProxyProvider(BaseVPNProvider):
             await self._restart_container()
             return True
         except Exception as e:
-            logger.error(f"Failed to enable MTProxy secret: {e}")
+            logger.error("Не удалось включить MTProxy secret: {}", e)
             return False
 
     async def disable_client(self, inbound: Inbound, connection: InboundConnection) -> bool:

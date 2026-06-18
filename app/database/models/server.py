@@ -9,6 +9,7 @@ from app.database.models.base import Base, SyncMixin, TimestampMixin
 
 if TYPE_CHECKING:
     from app.database.models.inbound import Inbound
+    from app.database.models.services import AWGService, MTProxyService, XUIPanel
 
 
 class Server(Base, TimestampMixin, SyncMixin):
@@ -35,6 +36,8 @@ class Server(Base, TimestampMixin, SyncMixin):
     )
     ssh_password_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
     ssh_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # TOFU host-key: stored public key string e.g. "ssh-ed25519 AAAA..."
+    ssh_host_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     inbounds: Mapped[list["Inbound"]] = relationship(
