@@ -89,13 +89,22 @@ class XUIProvider(BaseVPNProvider):
             await self._client.__aenter__()
         return self._client
 
-    async def add_client(
+    async def add_client_to_inbounds(
         self,
-        inbound: Inbound,
+        inbounds: list[Inbound],
         subscription: Subscription,
         client_uuid: str | None = None,
         email: str | None = None,
     ) -> dict[str, Any]:
+        """Создать ОДНОГО клиента сразу на нескольких inbound'ах одной панели.
+
+        Один subId (= subscription_token) на список inboundIds: так панель v3.2.5+
+        не ругается 'subId already in use'. Возвращает идентичность клиента,
+        общую для всех переданных inbound'ов.
+        """
+        if not inbounds:
+            raise ValueError("add_client_to_inbounds: пустой список inbound'ов")
+
         client = await self._get_client()
 
         client_uuid = client_uuid or str(uuid.uuid4())
@@ -110,7 +119,7 @@ class XUIProvider(BaseVPNProvider):
             expiry_time = int(subscription.expiry_date.timestamp() * 1000)
 
         tg_id = int(subscription.client.telegram_id) if subscription.client.telegram_id else 0
-        x_id = getattr(inbound, "xui_id", inbound.id)
+        xui_ids = [getattr(ib, "xui_id", ib.id) for ib in inbounds]
 
         # Proactive uniqueness check: the new clients/add endpoint does NOT error
         # on duplicate email, so reactive retry won't catch collisions.  We probe
@@ -127,7 +136,7 @@ class XUIProvider(BaseVPNProvider):
             break
         else:
             raise ValueError(
-                f"Unable to find an email accepted by XUI panel for inbound {inbound.id}"
+                f"Unable to find an email accepted by XUI panel for inbounds {xui_ids}"
             )
 
         req = XUIAddClientRequest(
@@ -140,7 +149,7 @@ class XUIProvider(BaseVPNProvider):
             subId=subscription.subscription_token,
             tgId=tg_id,
         )
-        await client.add_client(req, [x_id])
+        await client.add_client(req, xui_ids)
 
         # The panel generates its own UUID server-side and ignores the one we sent.
         # Fetch the real UUID by querying traffic for the now-created email.
@@ -153,6 +162,15 @@ class XUIProvider(BaseVPNProvider):
             pass
 
         return {"uuid": real_uuid, "email": final_email, "xui_client_id": real_uuid}
+
+    async def add_client(
+        self,
+        inbound: Inbound,
+        subscription: Subscription,
+        client_uuid: str | None = None,
+        email: str | None = None,
+    ) -> dict[str, Any]:
+        return await self.add_client_to_inbounds([inbound], subscription, client_uuid, email)
 
     async def update_client(
         self,
