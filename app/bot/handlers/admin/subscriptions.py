@@ -1188,12 +1188,9 @@ async def _execute_add_inbounds(
 
         sub_service = NewSubscriptionService(session)
         try:
-            for inbound_id in selected_inbounds:
-                await sub_service.add_inbound_to_subscription(
-                    subscription_id,
-                    inbound_id,
-                    mtproxy_domain=mtproxy_domain,
-                )
+            await sub_service.add_inbounds_to_subscription(
+                subscription_id, selected_inbounds, mtproxy_domain=mtproxy_domain
+            )
             await session.commit()
 
             await callback.message.edit_text(
@@ -1221,12 +1218,9 @@ async def _execute_add_inbounds_by_message(
 
         sub_service = NewSubscriptionService(session)
         try:
-            for inbound_id in selected_inbounds:
-                await sub_service.add_inbound_to_subscription(
-                    subscription_id,
-                    inbound_id,
-                    mtproxy_domain=mtproxy_domain,
-                )
+            await sub_service.add_inbounds_to_subscription(
+                subscription_id, selected_inbounds, mtproxy_domain=mtproxy_domain
+            )
             await session.commit()
 
             await message.answer(

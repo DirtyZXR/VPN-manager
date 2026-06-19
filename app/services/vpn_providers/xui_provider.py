@@ -163,6 +163,16 @@ class XUIProvider(BaseVPNProvider):
 
         return {"uuid": real_uuid, "email": final_email, "xui_client_id": real_uuid}
 
+    async def attach_inbounds(self, email: str, xui_ids: list[int]) -> bool:
+        """Привязать существующего клиента (по email) к панельным inbound'ам."""
+        client = await self._get_client()
+        return await client.attach_client(email, xui_ids)
+
+    async def detach_inbounds(self, email: str, xui_ids: list[int]) -> bool:
+        """Отвязать клиента (по email) от панельных inbound'ов."""
+        client = await self._get_client()
+        return await client.detach_client(email, xui_ids)
+
     async def add_client(
         self,
         inbound: Inbound,
