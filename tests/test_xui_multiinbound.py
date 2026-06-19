@@ -326,3 +326,91 @@ async def test_delete_client_all_connections_dedups_shared_client_per_panel():
     assert mock_session.delete.await_count == 2
     mock_session.delete.assert_any_await(conn1)
     mock_session.delete.assert_any_await(conn2)
+
+
+@pytest.mark.asyncio
+async def test_attach_client_posts_to_attach_endpoint():
+    """attach_client POST'ит на .../attach с inboundIds и возвращает True."""
+    from app.xui_client.client import XUIClient
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": True})
+
+    result = await client.attach_client("e", [4])
+
+    assert result is True
+    method, path = client._request.call_args[0]
+    assert method == "POST"
+    assert "/attach" in path
+    assert client._request.call_args.kwargs["json"] == {"inboundIds": [4]}
+
+
+@pytest.mark.asyncio
+async def test_attach_client_raises_on_failure():
+    """attach_client поднимает XUIError при success=False."""
+    from app.xui_client.client import XUIClient
+    from app.xui_client.exceptions import XUIError
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": False, "msg": "nope"})
+
+    with pytest.raises(XUIError):
+        await client.attach_client("e", [4])
+
+
+@pytest.mark.asyncio
+async def test_detach_client_posts_to_detach_endpoint():
+    """detach_client POST'ит на .../detach с inboundIds и возвращает True."""
+    from app.xui_client.client import XUIClient
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": True})
+
+    result = await client.detach_client("e", [4])
+
+    assert result is True
+    method, path = client._request.call_args[0]
+    assert method == "POST"
+    assert "/detach" in path
+    assert client._request.call_args.kwargs["json"] == {"inboundIds": [4]}
+
+
+@pytest.mark.asyncio
+async def test_detach_client_raises_on_failure():
+    """detach_client поднимает XUIError при success=False."""
+    from app.xui_client.client import XUIClient
+    from app.xui_client.exceptions import XUIError
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": False, "msg": "nope"})
+
+    with pytest.raises(XUIError):
+        await client.detach_client("e", [4])
+
+
+@pytest.mark.asyncio
+async def test_provider_attach_inbounds_delegates_to_client():
+    """attach_inbounds делегирует в client.attach_client."""
+    provider = XUIProvider(MagicMock())
+    mock_client = AsyncMock()
+    mock_client.attach_client = AsyncMock(return_value=True)
+    provider._client = mock_client
+
+    result = await provider.attach_inbounds("e", [4])
+
+    assert result is True
+    mock_client.attach_client.assert_awaited_once_with("e", [4])
+
+
+@pytest.mark.asyncio
+async def test_provider_detach_inbounds_delegates_to_client():
+    """detach_inbounds делегирует в client.detach_client."""
+    provider = XUIProvider(MagicMock())
+    mock_client = AsyncMock()
+    mock_client.detach_client = AsyncMock(return_value=True)
+    provider._client = mock_client
+
+    result = await provider.detach_inbounds("e", [4])
+
+    assert result is True
+    mock_client.detach_client.assert_awaited_once_with("e", [4])

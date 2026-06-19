@@ -542,6 +542,31 @@ class XUIClient:
         logger.info("Клиент {} удалён", email)
         return True
 
+    async def attach_client(self, email: str, inbound_ids: list[int]) -> bool:
+        """Привязать существующего клиента к дополнительным inbound'ам без
+        пересоздания (сохраняются uuid/subId/трафик)."""
+        data = await self._request(
+            "POST",
+            f"/panel/api/clients/{quote(email, safe='')}/attach",
+            json={"inboundIds": inbound_ids},
+        )
+        if not data.get("success", False):
+            raise XUIError(data.get("msg", "Failed to attach client"))
+        logger.info("Клиент {} привязан к inbounds {}", email, inbound_ids)
+        return True
+
+    async def detach_client(self, email: str, inbound_ids: list[int]) -> bool:
+        """Отвязать клиента от inbound'ов без удаления самого клиента."""
+        data = await self._request(
+            "POST",
+            f"/panel/api/clients/{quote(email, safe='')}/detach",
+            json={"inboundIds": inbound_ids},
+        )
+        if not data.get("success", False):
+            raise XUIError(data.get("msg", "Failed to detach client"))
+        logger.info("Клиент {} отвязан от inbounds {}", email, inbound_ids)
+        return True
+
     async def enable_client(
         self,
         email: str,
