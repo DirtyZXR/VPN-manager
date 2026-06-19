@@ -350,37 +350,35 @@ class NewSubscriptionService:
             logger.error("Не удалось создать клиента на VPN-панели: {}", e, exc_info=True)
             raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
 
-        # Build a temporary (not-in-session) connection object for compensation
-        # so that provider.remove_client can use it if the DB save fails.
-        def _build_temp_connection() -> InboundConnection:
-            """Build an unsaved connection object from client_data for saga compensation."""
+        # Лёгкий объект для saga-компенсации: provider.remove_client читает у
+        # connection только поля идентификации. ORM-инстанс через __new__ нельзя —
+        # без _sa_instance_state присваивание мапленых атрибутов падает в рантайме.
+        def _build_temp_connection() -> SimpleNamespace:
+            """Build an unsaved namespace from client_data for saga compensation."""
             if inbound.type == "xui_inbound":
-                tmp = XUIInboundConnection.__new__(XUIInboundConnection)
-                tmp.email = provider_payload.get("email", client_email)
-                tmp.uuid = provider_payload.get("uuid", client_uuid)
-                tmp.xui_client_id = provider_payload.get("xui_client_id", client_uuid)
-                tmp.provider_payload = provider_payload
-                tmp.public_key = None
-                tmp.secret = None
-            elif inbound.type == "awg_inbound":
-                tmp = AWGInboundConnection.__new__(AWGInboundConnection)
-                tmp.public_key = provider_payload.get("public_key")
-                tmp.email = None
-                tmp.secret = None
-                tmp.provider_payload = None
-            elif inbound.type == "mtproxy_inbound":
-                tmp = MTProxyInboundConnection.__new__(MTProxyInboundConnection)
-                tmp.secret = provider_payload.get("secret")
-                tmp.email = None
-                tmp.public_key = None
-                tmp.provider_payload = None
-            else:
-                tmp = InboundConnection.__new__(InboundConnection)
-                tmp.email = None
-                tmp.public_key = None
-                tmp.secret = None
-                tmp.provider_payload = None
-            return tmp
+                return SimpleNamespace(
+                    email=provider_payload.get("email", client_email),
+                    uuid=provider_payload.get("uuid", client_uuid),
+                    xui_client_id=provider_payload.get("xui_client_id", client_uuid),
+                    provider_payload=provider_payload,
+                    public_key=None,
+                    secret=None,
+                )
+            if inbound.type == "awg_inbound":
+                return SimpleNamespace(
+                    public_key=provider_payload.get("public_key"),
+                    email=None,
+                    secret=None,
+                    provider_payload=None,
+                )
+            if inbound.type == "mtproxy_inbound":
+                return SimpleNamespace(
+                    secret=provider_payload.get("secret"),
+                    email=None,
+                    public_key=None,
+                    provider_payload=None,
+                )
+            return SimpleNamespace(email=None, public_key=None, secret=None, provider_payload=None)
 
         async with self.session.begin_nested():
             try:
