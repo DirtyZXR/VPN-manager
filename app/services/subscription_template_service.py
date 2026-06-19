@@ -342,25 +342,23 @@ class SubscriptionTemplateService:
                 template_id=template_id,
             )
 
-            # Add all inbounds from template
+            # Add all inbounds from template — XUI одной панели группируются в одного
+            # клиента (один subId на inboundIds), иначе панель отвергает повторный subId.
             connections = []
-            for template_inbound in template.template_inbounds:
-                try:
-                    connection = await sub_service.add_inbound_to_subscription(
-                        subscription_id=subscription.id,
-                        inbound_id=template_inbound.inbound_id,
-                    )
-                    connections.append(connection)
-                    logger.info(
-                        "Подключение {} добавлено в подписку {} из шаблона {}",
-                        template_inbound.inbound.remark, subscription.name, template.name,
-                    )
-                except Exception as e:
-                    logger.error(
-                        "Не удалось добавить подключение {} в подписку {}: {}",
-                        template_inbound.inbound.remark, subscription.name, e,
-                    )
-                    # Continue with other inbounds even if one fails
+            inbound_ids = [ti.inbound_id for ti in template.template_inbounds]
+            try:
+                connections = await sub_service.add_inbounds_to_subscription(
+                    subscription.id, inbound_ids
+                )
+                logger.info(
+                    "Подключения {} добавлены в подписку {} из шаблона {}",
+                    inbound_ids, subscription.name, template.name,
+                )
+            except Exception as e:
+                logger.error(
+                    "Не удалось добавить подключения из шаблона {} в подписку {}: {}",
+                    template.name, subscription.name, e,
+                )
 
             if not connections:
                 # If all inbounds failed, delete the subscription
