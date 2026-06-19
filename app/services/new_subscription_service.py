@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -478,7 +478,6 @@ class NewSubscriptionService:
         if not subscription:
             raise XUIError("Subscription not found")
 
-        # Пропускаем inbound'ы, уже привязанные к этой подписке.
         existing_result = await self.session.execute(
             select(InboundConnection.inbound_id).where(
                 InboundConnection.subscription_id == subscription_id,
@@ -502,7 +501,6 @@ class NewSubscriptionService:
             raise XUIError("Inbounds not found")
 
         server = inbounds[0].server
-        # Все inbound'ы должны быть одной панели: провайдер берётся по первому.
         if any(ib.server_id != server.id for ib in inbounds):
             raise XUIError("add_xui_inbounds_to_subscription: inbound'ы из разных панелей")
         try:
@@ -510,14 +508,45 @@ class NewSubscriptionService:
         except Exception as e:
             raise XUIError(f"Failed to get VPN provider: {e}") from e
 
-        try:
-            client_data = await provider.add_client_to_inbounds(inbounds, subscription)
-        except Exception as e:
-            logger.error("Не удалось создать клиента на VPN-панели: {}", e, exc_info=True)
-            raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
+        # Уже ли у подписки есть клиент на этой панели? Тогда не плодим второго
+        # (subId занят), а привязываем новые inbound'ы к существующему клиенту.
+        existing_conn = (
+            await self.session.execute(
+                select(XUIInboundConnection)
+                .join(Inbound, Inbound.id == XUIInboundConnection.inbound_id)
+                .where(
+                    XUIInboundConnection.subscription_id == subscription_id,
+                    Inbound.server_id == server.id,
+                    XUIInboundConnection.inbound_id.notin_(target_ids),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
-        shared_uuid = client_data.get("uuid")
-        shared_email = client_data.get("email")
+        xui_ids = [getattr(ib, "xui_id", ib.id) for ib in inbounds]
+        attach_to_existing = existing_conn is not None and bool(existing_conn.email)
+
+        if attach_to_existing:
+            try:
+                await provider.attach_inbounds(existing_conn.email, xui_ids)
+            except Exception as e:
+                logger.error("Не удалось привязать клиента к inbound'ам: {}", e, exc_info=True)
+                raise XUIError(f"Failed to attach client to inbounds: {str(e)}") from e
+            shared_uuid = existing_conn.uuid
+            shared_email = existing_conn.email
+            client_data = existing_conn.provider_payload or {
+                "uuid": existing_conn.uuid,
+                "email": existing_conn.email,
+                "xui_client_id": existing_conn.xui_client_id,
+            }
+        else:
+            try:
+                client_data = await provider.add_client_to_inbounds(inbounds, subscription)
+            except Exception as e:
+                logger.error("Не удалось создать клиента на VPN-панели: {}", e, exc_info=True)
+                raise XUIError(f"Failed to create client in VPN panel: {str(e)}") from e
+            shared_uuid = client_data.get("uuid")
+            shared_email = client_data.get("email")
 
         connections: list[InboundConnection] = []
         async with self.session.begin_nested():
@@ -549,17 +578,21 @@ class NewSubscriptionService:
                     "Не удалось сохранить XUI-соединения для подписки {} (inbounds={}): {}",
                     subscription_id, target_ids, db_error, exc_info=True,
                 )
-                # Saga: снять созданного на панели клиента один раз (общий email).
-                tmp = SimpleNamespace(
-                    email=shared_email, uuid=shared_uuid, provider_payload=client_data
-                )
+                # Компенсация: при attach — отвязать только новые inbound'ы (клиент с
+                # прежними остаётся); при create — снять клиента целиком.
                 try:
-                    await provider.remove_client(inbounds[0], tmp)
+                    if attach_to_existing:
+                        await provider.detach_inbounds(shared_email, xui_ids)
+                    else:
+                        tmp = SimpleNamespace(
+                            email=shared_email, uuid=shared_uuid, provider_payload=client_data
+                        )
+                        await provider.remove_client(inbounds[0], tmp)
                 except Exception:
                     logger.critical(
-                        "Zombie-клиент {} остался на панели (подписка {}): компенсация "
-                        "не удалась, будет очищен реконсилятором.",
-                        shared_email, subscription_id, exc_info=True,
+                        "Компенсация для подписки {} не удалась (email={}): возможен "
+                        "рассинхрон, очистит реконсилятор.",
+                        subscription_id, shared_email, exc_info=True,
                     )
                 raise XUIError(
                     f"Failed to save inbound connections: {str(db_error)}"
@@ -603,8 +636,28 @@ class NewSubscriptionService:
         # so state remains consistent (panel has the client, DB has the record).
         if inbound and inbound.server:
             provider = await self._get_provider(inbound.server, inbound=inbound)
-            await provider.remove_client(inbound, connection)
-            if hasattr(inbound, "client_count"):
+            email = getattr(connection, "email", None)
+            if getattr(inbound, "type", None) == "xui_inbound" and email:
+                # Есть ли у подписки другие inbound'ы на том же клиенте (общий email)?
+                others = (
+                    await self.session.execute(
+                        select(func.count())
+                        .select_from(XUIInboundConnection)
+                        .where(
+                            XUIInboundConnection.subscription_id == subscription_id,
+                            XUIInboundConnection.email == email,
+                            XUIInboundConnection.id != connection.id,
+                        )
+                    )
+                ).scalar() or 0
+                if others > 0:
+                    # Клиент остаётся на других inbound'ах — отвязываем только этот.
+                    await provider.detach_inbounds(email, [getattr(inbound, "xui_id", inbound.id)])
+                else:
+                    await provider.remove_client(inbound, connection)
+            else:
+                await provider.remove_client(inbound, connection)
+            if hasattr(inbound, "client_count") and inbound.client_count is not None:
                 inbound.client_count -= 1
 
         # Delete from database. If the DB delete fails, the panel record is already
