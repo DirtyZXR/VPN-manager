@@ -23,7 +23,7 @@ from app.database.models.inbound import Inbound
 from app.services.protocol_sync.awg_sync import AWGProtocolSync
 
 
-async def _setup_expired(session, inbound_cls, conn_cls, uid, **conn_kwargs):
+async def _setup_expired(session, inbound_cls, conn_cls, uid, client_name="C", **conn_kwargs):
     """Создать истёкшее, но включённое соединение нужного протокола."""
     server = Server(name="S", ip_address="1.2.3.4", is_active=True)
     session.add(server)
@@ -31,7 +31,7 @@ async def _setup_expired(session, inbound_cls, conn_cls, uid, **conn_kwargs):
     inbound = inbound_cls(server_id=server.id, remark="r", protocol="p", is_active=True)
     session.add(inbound)
     client = Client(
-        name="C", email=f"c{uid}@example.com", telegram_id=uid, is_admin=False, is_active=True
+        name=client_name, email=f"c{uid}@example.com", telegram_id=uid, is_admin=False, is_active=True
     )
     session.add(client)
     await session.flush()
@@ -90,3 +90,38 @@ async def test_awg_sync_keeps_enabled_when_disable_fails(test_session, mock_sett
     assert conn.is_enabled is True, "is_enabled нельзя флипать при провале disable_client"
     assert synced == 0
     provider.disable_client.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_awg_disable_log_includes_client_name(test_session, mock_settings, monkeypatch):
+    """AWG: лог отключения по истечению срока содержит имя клиента.
+
+    Заодно проверяет, что клиент подгружается eager (иначе обращение к
+    conn.subscription.client.name в async упало бы MissingGreenlet).
+    """
+    from loguru import logger
+
+    inbound, conn = await _setup_expired(
+        test_session, AWGInbound, AWGInboundConnection, 990003,
+        client_name="Зелинская_Лариса", public_key="pk",
+    )
+
+    provider = AsyncMock()
+    provider.disable_client = AsyncMock(return_value=True)  # сервер отключил успешно
+    provider.close = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.vpn_providers.factory.get_vpn_provider",
+        lambda *a, **k: provider,
+    )
+
+    messages: list[str] = []
+    sink_id = logger.add(lambda m: messages.append(str(m)), level="INFO")
+    try:
+        await AWGProtocolSync().sync_clients(test_session, inbound)
+    finally:
+        logger.remove(sink_id)
+
+    assert conn.is_enabled is False
+    assert any(
+        "отключено (истёк срок)" in m and "Зелинская_Лариса" in m for m in messages
+    ), messages

@@ -236,8 +236,11 @@ class TestRemoveInboundAtomicity:
         conn_result.scalar_one_or_none.return_value = connection
         inbound_result = MagicMock()
         inbound_result.scalar_one_or_none.return_value = inbound
+        # Подсчёт «братских» соединений на том же клиенте: 0 → клиент снимается целиком.
+        sibling_count = MagicMock()
+        sibling_count.scalar.return_value = 0
 
-        execute_results = [conn_result, inbound_result]
+        execute_results = [conn_result, inbound_result, sibling_count]
         call_count = [0]
 
         async def fake_execute(*args, **kwargs):

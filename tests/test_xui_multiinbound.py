@@ -152,7 +152,6 @@ async def test_add_xui_inbounds_compensates_on_db_failure(monkeypatch):
     раз (общий email), наружу летит XUIError."""
     from unittest.mock import patch
 
-    import app.services.new_subscription_service as nss
     from app.services.new_subscription_service import NewSubscriptionService
 
     sub = SimpleNamespace(
@@ -164,14 +163,17 @@ async def test_add_xui_inbounds_compensates_on_db_failure(monkeypatch):
     ib1 = SimpleNamespace(id=10, xui_id=3, server_id=1, server=SimpleNamespace(id=1), client_count=0)
     ib2 = SimpleNamespace(id=11, xui_id=5, server_id=1, server=SimpleNamespace(id=1), client_count=0)
 
-    # execute(): 1) запрос существующих связей → пусто; 2) загрузка inbound'ов → ib1, ib2
+    # execute(): 1) запрос существующих связей → пусто; 2) загрузка inbound'ов → ib1, ib2;
+    # 3) поиск клиента подписки на панели → None (создаём нового клиента).
     empty = MagicMock()
     empty.scalars.return_value.all.return_value = []
     loaded = MagicMock()
     loaded.scalars.return_value.all.return_value = [ib1, ib2]
+    no_existing = MagicMock()
+    no_existing.scalar_one_or_none.return_value = None
 
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[empty, loaded])
+    mock_session.execute = AsyncMock(side_effect=[empty, loaded, no_existing])
     nested = AsyncMock()
     nested.__aenter__ = AsyncMock(return_value=nested)
     nested.__aexit__ = AsyncMock(return_value=False)
@@ -188,15 +190,6 @@ async def test_add_xui_inbounds_compensates_on_db_failure(monkeypatch):
         return_value={"uuid": "panel-uuid", "email": "Sub-Alice", "xui_client_id": "panel-uuid"}
     )
     mock_provider.remove_client = AsyncMock(return_value=True)
-
-    # Лёгкая подмена ORM-модели: обычный класс без SQLAlchemy-инструментирования,
-    # чтобы конструктор в цикле создания соединений работал без реальной БД.
-    # Откат в saga строится на SimpleNamespace и от этой подмены не зависит.
-    class _StubConn:
-        def __init__(self, **kwargs):
-            self.__dict__.update(kwargs)
-
-    monkeypatch.setattr(nss, "XUIInboundConnection", _StubConn)
 
     from app.xui_client.exceptions import XUIError
 
@@ -326,3 +319,486 @@ async def test_delete_client_all_connections_dedups_shared_client_per_panel():
     assert mock_session.delete.await_count == 2
     mock_session.delete.assert_any_await(conn1)
     mock_session.delete.assert_any_await(conn2)
+
+
+@pytest.mark.asyncio
+async def test_add_xui_inbounds_attaches_to_existing_client(test_session, mock_settings):
+    """У подписки уже есть клиент на панели — новый inbound привязывается к нему
+    через attach_inbounds (без add_client_to_inbounds, subId не дублируется)."""
+    from unittest.mock import patch
+
+    from sqlalchemy import select as sa_select
+
+    from app.database.models import (
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+        XUIInboundConnection,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    server = Server(name="S-attach", ip_address="1.2.3.5", is_active=True)
+    test_session.add(server)
+    await test_session.flush()
+    ib_a = XUIInbound(
+        server_id=server.id, xui_id=101, remark="rA", protocol="vless",
+        port=443, settings_json="{}", client_count=1, is_active=True,
+    )
+    ib_b = XUIInbound(
+        server_id=server.id, xui_id=102, remark="rB", protocol="vless",
+        port=444, settings_json="{}", client_count=0, is_active=True,
+    )
+    test_session.add_all([ib_a, ib_b])
+    client = Client(name="Alice-attach", email="alice-attach@a.com", telegram_id=900222, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_attach",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    # Существующая связь на inbound A: email E, uuid U.
+    conn_a = XUIInboundConnection(
+        subscription_id=sub.id, inbound_id=ib_a.id, is_enabled=True,
+        total_gb=10, expiry_date=sub.expiry_date, sync_status="synced",
+        uuid="U", email="E", xui_client_id="U",
+        provider_payload={"uuid": "U", "email": "E", "xui_client_id": "U"},
+    )
+    test_session.add(conn_a)
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    mock_provider = AsyncMock()
+    mock_provider.attach_inbounds = AsyncMock(return_value=True)
+    mock_provider.add_client_to_inbounds = AsyncMock()
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=mock_provider)):
+        conns = await svc.add_xui_inbounds_to_subscription(sub.id, [ib_b.id])
+
+    mock_provider.attach_inbounds.assert_awaited_once_with("E", [ib_b.xui_id])
+    mock_provider.add_client_to_inbounds.assert_not_called()
+
+    assert len(conns) == 1
+    assert conns[0].inbound_id == ib_b.id
+    assert conns[0].uuid == "U"
+    assert conns[0].email == "E"
+
+    rows = (
+        await test_session.execute(
+            sa_select(XUIInboundConnection).where(
+                XUIInboundConnection.subscription_id == sub.id,
+                XUIInboundConnection.inbound_id == ib_b.id,
+            )
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].uuid == "U" and rows[0].email == "E"
+
+
+@pytest.mark.asyncio
+async def test_add_xui_inbounds_creates_client_when_none_exists(test_session, mock_settings):
+    """Нет клиента подписки на панели — создаётся новый через add_client_to_inbounds
+    (attach_inbounds не вызывается)."""
+    from unittest.mock import patch
+
+    from app.database.models import (
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    server = Server(name="S-fresh", ip_address="1.2.3.6", is_active=True)
+    test_session.add(server)
+    await test_session.flush()
+    ib_a = XUIInbound(
+        server_id=server.id, xui_id=201, remark="rFA", protocol="vless",
+        port=443, settings_json="{}", client_count=0, is_active=True,
+    )
+    test_session.add(ib_a)
+    client = Client(name="Alice-fresh", email="alice-fresh@a.com", telegram_id=900333, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_fresh",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    mock_provider = AsyncMock()
+    mock_provider.attach_inbounds = AsyncMock()
+    mock_provider.add_client_to_inbounds = AsyncMock(
+        return_value={"uuid": "U2", "email": "E2", "xui_client_id": "U2"}
+    )
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=mock_provider)):
+        conns = await svc.add_xui_inbounds_to_subscription(sub.id, [ib_a.id])
+
+    mock_provider.add_client_to_inbounds.assert_awaited_once()
+    mock_provider.attach_inbounds.assert_not_called()
+
+    assert len(conns) == 1
+    assert conns[0].uuid == "U2"
+    assert conns[0].email == "E2"
+
+
+@pytest.mark.asyncio
+async def test_remove_inbound_detaches_when_sibling_remains(test_session, mock_settings):
+    """У подписки два inbound'а с общим email — удаление одного отвязывает его
+    (detach_inbounds), клиент остаётся; remove_client не вызывается."""
+    from unittest.mock import patch
+
+    from sqlalchemy import select as sa_select
+
+    from app.database.models import (
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+        XUIInboundConnection,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    server = Server(name="S-detach", ip_address="1.2.3.7", is_active=True)
+    test_session.add(server)
+    await test_session.flush()
+    ib_a = XUIInbound(
+        server_id=server.id, xui_id=301, remark="rDA", protocol="vless",
+        port=443, settings_json="{}", client_count=1, is_active=True,
+    )
+    ib_b = XUIInbound(
+        server_id=server.id, xui_id=302, remark="rDB", protocol="vless",
+        port=444, settings_json="{}", client_count=1, is_active=True,
+    )
+    test_session.add_all([ib_a, ib_b])
+    client = Client(name="Alice-detach", email="alice-detach@a.com", telegram_id=900444, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_detach",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    for ib in (ib_a, ib_b):
+        test_session.add(
+            XUIInboundConnection(
+                subscription_id=sub.id, inbound_id=ib.id, is_enabled=True,
+                total_gb=10, expiry_date=sub.expiry_date, sync_status="synced",
+                uuid="Ud", email="E", xui_client_id="Ud",
+            )
+        )
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    mock_provider = AsyncMock()
+    mock_provider.detach_inbounds = AsyncMock(return_value=True)
+    mock_provider.remove_client = AsyncMock()
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=mock_provider)):
+        ok = await svc.remove_inbound_from_subscription(sub.id, ib_a.id)
+
+    assert ok is True
+    mock_provider.detach_inbounds.assert_awaited_once_with("E", [ib_a.xui_id])
+    mock_provider.remove_client.assert_not_called()
+
+    rows = (
+        await test_session.execute(
+            sa_select(XUIInboundConnection).where(
+                XUIInboundConnection.subscription_id == sub.id,
+                XUIInboundConnection.inbound_id == ib_a.id,
+            )
+        )
+    ).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_remove_inbound_deletes_client_when_last(test_session, mock_settings):
+    """Единственный inbound с email — удаление снимает клиента целиком
+    (remove_client), detach_inbounds не вызывается."""
+    from unittest.mock import patch
+
+    from app.database.models import (
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+        XUIInboundConnection,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    server = Server(name="S-last", ip_address="1.2.3.8", is_active=True)
+    test_session.add(server)
+    await test_session.flush()
+    ib_a = XUIInbound(
+        server_id=server.id, xui_id=401, remark="rLA", protocol="vless",
+        port=443, settings_json="{}", client_count=1, is_active=True,
+    )
+    test_session.add(ib_a)
+    client = Client(name="Alice-last", email="alice-last@a.com", telegram_id=900555, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_last",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    test_session.add(
+        XUIInboundConnection(
+            subscription_id=sub.id, inbound_id=ib_a.id, is_enabled=True,
+            total_gb=10, expiry_date=sub.expiry_date, sync_status="synced",
+            uuid="Ul", email="E", xui_client_id="Ul",
+        )
+    )
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    mock_provider = AsyncMock()
+    mock_provider.detach_inbounds = AsyncMock()
+    mock_provider.remove_client = AsyncMock(return_value=True)
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=mock_provider)):
+        ok = await svc.remove_inbound_from_subscription(sub.id, ib_a.id)
+
+    assert ok is True
+    mock_provider.remove_client.assert_awaited_once()
+    mock_provider.detach_inbounds.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_remove_inbound_deletes_client_when_sibling_on_other_panel(test_session, mock_settings):
+    """Один email на ДВУХ панелях (разные серверы) — удаление последнего inbound'а
+    на первой панели снимает клиента целиком (remove_client), а соединение на второй
+    панели не считается «братом» (detach_inbounds не вызывается).
+
+    Email уникален лишь в рамках панели, поэтому совпадение email на другом сервере
+    не должно мешать снятию клиента на первой панели — иначе там остаётся zombie
+    без inbound'ов.
+    """
+    from unittest.mock import patch
+
+    from app.database.models import (
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+        XUIInboundConnection,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    s1 = Server(name="S-cross1", ip_address="1.2.3.30", is_active=True)
+    s2 = Server(name="S-cross2", ip_address="1.2.3.31", is_active=True)
+    test_session.add_all([s1, s2])
+    await test_session.flush()
+    ib_a = XUIInbound(
+        server_id=s1.id, xui_id=601, remark="rXA", protocol="vless",
+        port=443, settings_json="{}", client_count=1, is_active=True,
+    )
+    ib_b = XUIInbound(
+        server_id=s2.id, xui_id=602, remark="rXB", protocol="vless",
+        port=444, settings_json="{}", client_count=1, is_active=True,
+    )
+    test_session.add_all([ib_a, ib_b])
+    client = Client(name="Alice-cross", email="alice-cross@a.com", telegram_id=900777, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_cross",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    # Два соединения с ОДИНАКОВЫМ email и uuid, но на разных панелях (серверах).
+    for ib in (ib_a, ib_b):
+        test_session.add(
+            XUIInboundConnection(
+                subscription_id=sub.id, inbound_id=ib.id, is_enabled=True,
+                total_gb=10, expiry_date=sub.expiry_date, sync_status="synced",
+                uuid="Ux", email="Sub-Client", xui_client_id="Ux",
+            )
+        )
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    mock_provider = AsyncMock()
+    mock_provider.detach_inbounds = AsyncMock()
+    mock_provider.remove_client = AsyncMock(return_value=True)
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=mock_provider)):
+        # Удаляем последний inbound на первой панели.
+        ok = await svc.remove_inbound_from_subscription(sub.id, ib_a.id)
+
+    assert ok is True
+    mock_provider.remove_client.assert_awaited_once()
+    mock_provider.detach_inbounds.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_inbounds_groups_xui_per_server(test_session, mock_settings):
+    """add_inbounds_to_subscription группирует XUI по панели в один вызов на сервер,
+    а AWG добавляет отдельным одиночным вызовом."""
+    from unittest.mock import patch
+
+    from app.database.models import (
+        AWGInbound,
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    s1 = Server(name="S-grp1", ip_address="1.2.3.20", is_active=True)
+    s2 = Server(name="S-grp2", ip_address="1.2.3.21", is_active=True)
+    test_session.add_all([s1, s2])
+    await test_session.flush()
+
+    # Два XUI на S1, один XUI на S2, один AWG (на S1).
+    xui_s1_a = XUIInbound(
+        server_id=s1.id, xui_id=501, remark="g1a", protocol="vless",
+        port=443, settings_json="{}", client_count=0, is_active=True,
+    )
+    xui_s1_b = XUIInbound(
+        server_id=s1.id, xui_id=502, remark="g1b", protocol="vless",
+        port=444, settings_json="{}", client_count=0, is_active=True,
+    )
+    xui_s2 = XUIInbound(
+        server_id=s2.id, xui_id=503, remark="g2", protocol="vless",
+        port=445, settings_json="{}", client_count=0, is_active=True,
+    )
+    awg = AWGInbound(
+        server_id=s1.id, remark="gawg", protocol="awg", port=51820, is_active=True,
+    )
+    test_session.add_all([xui_s1_a, xui_s1_b, xui_s2, awg])
+    client = Client(name="Alice-grp", email="alice-grp@a.com", telegram_id=900666, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_grp",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    add_xui = AsyncMock(return_value=[])
+    add_one = AsyncMock(return_value=MagicMock())
+
+    all_ids = [xui_s1_a.id, xui_s1_b.id, xui_s2.id, awg.id]
+    with (
+        patch.object(svc, "add_xui_inbounds_to_subscription", add_xui),
+        patch.object(svc, "add_inbound_to_subscription", add_one),
+    ):
+        await svc.add_inbounds_to_subscription(sub.id, all_ids)
+
+    # XUI: ровно два вызова (по одному на сервер), каждый со своим набором id.
+    assert add_xui.await_count == 2
+    actual = {(c.args[0], tuple(sorted(c.args[1]))) for c in add_xui.await_args_list}
+    assert actual == {
+        (sub.id, tuple(sorted((xui_s1_a.id, xui_s1_b.id)))),
+        (sub.id, (xui_s2.id,)),
+    }
+
+    # AWG: один одиночный вызов.
+    add_one.assert_awaited_once()
+    assert add_one.await_args.args[0] == sub.id
+    assert add_one.await_args.args[1] == awg.id
+
+
+@pytest.mark.asyncio
+async def test_attach_client_posts_to_attach_endpoint():
+    """attach_client POST'ит на .../attach с inboundIds и возвращает True."""
+    from app.xui_client.client import XUIClient
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": True})
+
+    result = await client.attach_client("e", [4])
+
+    assert result is True
+    method, path = client._request.call_args[0]
+    assert method == "POST"
+    assert "/attach" in path
+    assert client._request.call_args.kwargs["json"] == {"inboundIds": [4]}
+
+
+@pytest.mark.asyncio
+async def test_attach_client_raises_on_failure():
+    """attach_client поднимает XUIError при success=False."""
+    from app.xui_client.client import XUIClient
+    from app.xui_client.exceptions import XUIError
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": False, "msg": "nope"})
+
+    with pytest.raises(XUIError):
+        await client.attach_client("e", [4])
+
+
+@pytest.mark.asyncio
+async def test_detach_client_posts_to_detach_endpoint():
+    """detach_client POST'ит на .../detach с inboundIds и возвращает True."""
+    from app.xui_client.client import XUIClient
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": True})
+
+    result = await client.detach_client("e", [4])
+
+    assert result is True
+    method, path = client._request.call_args[0]
+    assert method == "POST"
+    assert "/detach" in path
+    assert client._request.call_args.kwargs["json"] == {"inboundIds": [4]}
+
+
+@pytest.mark.asyncio
+async def test_detach_client_raises_on_failure():
+    """detach_client поднимает XUIError при success=False."""
+    from app.xui_client.client import XUIClient
+    from app.xui_client.exceptions import XUIError
+
+    client = XUIClient(base_url="http://x", api_token="t")
+    client._request = AsyncMock(return_value={"success": False, "msg": "nope"})
+
+    with pytest.raises(XUIError):
+        await client.detach_client("e", [4])
+
+
+@pytest.mark.asyncio
+async def test_provider_attach_inbounds_delegates_to_client():
+    """attach_inbounds делегирует в client.attach_client."""
+    provider = XUIProvider(MagicMock())
+    mock_client = AsyncMock()
+    mock_client.attach_client = AsyncMock(return_value=True)
+    provider._client = mock_client
+
+    result = await provider.attach_inbounds("e", [4])
+
+    assert result is True
+    mock_client.attach_client.assert_awaited_once_with("e", [4])
+
+
+@pytest.mark.asyncio
+async def test_provider_detach_inbounds_delegates_to_client():
+    """detach_inbounds делегирует в client.detach_client."""
+    provider = XUIProvider(MagicMock())
+    mock_client = AsyncMock()
+    mock_client.detach_client = AsyncMock(return_value=True)
+    provider._client = mock_client
+
+    result = await provider.detach_inbounds("e", [4])
+
+    assert result is True
+    mock_client.detach_client.assert_awaited_once_with("e", [4])
