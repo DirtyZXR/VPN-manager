@@ -59,6 +59,11 @@ class XUIClient:
 
     async def connect(self) -> None:
         """Create session and login to panel."""
+        # Идемпотентность: при повторном connect() закрываем прежнюю сессию,
+        # иначе старый ClientSession теряется без close() и всплывает в GC
+        # ("Unclosed client session").
+        await self.close()
+
         # Configure SSL context
         connector_args = {}
         if not self.verify_ssl:
@@ -106,17 +111,19 @@ class XUIClient:
 
         logger.info("Attempting to connect to {}", self.base_url)
 
-        if self.api_token:
-            if await self._test_bearer_token():
-                logger.info("Connected via API token to {}", self.base_url)
-                return
-            logger.warning("API token invalid for {}, falling back to login", self.base_url)
-
-        if self._cookies and await self._test_session():
-            logger.info("Successfully reusing saved session for {}", self.base_url)
-            return
-
+        # Любая ошибка после создания сессии (проверка токена/cookie/логин) должна
+        # закрыть сессию, иначе она утекает ("Unclosed client session").
         try:
+            if self.api_token:
+                if await self._test_bearer_token():
+                    logger.info("Connected via API token to {}", self.base_url)
+                    return
+                logger.warning("API token invalid for {}, falling back to login", self.base_url)
+
+            if self._cookies and await self._test_session():
+                logger.info("Successfully reusing saved session for {}", self.base_url)
+                return
+
             await self.login()
             logger.info("Successfully connected to {}", self.base_url)
         except Exception:
