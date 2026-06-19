@@ -27,7 +27,11 @@ class MTProxyProtocolSync(ProtocolSyncBase):
         inbound: "Inbound",
         xui_service: "XUIService | None" = None,
     ) -> int:
-        from app.database.models import MTProxyInboundConnection
+        from app.database.models import (
+            InboundConnection,
+            MTProxyInboundConnection,
+            Subscription,
+        )
         from app.services.vpn_providers.factory import get_vpn_provider
 
         server = inbound.server
@@ -41,7 +45,7 @@ class MTProxyProtocolSync(ProtocolSyncBase):
             select(conn_poly)
             .where(conn_poly.inbound_id == inbound.id)
             .options(
-                selectinload(conn_poly.subscription),
+                selectinload(conn_poly.subscription).selectinload(Subscription.client),
             )
         )
         connections = result.scalars().all()
@@ -63,11 +67,14 @@ class MTProxyProtocolSync(ProtocolSyncBase):
                 if not isinstance(conn, MTProxyInboundConnection):
                     continue
 
+                sub = conn.subscription
+                client_name = sub.client.name if sub and sub.client else "—"
+
                 expiry = conn.expiry_date
                 if expiry and expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=UTC)
 
-                should_be_enabled = conn.subscription.is_active if conn.subscription else True
+                should_be_enabled = sub.is_active if sub else True
                 if expiry and now > expiry:
                     should_be_enabled = False
 
@@ -76,13 +83,16 @@ class MTProxyProtocolSync(ProtocolSyncBase):
                         conn.is_enabled = False
                         conn.sync_status = "synced"
                         conn.last_sync_at = now
-                        logger.info("MTProxy: подключение {} отключено (истёк срок)", conn.id)
+                        logger.info(
+                            "MTProxy: подключение {} ({}) отключено (истёк срок)",
+                            conn.id, client_name,
+                        )
                         synced += 1
                     else:
                         logger.warning(
-                            "MTProxy: не удалось отключить подключение {} на сервере — "
+                            "MTProxy: не удалось отключить подключение {} ({}) на сервере — "
                             "оставляю включённым (повтор в следующем цикле)",
-                            conn.id,
+                            conn.id, client_name,
                         )
 
                 elif not conn.is_enabled and should_be_enabled:
@@ -91,14 +101,15 @@ class MTProxyProtocolSync(ProtocolSyncBase):
                         conn.sync_status = "synced"
                         conn.last_sync_at = now
                         logger.info(
-                            "MTProxy: подключение {} включено (подписка возобновлена)", conn.id
+                            "MTProxy: подключение {} ({}) включено (подписка возобновлена)",
+                            conn.id, client_name,
                         )
                         synced += 1
                     else:
                         logger.warning(
-                            "MTProxy: не удалось включить подключение {} на сервере "
+                            "MTProxy: не удалось включить подключение {} ({}) на сервере "
                             "(повтор в следующем цикле)",
-                            conn.id,
+                            conn.id, client_name,
                         )
 
             except Exception as e:
