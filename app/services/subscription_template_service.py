@@ -588,21 +588,19 @@ class SubscriptionTemplateService:
             subscriptions = result.scalars().all()
 
             for sub in subscriptions:
-                # Handle additions
-                for inbound_id in added:
+                # Handle additions — XUI-inbound'ы одной панели группируются в одного
+                # клиента (attach к существующему), иначе панель отвергает повторный subId.
+                if added:
                     try:
-                        await sub_service.add_inbound_to_subscription(
-                            subscription_id=sub.id,
-                            inbound_id=inbound_id,
-                        )
+                        await sub_service.add_inbounds_to_subscription(sub.id, added)
                         logger.info(
-                            "Массово добавлено подключение {} в подписку {} (ID: {})",
-                            inbound_id, sub.name, sub.id,
+                            "Массово добавлены подключения {} в подписку {} (ID: {})",
+                            sorted(added), sub.name, sub.id,
                         )
                     except Exception as e:
                         logger.error(
-                            "Не удалось добавить подключение {} в подписку {} (ID: {}): {}",
-                            inbound_id, sub.name, sub.id, e,
+                            "Не удалось добавить подключения {} в подписку {} (ID: {}): {}",
+                            sorted(added), sub.name, sub.id, e,
                             exc_info=True,
                         )
 
