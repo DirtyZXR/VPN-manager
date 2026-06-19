@@ -576,6 +576,147 @@ async def test_remove_inbound_deletes_client_when_last(test_session, mock_settin
 
 
 @pytest.mark.asyncio
+async def test_remove_inbound_deletes_client_when_sibling_on_other_panel(test_session, mock_settings):
+    """Один email на ДВУХ панелях (разные серверы) — удаление последнего inbound'а
+    на первой панели снимает клиента целиком (remove_client), а соединение на второй
+    панели не считается «братом» (detach_inbounds не вызывается).
+
+    Email уникален лишь в рамках панели, поэтому совпадение email на другом сервере
+    не должно мешать снятию клиента на первой панели — иначе там остаётся zombie
+    без inbound'ов.
+    """
+    from unittest.mock import patch
+
+    from app.database.models import (
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+        XUIInboundConnection,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    s1 = Server(name="S-cross1", ip_address="1.2.3.30", is_active=True)
+    s2 = Server(name="S-cross2", ip_address="1.2.3.31", is_active=True)
+    test_session.add_all([s1, s2])
+    await test_session.flush()
+    ib_a = XUIInbound(
+        server_id=s1.id, xui_id=601, remark="rXA", protocol="vless",
+        port=443, settings_json="{}", client_count=1, is_active=True,
+    )
+    ib_b = XUIInbound(
+        server_id=s2.id, xui_id=602, remark="rXB", protocol="vless",
+        port=444, settings_json="{}", client_count=1, is_active=True,
+    )
+    test_session.add_all([ib_a, ib_b])
+    client = Client(name="Alice-cross", email="alice-cross@a.com", telegram_id=900777, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_cross",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    # Два соединения с ОДИНАКОВЫМ email и uuid, но на разных панелях (серверах).
+    for ib in (ib_a, ib_b):
+        test_session.add(
+            XUIInboundConnection(
+                subscription_id=sub.id, inbound_id=ib.id, is_enabled=True,
+                total_gb=10, expiry_date=sub.expiry_date, sync_status="synced",
+                uuid="Ux", email="Sub-Client", xui_client_id="Ux",
+            )
+        )
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    mock_provider = AsyncMock()
+    mock_provider.detach_inbounds = AsyncMock()
+    mock_provider.remove_client = AsyncMock(return_value=True)
+
+    with patch.object(svc, "_get_provider", AsyncMock(return_value=mock_provider)):
+        # Удаляем последний inbound на первой панели.
+        ok = await svc.remove_inbound_from_subscription(sub.id, ib_a.id)
+
+    assert ok is True
+    mock_provider.remove_client.assert_awaited_once()
+    mock_provider.detach_inbounds.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_add_inbounds_groups_xui_per_server(test_session, mock_settings):
+    """add_inbounds_to_subscription группирует XUI по панели в один вызов на сервер,
+    а AWG добавляет отдельным одиночным вызовом."""
+    from unittest.mock import patch
+
+    from app.database.models import (
+        AWGInbound,
+        Client,
+        Server,
+        Subscription,
+        XUIInbound,
+    )
+    from app.services.new_subscription_service import NewSubscriptionService
+
+    s1 = Server(name="S-grp1", ip_address="1.2.3.20", is_active=True)
+    s2 = Server(name="S-grp2", ip_address="1.2.3.21", is_active=True)
+    test_session.add_all([s1, s2])
+    await test_session.flush()
+
+    # Два XUI на S1, один XUI на S2, один AWG (на S1).
+    xui_s1_a = XUIInbound(
+        server_id=s1.id, xui_id=501, remark="g1a", protocol="vless",
+        port=443, settings_json="{}", client_count=0, is_active=True,
+    )
+    xui_s1_b = XUIInbound(
+        server_id=s1.id, xui_id=502, remark="g1b", protocol="vless",
+        port=444, settings_json="{}", client_count=0, is_active=True,
+    )
+    xui_s2 = XUIInbound(
+        server_id=s2.id, xui_id=503, remark="g2", protocol="vless",
+        port=445, settings_json="{}", client_count=0, is_active=True,
+    )
+    awg = AWGInbound(
+        server_id=s1.id, remark="gawg", protocol="awg", port=51820, is_active=True,
+    )
+    test_session.add_all([xui_s1_a, xui_s1_b, xui_s2, awg])
+    client = Client(name="Alice-grp", email="alice-grp@a.com", telegram_id=900666, is_active=True)
+    test_session.add(client)
+    await test_session.flush()
+    sub = Subscription(
+        client_id=client.id, name="Sub", subscription_token="tok_grp",
+        total_gb=10, expiry_date=datetime.now(UTC) + timedelta(days=30), is_active=True,
+    )
+    test_session.add(sub)
+    await test_session.flush()
+
+    svc = NewSubscriptionService(test_session)
+    add_xui = AsyncMock(return_value=[])
+    add_one = AsyncMock(return_value=MagicMock())
+
+    all_ids = [xui_s1_a.id, xui_s1_b.id, xui_s2.id, awg.id]
+    with (
+        patch.object(svc, "add_xui_inbounds_to_subscription", add_xui),
+        patch.object(svc, "add_inbound_to_subscription", add_one),
+    ):
+        await svc.add_inbounds_to_subscription(sub.id, all_ids)
+
+    # XUI: ровно два вызова (по одному на сервер), каждый со своим набором id.
+    assert add_xui.await_count == 2
+    actual = {(c.args[0], tuple(sorted(c.args[1]))) for c in add_xui.await_args_list}
+    assert actual == {
+        (sub.id, tuple(sorted((xui_s1_a.id, xui_s1_b.id)))),
+        (sub.id, (xui_s2.id,)),
+    }
+
+    # AWG: один одиночный вызов.
+    add_one.assert_awaited_once()
+    assert add_one.await_args.args[0] == sub.id
+    assert add_one.await_args.args[1] == awg.id
+
+
+@pytest.mark.asyncio
 async def test_attach_client_posts_to_attach_endpoint():
     """attach_client POST'ит на .../attach с inboundIds и возвращает True."""
     from app.xui_client.client import XUIClient

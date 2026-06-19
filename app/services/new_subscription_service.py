@@ -1,6 +1,6 @@
 """Subscription service for managing client subscriptions."""
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -193,15 +193,6 @@ class NewSubscriptionService:
         current_inbound_ids = {c.inbound_id for c in current_connections}
         new_inbound_ids_set = set(new_inbound_ids)
 
-        # Capture old UUID if possible
-        client_uuid = None
-        if current_connections:
-            client_uuid = current_connections[0].uuid
-        else:
-            import uuid
-
-            client_uuid = str(uuid.uuid4())
-
         # Update subscription properties
         subscription.name = new_name
         subscription.total_gb = new_total_gb
@@ -263,16 +254,17 @@ class NewSubscriptionService:
                     conn.sync_status = "error"
                     failed.append((conn.inbound_id, str(e)))
 
-        # Process added
-        for ib_id in added_ids:
+        # Process added — XUI одной панели группируются в одного клиента (attach к
+        # существующему), AWG/MTProxy создаются по одному.
+        if added_ids:
             try:
-                await self.add_inbound_to_subscription(subscription_id, ib_id, client_uuid=client_uuid)
+                await self.add_inbounds_to_subscription(subscription_id, list(added_ids))
             except Exception as e:
                 logger.error(
-                    "rebuild_subscription: не удалось добавить inbound {} для sub {}: {}",
-                    ib_id, subscription_id, e,
+                    "rebuild_subscription: не удалось добавить inbounds {} для sub {}: {}",
+                    sorted(added_ids), subscription_id, e,
                 )
-                failed.append((ib_id, str(e)))
+                failed.append((next(iter(added_ids)), str(e)))
 
         await self.session.flush()
 
@@ -598,6 +590,45 @@ class NewSubscriptionService:
                     f"Failed to save inbound connections: {str(db_error)}"
                 ) from db_error
 
+    async def add_inbounds_to_subscription(
+        self, subscription_id: int, inbound_ids: Iterable[int], mtproxy_domain: str | None = None
+    ) -> list[InboundConnection]:
+        """Добавить набор inbound'ов к подписке, группируя XUI одной панели в одного
+        клиента (attach к существующему / один add), а AWG/MTProxy создавая по одному.
+
+        Единая точка для всех путей «добавить inbound к подписке».
+        """
+        ids = list(inbound_ids)
+        if not ids:
+            return []
+
+        rows = (
+            await self.session.execute(
+                select(Inbound.id, Inbound.type, Inbound.server_id).where(Inbound.id.in_(ids))
+            )
+        ).all()
+        meta = {r.id: (r.type, r.server_id) for r in rows}
+
+        xui_by_server: dict[int, list[int]] = {}
+        others: list[int] = []
+        for i in ids:
+            t_s = meta.get(i)
+            if t_s and t_s[0] == "xui_inbound":
+                xui_by_server.setdefault(t_s[1], []).append(i)
+            else:
+                others.append(i)
+
+        created: list[InboundConnection] = []
+        for server_ids in xui_by_server.values():
+            created.extend(await self.add_xui_inbounds_to_subscription(subscription_id, server_ids))
+        for i in others:
+            created.append(
+                await self.add_inbound_to_subscription(
+                    subscription_id, i, mtproxy_domain=mtproxy_domain
+                )
+            )
+        return created
+
     async def remove_inbound_from_subscription(
         self,
         subscription_id: int,
@@ -643,10 +674,14 @@ class NewSubscriptionService:
                     await self.session.execute(
                         select(func.count())
                         .select_from(XUIInboundConnection)
+                        .join(Inbound, Inbound.id == XUIInboundConnection.inbound_id)
                         .where(
                             XUIInboundConnection.subscription_id == subscription_id,
                             XUIInboundConnection.email == email,
                             XUIInboundConnection.id != connection.id,
+                            # Email уникален лишь в рамках панели: одинаковая почта на
+                            # другом сервере — это другой клиент, не «брат» по inbound'у.
+                            Inbound.server_id == inbound.server_id,
                         )
                     )
                 ).scalar() or 0
