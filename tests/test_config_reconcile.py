@@ -6,10 +6,10 @@ from app.config import Settings
 
 
 def _make(**over):
-    base = dict(
-        bot_token="t",
-        encryption_key="SpWH-ifTebQwpAlasE5SvZsgUwi0onGmILmSrm7G1BQ=",
-    )
+    base = {
+        "bot_token": "t",
+        "encryption_key": "SpWH-ifTebQwpAlasE5SvZsgUwi0onGmILmSrm7G1BQ=",
+    }
     base.update(over)
     return Settings(**base)
 

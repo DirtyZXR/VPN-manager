@@ -65,6 +65,8 @@ def mock_settings():
         settings.log_level = "DEBUG"
         settings.xui_timeout = 30
         settings.admin_ids = {123456789}
-        settings.reconcile_mode = "ask"
+        # Легаси-тесты реконсиляции проверяют auto-поведение; тесты режимов
+        # переопределяют это значение явно.
+        settings.reconcile_mode = "auto"
         settings.reconcile_mass_threshold = 5
         yield settings
