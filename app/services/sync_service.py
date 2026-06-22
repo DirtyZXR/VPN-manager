@@ -746,6 +746,7 @@ class SyncService:
         grace_ms = ZOMBIE_GRACE_PERIOD.total_seconds() * 1000
 
         orphans_deleted = 0
+        orphans_detached = 0
         warnings_logged = 0
 
         for panel_client in panel_clients:
@@ -788,38 +789,54 @@ class SyncService:
                 )
                 continue
 
-            # Проверяем для каждого inbound, на котором зарегистрирован клиент
+            # Делим inbound'ы клиента на «валидные» (есть InboundConnection в БД) и
+            # «осиротевшие» (нет). В мультиинбаунд-модели один клиент живёт на
+            # нескольких inbound'ах через inboundIds: нельзя удалять его целиком по
+            # email из-за одной фантом-привязки — delete_client снёс бы и валидные.
+            orphan_xui_ids: list[int] = []
+            has_valid = False
             for xui_inbound_id in inbound_ids_on_panel:
                 inbound_db_id = xui_id_to_inbound_id.get(xui_inbound_id)
                 if inbound_db_id is None:
                     # Инбаунд не в нашей БД — не трогаем
-                    logger.debug(
-                        "Inbound xui_id={} не найден в БД сервера {}, пропуск",
-                        xui_inbound_id, server.name,
-                    )
                     continue
+                if (subscription_id, inbound_db_id) in existing_pairs:
+                    has_valid = True
+                else:
+                    orphan_xui_ids.append(xui_inbound_id)
 
-                if (subscription_id, inbound_db_id) not in existing_pairs:
-                    # Орфан: наш токен (bot-подпись), но нет InboundConnection
-                    if not email:
-                        logger.debug("XUI-зомби (subId={!r}) с пустым email — пропуск", sub_id_field)
-                        break
-                    logger.info(
-                        "XUI-зомби: клиент '{}' (subId={!r}) на inbound xui_id={} сервера {}: "
-                        "подписка {} в БД есть, InboundConnection нет — удаление с панели",
-                        email, sub_id_field, xui_inbound_id, server.name, subscription_id,
-                    )
-                    try:
-                        await xui_client.delete_client(email)
-                        orphans_deleted += 1
-                    except Exception as e:
-                        logger.error("Не удалось удалить зомби '{}' с панели: {}", email, e)
-                    # Удаляем по email — не продолжаем проверять остальные inbounds
-                    break
+            if not orphan_xui_ids or not email:
+                continue
+
+            if has_valid:
+                # Есть валидные inbound'ы → отвязываем ТОЛЬКО осиротевшие привязки,
+                # клиент и его валидные inbound'ы остаются.
+                logger.info(
+                    "XUI-фантом-привязка: клиент '{}' (subId={!r}) сервера {}: "
+                    "inbound'ы {} без InboundConnection — detach (валидные сохраняем)",
+                    email, sub_id_field, server.name, orphan_xui_ids,
+                )
+                try:
+                    await xui_client.detach_client(email, orphan_xui_ids)
+                    orphans_detached += 1
+                except Exception as e:
+                    logger.error("Не удалось отвязать '{}' от {}: {}", email, orphan_xui_ids, e)
+            else:
+                # Ни одной валидной привязки → настоящий зомби, удаляем целиком.
+                logger.info(
+                    "XUI-зомби: клиент '{}' (subId={!r}) сервера {}: подписка {} есть, "
+                    "но ни одного InboundConnection — удаление с панели",
+                    email, sub_id_field, server.name, subscription_id,
+                )
+                try:
+                    await xui_client.delete_client(email)
+                    orphans_deleted += 1
+                except Exception as e:
+                    logger.error("Не удалось удалить зомби '{}' с панели: {}", email, e)
 
         logger.info(
-            "Реконсиляция сервера {}: удалено зомби={}, предупреждений={}",
-            server.name, orphans_deleted, warnings_logged,
+            "Реконсиляция сервера {}: удалено зомби={}, отвязано фантом-привязок={}, предупреждений={}",
+            server.name, orphans_deleted, orphans_detached, warnings_logged,
         )
 
         # -----------------------------------------------------------------------
