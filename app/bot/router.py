@@ -7,6 +7,7 @@ from app.bot.handlers.admin import (
     broadcast,
     clients,
     dashboard,
+    divergences,
     requests,
     servers,
     subscriptions,
@@ -26,6 +27,7 @@ _SUB_ROUTERS = [
     sync.router,
     templates.router,
     requests.router,
+    divergences.router,
     user_subscriptions.router,
     fallback.router,
 ]
