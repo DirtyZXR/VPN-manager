@@ -4,6 +4,7 @@ from app.bot.handlers.admin import (
     broadcast,
     clients,
     dashboard,
+    manual_clients,
     requests,
     servers,
     subscriptions,
@@ -20,4 +21,5 @@ __all__ = [
     "sync",
     "templates",
     "requests",
+    "manual_clients",
 ]
