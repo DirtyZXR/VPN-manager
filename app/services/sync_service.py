@@ -631,12 +631,21 @@ class SyncService:
             server: Server model
             xui_client: Подключённый XUIClient для этого сервера
         """
+        from uuid import uuid4
+
         from sqlalchemy import select
         from sqlalchemy.orm import with_polymorphic
 
+        from app.config import get_settings
         from app.database.models import Subscription
         from app.database.models.inbound import XUIInbound
         from app.database.models.inbound_connection import XUIInboundConnection
+        from app.services.divergence_service import (
+            KIND_EXTRA,
+            KIND_MISSING,
+            DivergenceFinding,
+            DivergenceService,
+        )
 
         logger.debug("Начало реконсиляции для сервера {}", server.name)
 
@@ -697,27 +706,18 @@ class SyncService:
             "Соединений со статусом 'error' для сервера {}: {}", server.name, len(error_connections)
         )
 
+        # Детект (без действий): лечим присутствующих, собираем отсутствующих.
+        heal_conns: list = []  # error, но клиент есть на панели → synced (любой режим)
+        missing_from_error: list = []  # error, клиента нет на панели
         for conn in error_connections:
             c_email = getattr(conn, "email", None)
             if not c_email:
                 logger.debug("Соединение {} без email, пропуск", conn.id)
                 continue
-            if c_email.lower() not in panel_emails:
-                # Клиента нет на панели — фантом, удаляем из БД
-                logger.info(
-                    "Фантом: соединение {} (email={}) отсутствует на панели, удаление из БД",
-                    conn.id, c_email,
-                )
-                self.session.delete(conn)
+            if c_email.lower() in panel_emails:
+                heal_conns.append(conn)
             else:
-                # Клиент есть на панели — восстанавливаем статус
-                logger.info(
-                    "Соединение {} (email={}) найдено на панели, восстановление sync_status='synced'",
-                    conn.id, c_email,
-                )
-                conn.sync_status = "synced"
-
-        await self.session.flush()
+                missing_from_error.append(conn)
 
         # -----------------------------------------------------------------------
         # 2b. XUI bot-зомби: панельные клиенты без соответствующей InboundConnection
@@ -742,12 +742,15 @@ class SyncService:
         )
         existing_pairs: set[tuple[int, int]] = set(conn_result.all())
 
+        # Обратные карты для governed-деталей (adopt/restore).
+        sub_id_to_token: dict[int, str] = {v: k for k, v in token_to_sub_id.items()}
+        inbound_id_to_xui: dict[int, int] = {v: k for k, v in xui_id_to_inbound_id.items()}
+
         now_ms = datetime.now(UTC).timestamp() * 1000
         grace_ms = ZOMBIE_GRACE_PERIOD.total_seconds() * 1000
 
-        orphans_deleted = 0
-        warnings_logged = 0
-
+        # Детект (без действий): «лишнее на панели». Все safety-guard'ы сохранены.
+        extra_items: list[dict] = []
         for panel_client in panel_clients:
             sub_id_field = panel_client.get("subId", "") or ""
             email = panel_client.get("email", "") or ""
@@ -759,68 +762,51 @@ class SyncService:
                 continue
 
             if sub_id_field not in token_to_sub_id:
-                # subId не совпадает ни с одной подпиской в БД
-                # Может быть ручным клиентом или зомби от удалённой подписки — НЕ удалять
+                # subId не совпадает ни с одной подпиской в БД — НЕ трогаем (ручной/чужой)
                 logger.warning(
                     "Клиент '{}' (subId={!r}) на сервере {}: subId не совпадает ни с одной подпиской в БД, оставляем",
                     email, sub_id_field, server.name,
                 )
-                warnings_logged += 1
                 continue
 
-            # subId совпадает с существующей подпиской в БД
             subscription_id = token_to_sub_id[sub_id_field]
 
-            # Grace-period: проверяем возраст клиента по createdAt (epoch ms).
-            # Если createdAt отсутствует, равен 0 или клиент моложе порога — пропускаем.
+            # Grace-period по createdAt (epoch ms): отсутствует/0/моложе порога → пропуск.
             created_at_ms = panel_client.get("createdAt") or 0
             if not created_at_ms:
                 logger.debug(
-                    "Клиент '{}' (subId={!r}) без createdAt — пропуск",
-                    email, sub_id_field,
+                    "Клиент '{}' (subId={!r}) без createdAt — пропуск", email, sub_id_field
                 )
                 continue
-            age_ms = now_ms - created_at_ms
-            if age_ms < grace_ms:
-                logger.debug(
-                    "Клиент '{}' моложе grace-period ({:.0f}s < {:.0f}s) — пропуск",
-                    email, age_ms / 1000, ZOMBIE_GRACE_PERIOD.total_seconds(),
-                )
+            if (now_ms - created_at_ms) < grace_ms:
+                logger.debug("Клиент '{}' моложе grace-period — пропуск", email)
                 continue
 
-            # Проверяем для каждого inbound, на котором зарегистрирован клиент
+            # Делим inbound'ы на валидные (есть InboundConnection) и осиротевшие.
+            orphan_xui_ids: list[int] = []
+            has_valid = False
             for xui_inbound_id in inbound_ids_on_panel:
                 inbound_db_id = xui_id_to_inbound_id.get(xui_inbound_id)
                 if inbound_db_id is None:
-                    # Инбаунд не в нашей БД — не трогаем
-                    logger.debug(
-                        "Inbound xui_id={} не найден в БД сервера {}, пропуск",
-                        xui_inbound_id, server.name,
-                    )
                     continue
+                if (subscription_id, inbound_db_id) in existing_pairs:
+                    has_valid = True
+                else:
+                    orphan_xui_ids.append(xui_inbound_id)
 
-                if (subscription_id, inbound_db_id) not in existing_pairs:
-                    # Орфан: наш токен (bot-подпись), но нет InboundConnection
-                    if not email:
-                        logger.debug("XUI-зомби (subId={!r}) с пустым email — пропуск", sub_id_field)
-                        break
-                    logger.info(
-                        "XUI-зомби: клиент '{}' (subId={!r}) на inbound xui_id={} сервера {}: "
-                        "подписка {} в БД есть, InboundConnection нет — удаление с панели",
-                        email, sub_id_field, xui_inbound_id, server.name, subscription_id,
-                    )
-                    try:
-                        await xui_client.delete_client(email)
-                        orphans_deleted += 1
-                    except Exception as e:
-                        logger.error("Не удалось удалить зомби '{}' с панели: {}", email, e)
-                    # Удаляем по email — не продолжаем проверять остальные inbounds
-                    break
+            if not orphan_xui_ids or not email:
+                continue
 
-        logger.info(
-            "Реконсиляция сервера {}: удалено зомби={}, предупреждений={}",
-            server.name, orphans_deleted, warnings_logged,
-        )
+            extra_items.append(
+                {
+                    "email": email,
+                    "subscription_id": subscription_id,
+                    "subscription_token": sub_id_field,
+                    "orphan_xui_ids": orphan_xui_ids,
+                    "has_valid": has_valid,
+                    "panel_client": panel_client,
+                }
+            )
 
         # -----------------------------------------------------------------------
         # 2c. Вручную удалённые на панели: synced-соединения, отсутствующие в снимке.
@@ -840,68 +826,224 @@ class SyncService:
         )
         synced_connections = synced_result.scalars().all()
 
-        marked_for_notify: list[dict] = []
-
+        # Детект (без действий): synced-соединения, пропавшие с панели и старше grace.
+        missing_from_synced: list[tuple] = []
         for conn in synced_connections:
             c_email = getattr(conn, "email", None)
-            if not c_email:
+            if not c_email or c_email.lower() in panel_emails:
                 continue
-            if c_email.lower() in panel_emails:
-                # Клиент присутствует на панели — всё в порядке
-                continue
-
-            # Клиент отсутствует на панели — проверяем возраст соединения
-            ref_ts: datetime | None = getattr(conn, "last_sync_at", None) or getattr(conn, "created_at", None)
+            ref_ts = getattr(conn, "last_sync_at", None) or getattr(conn, "created_at", None)
             if ref_ts is None:
-                # Нет временной метки — пропускаем (безопаснее не трогать)
-                logger.debug(
-                    "Соединение {} (email={}) без временной метки — пропуск",
-                    conn.id, c_email,
-                )
+                logger.debug("Соединение {} (email={}) без временной метки — пропуск", conn.id, c_email)
                 continue
-
-            # Нормализуем timezone
             if ref_ts.tzinfo is None:
                 ref_ts = ref_ts.replace(tzinfo=UTC)
-
-            age = now_utc - ref_ts
-            if age < grace:
-                # Соединение слишком свежее — могло ещё не синхронизироваться
-                logger.debug(
-                    "Соединение {} (email={}) моложе grace-period ({:.0f}s < {:.0f}s) — пропуск",
-                    conn.id, c_email, age.total_seconds(), grace.total_seconds(),
-                )
+            if (now_utc - ref_ts) < grace:
+                logger.debug("Соединение {} (email={}) моложе grace-period — пропуск", conn.id, c_email)
                 continue
-
-            # Помечаем как error (удалит шаг 2a на следующем проходе реконсилятора)
-            logger.info(
-                "Зеркало: соединение {} (email={}) отсутствует на панели {}, возраст {:.0f}s — помечаем error",
-                conn.id, c_email, server.name, age.total_seconds(),
-            )
-            conn.sync_status = "error"
-
-            # Собираем информацию для уведомления (email + имя пользователя)
             user_label = "—"
             try:
                 sub = getattr(conn, "subscription", None)
                 if sub is not None:
                     client = getattr(sub, "client", None)
                     if client is not None:
-                        user_label = getattr(client, "name", None) or str(getattr(client, "telegram_id", "—"))
+                        user_label = getattr(client, "name", None) or str(
+                            getattr(client, "telegram_id", "—")
+                        )
             except Exception:
                 pass
-            marked_for_notify.append({"email": c_email, "user": user_label})
+            missing_from_synced.append((conn, user_label))
+
+        # ============ РЕЖИМ ОБРАБОТКИ РАСХОЖДЕНИЙ ============
+        settings = get_settings()
+        mode = getattr(settings, "reconcile_mode", "ask") or "ask"
+        threshold = int(getattr(settings, "reconcile_mass_threshold", 5) or 5)
+        divergence_count = (
+            len(missing_from_error) + len(missing_from_synced) + len(extra_items)
+        )
+        # Массовое расхождение — почти всегда системный сбой (откат/потеря панели).
+        # Принудительно спрашиваем, даже если стоит auto: это предохранитель от
+        # автоматического сноса десятков живых клиентов.
+        effective_mode = "ask" if divergence_count > threshold else mode
+
+        # Лечение присутствующих на панели — не деструктивно, выполняется всегда.
+        for conn in heal_conns:
+            logger.info(
+                "Соединение {} (email={}) найдено на панели, восстановление sync_status='synced'",
+                conn.id, getattr(conn, "email", None),
+            )
+            conn.sync_status = "synced"
+        await self.session.flush()
+
+        if effective_mode == "auto":
+            await self._reconcile_apply_auto(
+                server, xui_client, missing_from_error, missing_from_synced, extra_items
+            )
+            return
+
+        # --- governed: ask / report — деструктив не выполняется ---
+        findings: list[DivergenceFinding] = []
+        present_keys: set[tuple[str, str]] = set()
+
+        # missing: группируем соединения по email
+        missing_by_email: dict[str, list] = {}
+        for conn in missing_from_error:
+            missing_by_email.setdefault(conn.email, []).append(conn)
+        for conn, _ in missing_from_synced:
+            missing_by_email.setdefault(conn.email, []).append(conn)
+
+        for email, conns in missing_by_email.items():
+            inbound_db_ids = [c.inbound_id for c in conns]
+            sub_id = conns[0].subscription_id
+            inbound_xui_ids = [
+                inbound_id_to_xui[i] for i in inbound_db_ids if i in inbound_id_to_xui
+            ]
+            exp = getattr(conns[0], "expiry_date", None)
+            expiry_ms = None
+            if exp is not None:
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=UTC)
+                expiry_ms = int(exp.timestamp() * 1000)
+            findings.append(
+                DivergenceFinding(
+                    server_id=server.id,
+                    kind=KIND_MISSING,
+                    email=email,
+                    subscription_id=sub_id,
+                    details={
+                        "inbound_db_ids": inbound_db_ids,
+                        "inbound_xui_ids": inbound_xui_ids,
+                        "uuid": getattr(conns[0], "uuid", None),
+                        "subscription_token": sub_id_to_token.get(sub_id),
+                        "total_gb": int(getattr(conns[0], "total_gb", 0) or 0),
+                        "expiry_ms": expiry_ms,
+                        "enable": bool(getattr(conns[0], "is_enabled", True)),
+                    },
+                )
+            )
+            present_keys.add((KIND_MISSING, email))
+
+        # extra: панельные осиротевшие привязки/зомби
+        for item in extra_items:
+            pc = item["panel_client"]
+            orphan_db_ids = [
+                xui_id_to_inbound_id[x]
+                for x in item["orphan_xui_ids"]
+                if x in xui_id_to_inbound_id
+            ]
+            findings.append(
+                DivergenceFinding(
+                    server_id=server.id,
+                    kind=KIND_EXTRA,
+                    email=item["email"],
+                    subscription_id=item["subscription_id"],
+                    details={
+                        "orphan_xui_ids": item["orphan_xui_ids"],
+                        "has_valid": item["has_valid"],
+                        "inbound_db_ids": orphan_db_ids,
+                        "uuid": pc.get("uuid") or pc.get("id"),
+                        "total_gb": int(pc.get("totalGB") or 0) // (1024**3),
+                        "expiry_ms": int(pc.get("expiryTime") or 0),
+                        "enable": bool(pc.get("enable", True)),
+                        "subscription_token": item["subscription_token"],
+                        "panel_payload": pc,
+                    },
+                )
+            )
+            present_keys.add((KIND_EXTRA, item["email"]))
+
+        if effective_mode == "report":
+            logger.info(
+                "Сервер {}: режим report — расхождений {}, только уведомление",
+                server.name, divergence_count,
+            )
+            await self._notify_divergences_report(server, findings)
+            return
+
+        # effective_mode == "ask" (в т.ч. форс при массовом сбое)
+        svc = DivergenceService(self.session)
+        batch_id = uuid4().hex[:8]
+        created = await svc.record_findings(findings, batch_id)
+        await svc.mark_obsolete(server.id, present_keys)
+        await self.session.flush()
+        logger.info(
+            "Сервер {}: режим ask — расхождений {}, новых pending {}{}",
+            server.name, divergence_count, len(created),
+            " (массовый сбой!)" if divergence_count > threshold else "",
+        )
+        if created:
+            await self._notify_divergences_ask(
+                server, batch_id, created, divergence_count > threshold
+            )
+
+    async def _reconcile_apply_auto(
+        self,
+        server: Server,
+        xui_client: object,
+        missing_from_error: list,
+        missing_from_synced: list,
+        extra_items: list[dict],
+    ) -> None:
+        """Режим auto: выполнить деструктив немедленно (прежнее поведение).
+
+        - missing из error-соединений → удалить строку БД;
+        - missing из synced-соединений → пометить error + уведомить (удалит 2a на след. проходе);
+        - extra → detach осиротевшей привязки или delete зомби целиком.
+        """
+        for conn in missing_from_error:
+            logger.info(
+                "Фантом: соединение {} (email={}) отсутствует на панели, удаление из БД",
+                conn.id, getattr(conn, "email", None),
+            )
+            self.session.delete(conn)
+
+        orphans_deleted = 0
+        orphans_detached = 0
+        for item in extra_items:
+            email = item["email"]
+            orphan = item["orphan_xui_ids"]
+            if item["has_valid"]:
+                logger.info(
+                    "XUI-фантом-привязка: клиент '{}' сервера {}: inbound'ы {} без InboundConnection — detach",
+                    email, server.name, orphan,
+                )
+                try:
+                    await xui_client.detach_client(email, orphan)
+                    orphans_detached += 1
+                except Exception as e:
+                    logger.error("Не удалось отвязать '{}' от {}: {}", email, orphan, e)
+            else:
+                logger.info(
+                    "XUI-зомби: клиент '{}' сервера {}: нет ни одного InboundConnection — удаление с панели",
+                    email, server.name,
+                )
+                try:
+                    await xui_client.delete_client(email)
+                    orphans_deleted += 1
+                except Exception as e:
+                    logger.error("Не удалось удалить зомби '{}' с панели: {}", email, e)
+
+        marked_for_notify: list[dict] = []
+        for conn, user_label in missing_from_synced:
+            logger.info(
+                "Зеркало: соединение {} (email={}) отсутствует на панели {} — помечаем error",
+                conn.id, getattr(conn, "email", None), server.name,
+            )
+            conn.sync_status = "error"
+            marked_for_notify.append({"email": conn.email, "user": user_label})
+
+        await self.session.flush()
+
+        logger.info(
+            "Реконсиляция сервера {} (auto): удалено зомби={}, отвязано={}, помечено missing={}",
+            server.name, orphans_deleted, orphans_detached, len(marked_for_notify),
+        )
 
         if marked_for_notify:
-            await self.session.flush()
-            logger.info(
-                "Сервер {}: помечено missing-on-panel={}, отправка уведомления администраторам",
-                server.name, len(marked_for_notify),
-            )
             try:
                 from app.services.notification_service import NotificationService
-                notif = NotificationService(self.session)
-                await notif.notify_admins_missing_on_panel(
+
+                await NotificationService(self.session).notify_admins_missing_on_panel(
                     server_name=server.name,
                     marked_connections=marked_for_notify,
                 )
@@ -910,8 +1052,38 @@ class SyncService:
                     "Не удалось отправить уведомление о пропавших клиентах сервера {}: {}",
                     server.name, e,
                 )
-        else:
-            logger.debug("Сервер {}: все synced-соединения присутствуют на панели", server.name)
+
+    async def _notify_divergences_ask(
+        self, server: Server, batch_id: str, created: list, is_mass: bool
+    ) -> None:
+        """Отправить администраторам дайджест расхождений (режим ask)."""
+        try:
+            from app.services.notification_service import NotificationService
+
+            await NotificationService(self.session).notify_admins_divergences(
+                server_name=server.name,
+                batch_id=batch_id,
+                pendings=created,
+                is_mass=is_mass,
+            )
+        except Exception as e:
+            logger.error(
+                "Не удалось отправить дайджест расхождений сервера {}: {}", server.name, e
+            )
+
+    async def _notify_divergences_report(self, server: Server, findings: list) -> None:
+        """Отправить администраторам сводку расхождений без действий (режим report)."""
+        try:
+            from app.services.notification_service import NotificationService
+
+            await NotificationService(self.session).notify_admins_divergences_report(
+                server_name=server.name,
+                findings=findings,
+            )
+        except Exception as e:
+            logger.error(
+                "Не удалось отправить отчёт о расхождениях сервера {}: {}", server.name, e
+            )
 
     async def _sync_inbound_clients(self, inbound: Inbound, xui_client: object | None = None) -> int:
         """Dispatch client sync to the appropriate protocol handler.
