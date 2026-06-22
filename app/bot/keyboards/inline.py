@@ -1132,6 +1132,67 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_divergence_digest_keyboard(batch_id: str, open_count: int) -> InlineKeyboardMarkup:
+    """Клавиатура дайджеста расхождений: групповые действия + разбор по одному.
+
+    Единая модель решения: применить деструктив / сохранить ручное / игнорировать.
+    Групповые кнопки действуют поэлементно согласно kind каждого расхождения.
+    """
+    builder = InlineKeyboardBuilder()
+    if open_count > 0:
+        builder.button(
+            text=t("keyboards.divergence.wizard", "🔎 Разобрать по одному"),
+            callback_data=f"div:wiz:{batch_id}:0",
+        )
+        builder.button(
+            text=t("keyboards.divergence.apply_all", "🗑 Применить ВСЁ"),
+            callback_data=f"div:gall:apply:{batch_id}",
+        )
+        builder.button(
+            text=t("keyboards.divergence.save_all", "💾 Сохранить ВСЁ"),
+            callback_data=f"div:gall:save:{batch_id}",
+        )
+        builder.button(
+            text=t("keyboards.divergence.ignore_all", "💤 Игнорировать всё"),
+            callback_data=f"div:gall:ignore:{batch_id}",
+        )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_divergence_item_keyboard(
+    pid: int, batch_id: str, idx: int, total: int
+) -> InlineKeyboardMarkup:
+    """Клавиатура пошагового разбора одного расхождения: 🗑/💾/💤 + пагинация."""
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.divergence.apply", "🗑 Применить"),
+        callback_data=f"div:item:apply:{pid}:{batch_id}:{idx}",
+    )
+    builder.button(
+        text=t("keyboards.divergence.save", "💾 Сохранить"),
+        callback_data=f"div:item:save:{pid}:{batch_id}:{idx}",
+    )
+    builder.button(
+        text=t("keyboards.divergence.ignore", "💤 Игнорировать"),
+        callback_data=f"div:item:ignore:{pid}:{batch_id}:{idx}",
+    )
+    builder.adjust(3)
+
+    nav: list[InlineKeyboardButton] = []
+    if idx > 0:
+        nav.append(
+            InlineKeyboardButton(text="◀", callback_data=f"div:wiz:{batch_id}:{idx - 1}")
+        )
+    if idx < total - 1:
+        nav.append(
+            InlineKeyboardButton(text="▶", callback_data=f"div:wiz:{batch_id}:{idx + 1}")
+        )
+    if nav:
+        builder.row(*nav)
+    return builder.as_markup()
+
+
 def get_request_admin_keyboard(request_id: int) -> InlineKeyboardMarkup:
     """Get keyboard for admin to approve or reject a subscription request.
 
