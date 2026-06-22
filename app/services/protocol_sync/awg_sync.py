@@ -65,7 +65,10 @@ class AWGProtocolSync(ProtocolSyncBase):
                 sub = conn.subscription
                 client_name = sub.client.name if sub and sub.client else "—"
 
-                expiry = conn.expiry_date
+                # Срок берём из подписки (источник истины): conn.expiry_date может
+                # отстать (напр. если update_client упал и локальная синхронизация
+                # пропустилась) и вызвать ложное отключение активной подписки.
+                expiry = sub.expiry_date if sub is not None else conn.expiry_date
                 if expiry and expiry.tzinfo is None:
                     expiry = expiry.replace(tzinfo=UTC)
 

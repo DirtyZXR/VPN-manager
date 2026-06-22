@@ -23,8 +23,15 @@ from app.database.models.inbound import Inbound
 from app.services.protocol_sync.awg_sync import AWGProtocolSync
 
 
-async def _setup_expired(session, inbound_cls, conn_cls, uid, client_name="C", **conn_kwargs):
-    """Создать истёкшее, но включённое соединение нужного протокола."""
+async def _setup_expired(
+    session, inbound_cls, conn_cls, uid, client_name="C", sub_expired=True, **conn_kwargs
+):
+    """Создать включённое соединение нужного протокола с истёкшим conn.expiry_date.
+
+    sub_expired=True (по умолчанию) — подписка тоже истёкшая, отключение должно
+    срабатывать. sub_expired=False — подписка активна при истёкшем conn.expiry_date
+    (проверка того, что срок берётся из подписки — источника истины).
+    """
     server = Server(name="S", ip_address="1.2.3.4", is_active=True)
     session.add(server)
     await session.flush()
@@ -40,7 +47,11 @@ async def _setup_expired(session, inbound_cls, conn_cls, uid, client_name="C", *
         name="sub",
         subscription_token=f"tok{uid}",
         total_gb=1,
-        expiry_date=datetime.now(UTC) + timedelta(days=30),
+        expiry_date=(
+            datetime.now(UTC) - timedelta(days=1)
+            if sub_expired
+            else datetime.now(UTC) + timedelta(days=30)
+        ),
         is_active=True,
     )
     session.add(sub)
@@ -125,3 +136,32 @@ async def test_awg_disable_log_includes_client_name(test_session, mock_settings,
     assert any(
         "отключено (истёк срок)" in m and "Зелинская_Лариса" in m for m in messages
     ), messages
+
+
+@pytest.mark.asyncio
+async def test_awg_sync_not_disabled_when_subscription_active(
+    test_session, mock_settings, monkeypatch
+):
+    """AWG: conn.expiry_date истёк, но ПОДПИСКА активна → НЕ отключать.
+
+    Регресс на дрейф срока (как 206/208 на проде): срок берётся из подписки —
+    источника истины, отставший conn.expiry_date не должен ронять активную подписку.
+    """
+    inbound, conn = await _setup_expired(
+        test_session, AWGInbound, AWGInboundConnection, 990010,
+        sub_expired=False, public_key="pk",
+    )
+
+    provider = AsyncMock()
+    provider.disable_client = AsyncMock(return_value=True)
+    provider.close = AsyncMock()
+    monkeypatch.setattr(
+        "app.services.vpn_providers.factory.get_vpn_provider",
+        lambda *a, **k: provider,
+    )
+
+    synced = await AWGProtocolSync().sync_clients(test_session, inbound)
+
+    assert conn.is_enabled is True, "активную подписку нельзя отключать из-за отставшего conn.expiry"
+    assert synced == 0
+    provider.disable_client.assert_not_called()

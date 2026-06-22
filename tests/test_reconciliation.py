@@ -228,6 +228,48 @@ class TestXUIZombieReconciliation:
         xui_client.delete_client.assert_called_once_with("zombie@vpn")
 
     @pytest.mark.asyncio
+    async def test_phantom_attachment_detached_not_deleted(self, mock_settings):
+        """Мультиинбаунд: у клиента есть валидный inbound + осиротевшая привязка →
+        detach только осиротевшего, клиента НЕ удалять целиком (иначе снесёт валидный
+        inbound — баг, из-за которого реконсилятор удалял живых клиентов)."""
+        session = _make_session()
+
+        from app.services.sync_service import SyncService
+
+        svc = SyncService.__new__(SyncService)
+        svc.session = session
+        svc._xui_service = MagicMock()
+
+        bot_token = "bot-token-multi"
+        panel_client = {
+            "email": "multi@vpn",
+            "subId": bot_token,
+            "inboundIds": [10, 20],  # xui_id 10 (валидный) + 20 (сирота)
+            "createdAt": _old_created_at_ms(),
+        }
+
+        xui_client = MagicMock()
+        xui_client.get_clients = AsyncMock(return_value=[panel_client])
+        xui_client.detach_client = AsyncMock(return_value=True)
+        xui_client.delete_client = AsyncMock(return_value=True)
+
+        server = _make_server()
+
+        execute_results = [
+            _make_scalars_result([]),               # 2a: error connections
+            _make_rows_result([(bot_token, 99)]),   # 2b: tokens → sub 99
+            _make_rows_result([(10, 5), (20, 6)]),  # 2b: xui_id 10→db5, 20→db6
+            _make_rows_result([(99, 5)]),           # 2b: pairs: только (99, 5) валиден
+            _make_scalars_result([]),               # 2c: synced connections
+        ]
+        session.execute = AsyncMock(side_effect=execute_results)
+
+        await svc._reconcile_xui_server(server, xui_client)
+
+        xui_client.detach_client.assert_awaited_once_with("multi@vpn", [20])
+        xui_client.delete_client.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_zombie_skipped_within_grace_period(self, mock_settings):
         """Зомби моложе grace-period (createdAt=сейчас) → НЕ удалён."""
         session = _make_session()
