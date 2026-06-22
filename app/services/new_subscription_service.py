@@ -718,6 +718,62 @@ class NewSubscriptionService:
 
         return True
 
+    async def panel_extra_inbounds(self, subscription_id: int) -> list[dict]:
+        """Найти на панели привязки XUI-клиентов подписки, которых нет в БД (ручные).
+
+        Возвращает список словарей {server_id, email, extra_xui_ids} по каждому
+        XUI-клиенту, у которого на панели есть inbound'ы вне БД. Пустой список —
+        расхождения нет, полное удаление безопасно. Используется как pre-flight
+        перед удалением, чтобы не снести молча ручные привязки.
+        """
+        from app.database.models.inbound import XUIInbound
+        from app.services.xui_service import XUIService
+
+        rows = (
+            await self.session.execute(
+                select(XUIInbound.server_id, XUIInboundConnection.email, XUIInbound.xui_id)
+                .select_from(XUIInboundConnection)
+                .join(XUIInbound, XUIInbound.id == XUIInboundConnection.inbound_id)
+                .where(XUIInboundConnection.subscription_id == subscription_id)
+            )
+        ).all()
+        if not rows:
+            return []
+
+        db_map: dict[tuple[int, str], set[int]] = {}
+        for server_id, email, xui_id in rows:
+            if email:
+                db_map.setdefault((server_id, email), set()).add(xui_id)
+
+        snapshots: dict[int, list] = {}
+        result: list[dict] = []
+        for (server_id, email), db_xui_ids in db_map.items():
+            if server_id not in snapshots:
+                server = await self.session.get(Server, server_id)
+                if server is None:
+                    snapshots[server_id] = []
+                else:
+                    try:
+                        client = await XUIService(self.session)._get_client(server)
+                        snapshots[server_id] = await client.get_clients() or []
+                    except Exception as e:
+                        logger.warning(
+                            "panel_extra_inbounds: панель сервера {} недоступна: {}",
+                            server_id, e,
+                        )
+                        snapshots[server_id] = []
+            panel_ids: list[int] = []
+            for pc in snapshots[server_id]:
+                if (pc.get("email") or "") == email:
+                    panel_ids = pc.get("inboundIds") or []
+                    break
+            extra = [x for x in panel_ids if x not in db_xui_ids]
+            if extra:
+                result.append(
+                    {"server_id": server_id, "email": email, "extra_xui_ids": extra}
+                )
+        return result
+
     async def toggle_inbound_connection(
         self,
         connection_id: int,

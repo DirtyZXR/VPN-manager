@@ -2326,11 +2326,36 @@ async def confirm_delete_subscription(
     subscription_id = int(callback.data.split("_")[-1])
     await state.update_data(subscription_id=subscription_id)
 
+    base_text = t(
+        "admin.subscriptions.delete_confirm",
+        "⚠️ Вы уверены, что хотите удалить эту подписку?\n\nВсе подключения в XUI будут удалены!",
+    )
+
+    # Pre-flight: предупреждаем, если на панели есть ручные привязки вне БД —
+    # полное удаление снесёт и их, поэтому показываем расхождение явно.
+    extra_note = ""
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        try:
+            extra = await NewSubscriptionService(session).panel_extra_inbounds(subscription_id)
+        except Exception as e:
+            logger.warning("pre-flight расхождения недоступен для подписки {}: {}", subscription_id, e)
+            extra = []
+    if extra:
+        lines = [
+            f"• <code>{item['email']}</code>: inbound'ы {item['extra_xui_ids']}"
+            for item in extra
+        ]
+        extra_note = (
+            "\n\n⚠️ <b>На панели есть привязки вне БД</b> (возможно, добавлены вручную):\n"
+            + "\n".join(lines)
+            + "\n\nПолное удаление снесёт и их."
+        )
+
     await callback.message.edit_text(
-        t(
-            "admin.subscriptions.delete_confirm",
-            "⚠️ Вы уверены, что хотите удалить эту подписку?\n\nВсе подключения в XUI будут удалены!",
-        ),
+        base_text + extra_note,
+        parse_mode="HTML",
         reply_markup=get_confirm_keyboard(
             f"admin_sub_delete_{subscription_id}", f"admin_sub_detail_{subscription_id}"
         ),
