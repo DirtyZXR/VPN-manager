@@ -1132,6 +1132,29 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def get_full_delete_confirm_keyboard(subscription_id: int) -> InlineKeyboardMarkup:
+    """Подтверждение удаления подписки при расхождении с панелью (ручные привязки).
+
+    Три варианта: удалить клиента целиком / отвязать только известные БД привязки
+    (сохранив ручные на панели) / отмена.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text=t("keyboards.subdel.full", "🗑 Удалить целиком"),
+        callback_data=f"confirm_admin_sub_delete_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.subdel.known", "🔗 Отвязать только известное"),
+        callback_data=f"sub_detach_known_{subscription_id}",
+    )
+    builder.button(
+        text=t("keyboards.common.cancel", "❌ Отмена"),
+        callback_data=f"admin_sub_detail_{subscription_id}",
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def get_divergence_digest_keyboard(batch_id: str, open_count: int) -> InlineKeyboardMarkup:
     """Клавиатура дайджеста расхождений: групповые действия + разбор по одному.
 

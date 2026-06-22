@@ -1525,6 +1525,82 @@ class NewSubscriptionService:
         await self.session.flush()
         return True
 
+    async def release_known_inbounds_and_delete(
+        self, subscription: Subscription | int
+    ) -> bool:
+        """Удалить подписку, но XUI-клиентов отвязать (detach), а не удалять целиком.
+
+        Применяется, когда на панели у клиента есть привязки вне БД (ручные):
+        detach снимает только БД-известные inbound'ы, сам клиент и его ручные
+        привязки на панели сохраняются. AWG/MTProxy удаляются как обычно.
+        """
+        if isinstance(subscription, int):
+            self.session.expire_all()
+            sub_result = await self.session.execute(
+                select(Subscription)
+                .where(Subscription.id == subscription)
+                .options(
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.xui_panel),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.awg_service),
+                    selectinload(Subscription.inbound_connections)
+                    .selectinload(InboundConnection.inbound)
+                    .selectinload(Inbound.server)
+                    .selectinload(Server.mtproxy_service),
+                )
+            )
+            subscription = sub_result.scalar_one_or_none()
+            if not subscription:
+                return False
+
+        # XUI: группируем по (server_id, email) и отвязываем БД-известные xui_id.
+        xui_groups: dict[tuple, dict] = {}
+        other_conns: list = []
+        for connection in subscription.inbound_connections:
+            inbound = connection.inbound
+            email = getattr(connection, "email", None)
+            if getattr(inbound, "type", None) == "xui_inbound" and email:
+                key = (getattr(inbound, "server_id", None), email)
+                grp = xui_groups.setdefault(
+                    key, {"server": inbound.server, "inbound": inbound, "xui_ids": []}
+                )
+                grp["xui_ids"].append(getattr(inbound, "xui_id", inbound.id))
+            else:
+                other_conns.append(connection)
+
+        for (server_id, email), grp in xui_groups.items():
+            try:
+                if grp["server"] is not None:
+                    provider = await self._get_provider(grp["server"], inbound=grp["inbound"])
+                    await provider.detach_inbounds(email, grp["xui_ids"])
+            except Exception as e:
+                logger.warning(
+                    "release_known: не удалось отвязать {} от {} (сервер {}): {}",
+                    email, grp["xui_ids"], server_id, e,
+                )
+
+        # AWG/MTProxy: обычное удаление с сервера.
+        for connection in other_conns:
+            try:
+                inbound = connection.inbound
+                if inbound and inbound.server:
+                    provider = await self._get_provider(inbound.server, inbound=inbound)
+                    await provider.remove_client(inbound, connection)
+            except Exception as e:
+                logger.warning(
+                    "release_known: не удалось удалить не-XUI connection {}: {}",
+                    connection.id, e,
+                )
+
+        await self.session.delete(subscription)
+        await self.session.flush()
+        return True
+
     async def get_subscription_inbounds(self, subscription_id: int) -> Sequence[InboundConnection]:
         """Get all inbound connections for subscription.
 
