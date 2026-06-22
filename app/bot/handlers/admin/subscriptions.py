@@ -2326,14 +2326,45 @@ async def confirm_delete_subscription(
     subscription_id = int(callback.data.split("_")[-1])
     await state.update_data(subscription_id=subscription_id)
 
-    await callback.message.edit_text(
-        t(
-            "admin.subscriptions.delete_confirm",
-            "⚠️ Вы уверены, что хотите удалить эту подписку?\n\nВсе подключения в XUI будут удалены!",
-        ),
-        reply_markup=get_confirm_keyboard(
+    base_text = t(
+        "admin.subscriptions.delete_confirm",
+        "⚠️ Вы уверены, что хотите удалить эту подписку?\n\nВсе подключения в XUI будут удалены!",
+    )
+
+    # Pre-flight: предупреждаем, если на панели есть ручные привязки вне БД —
+    # полное удаление снесёт и их, поэтому показываем расхождение явно.
+    extra_note = ""
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        try:
+            extra = await NewSubscriptionService(session).panel_extra_inbounds(subscription_id)
+        except Exception as e:
+            logger.warning("pre-flight расхождения недоступен для подписки {}: {}", subscription_id, e)
+            extra = []
+    if extra:
+        from app.bot.keyboards.inline import get_full_delete_confirm_keyboard
+
+        lines = [
+            f"• <code>{item['email']}</code>: inbound'ы {item['extra_xui_ids']}"
+            for item in extra
+        ]
+        extra_note = (
+            "\n\n⚠️ <b>На панели есть привязки вне БД</b> (возможно, добавлены вручную):\n"
+            + "\n".join(lines)
+            + "\n\nВыберите: удалить клиента целиком (снесёт и ручные) или отвязать "
+            "только известные привязки (ручные на панели сохранятся)."
+        )
+        keyboard = get_full_delete_confirm_keyboard(subscription_id)
+    else:
+        keyboard = get_confirm_keyboard(
             f"admin_sub_delete_{subscription_id}", f"admin_sub_detail_{subscription_id}"
-        ),
+        )
+
+    await callback.message.edit_text(
+        base_text + extra_note,
+        parse_mode="HTML",
+        reply_markup=keyboard,
     )
     await callback.answer()
 
@@ -2391,6 +2422,60 @@ async def delete_subscription(callback: CallbackQuery, state: FSMContext) -> Non
                 t(
                     "admin.subscriptions.delete_sub_error",
                     "❌ Ошибка при удалении подписки: {error}",
+                    error=str(e),
+                ),
+                reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),
+            )
+        finally:
+            await service.close_all_clients()
+
+
+@router.callback_query(F.data.startswith("sub_detach_known_"))
+async def detach_known_and_delete_handler(
+    callback: CallbackQuery, state: FSMContext
+) -> None:
+    """Удалить подписку, отвязав XUI-клиентов от панели (сохранив ручные привязки)."""
+    await callback.answer()
+    subscription_id = int(callback.data.split("_")[-1])
+    await callback.message.edit_text(
+        "⏳ Отвязываю известные привязки и удаляю подписку...", reply_markup=None
+    )
+
+    async with async_session_factory() as session:
+        from app.services.new_subscription_service import NewSubscriptionService
+
+        service = NewSubscriptionService(session)
+        subscription = await service.get_subscription(subscription_id)
+        if not subscription:
+            await callback.answer("❌ Подписка не найдена.", show_alert=True)
+            await state.clear()
+            return
+
+        client_id = subscription.client_id
+        try:
+            await service.release_known_inbounds_and_delete(subscription_id)
+            await session.commit()
+            await state.clear()
+
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text=t("admin.subscriptions.btn_to_client_subs", "🔙 К подпискам клиента"),
+                callback_data=f"client_subscriptions_{client_id}",
+            )
+            builder.adjust(1)
+            await callback.message.edit_text(
+                t(
+                    "admin.subscriptions.detach_known_success",
+                    "✅ Подписка удалена. Ручные привязки на панели сохранены.",
+                ),
+                reply_markup=builder.as_markup(),
+            )
+        except Exception as e:
+            logger.error("Ошибка detach-known удаления подписки: {}", e, exc_info=True)
+            await callback.message.edit_text(
+                t(
+                    "admin.subscriptions.detach_known_error",
+                    "❌ Ошибка: {error}",
                     error=str(e),
                 ),
                 reply_markup=get_back_keyboard(f"admin_sub_detail_{subscription_id}"),

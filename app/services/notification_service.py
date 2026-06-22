@@ -863,3 +863,163 @@ class NotificationService:
                 server_name, e,
                 exc_info=True,
             )
+
+    # === Расхождения БД ↔ панель (governed reconcile) ===
+
+    @staticmethod
+    def _build_divergence_digest_text(server_name: str, pendings: list, is_mass: bool) -> str:
+        """Собрать текст дайджеста расхождений из списка pending-записей."""
+        from app.services.divergence_service import (
+            KIND_EXTRA,
+            KIND_MISSING,
+            STATUS_OPEN,
+        )
+
+        open_missing = [p for p in pendings if p.kind == KIND_MISSING and p.status == STATUS_OPEN]
+        open_extra = [p for p in pendings if p.kind == KIND_EXTRA and p.status == STATUS_OPEN]
+        resolved = [p for p in pendings if p.status != STATUS_OPEN]
+        open_count = len(open_missing) + len(open_extra)
+
+        safe_server = html.escape(server_name)
+        lines = [f"⚠️ <b>Расхождения БД ↔ панель — сервер {safe_server}</b>"]
+        if is_mass:
+            lines.append("⚡ <b>Возможен массовый сбой</b> (откат/потеря панели) — авто-удаление заблокировано")
+        lines.append("")
+
+        def _names(items: list) -> str:
+            shown = [f"   • <code>{html.escape(p.email)}</code>" for p in items[:3]]
+            if len(items) > 3:
+                shown.append(f"   • …ещё {len(items) - 3}")
+            return "\n".join(shown)
+
+        if open_missing:
+            lines.append(f"📉 <b>Пропали с панели:</b> {len(open_missing)}")
+            lines.append(_names(open_missing))
+        if open_extra:
+            lines.append(f"📈 <b>Лишнее на панели:</b> {len(open_extra)}")
+            lines.append(_names(open_extra))
+
+        if resolved:
+            lines.append("")
+            lines.append(f"✅ Разрешено: {len(resolved)}, осталось: {open_count}")
+
+        if open_count == 0:
+            lines.append("")
+            lines.append("✅ Все расхождения разрешены.")
+
+        return "\n".join(lines)
+
+    async def notify_admins_divergences(
+        self, server_name: str, batch_id: str, pendings: list, is_mass: bool
+    ) -> None:
+        """Отправить администраторам дайджест расхождений с кнопками (режим ask).
+
+        Сохраняет id разосланных сообщений в notify_message_refs каждого pending
+        батча — чтобы потом редактировать дайджест по мере решений.
+        """
+        from app.bot.keyboards.inline import get_divergence_digest_keyboard
+
+        admin_ids = get_settings().admin_ids
+        if not admin_ids or not pendings:
+            return
+
+        text = self._build_divergence_digest_text(server_name, pendings, is_mass)
+        keyboard = get_divergence_digest_keyboard(batch_id, open_count=len(pendings))
+
+        refs: list[list[int]] = []
+        bot = await self._get_bot()
+        for admin_id in admin_ids:
+            try:
+                msg = await bot.send_message(
+                    chat_id=admin_id, text=text, parse_mode="HTML", reply_markup=keyboard
+                )
+                refs.append([admin_id, msg.message_id])
+            except Exception as e:
+                logger.warning("Не удалось отправить дайджест расхождений админу {}: {}", admin_id, e)
+
+        for pd in pendings:
+            pd.notify_message_refs = refs
+        await self.session.flush()
+
+    async def notify_admins_divergences_report(
+        self, server_name: str, findings: list
+    ) -> None:
+        """Отправить администраторам сводку расхождений без кнопок (режим report)."""
+        from app.services.divergence_service import KIND_EXTRA, KIND_MISSING
+
+        admin_ids = get_settings().admin_ids
+        if not admin_ids or not findings:
+            return
+
+        missing = [f for f in findings if f.kind == KIND_MISSING]
+        extra = [f for f in findings if f.kind == KIND_EXTRA]
+        safe_server = html.escape(server_name)
+        lines = [
+            f"ℹ️ <b>Расхождения БД ↔ панель — сервер {safe_server}</b> (режим report)",
+            "",
+            f"📉 Пропали с панели: {len(missing)}",
+            f"📈 Лишнее на панели: {len(extra)}",
+            "",
+            "Действия не выполнены. Разберите вручную или включите режим ask.",
+        ]
+        text = "\n".join(lines)
+
+        bot = await self._get_bot()
+        for admin_id in admin_ids:
+            try:
+                await bot.send_message(chat_id=admin_id, text=text, parse_mode="HTML")
+            except Exception as e:
+                logger.warning("Не удалось отправить отчёт о расхождениях админу {}: {}", admin_id, e)
+
+    async def refresh_divergence_digest(self, batch_id: str, session) -> None:
+        """Перестроить и отредактировать дайджест батча по мере решений."""
+        from sqlalchemy import select
+
+        from app.bot.keyboards.inline import get_divergence_digest_keyboard
+        from app.database.models import PendingDivergence, Server
+        from app.services.divergence_service import STATUS_OPEN
+
+        pendings = (
+            await session.execute(
+                select(PendingDivergence)
+                .where(PendingDivergence.batch_id == batch_id)
+                .order_by(PendingDivergence.id)
+            )
+        ).scalars().all()
+        if not pendings:
+            return
+
+        refs = None
+        for pd in pendings:
+            if pd.notify_message_refs:
+                refs = pd.notify_message_refs
+                break
+        if not refs:
+            return
+
+        open_count = sum(1 for p in pendings if p.status == STATUS_OPEN)
+        server_obj = await session.get(Server, pendings[0].server_id)
+        server_name = server_obj.name if server_obj else "—"
+        # is_mass определить из текста невозможно — при обновлении флаг опускаем.
+        text = self._build_divergence_digest_text(server_name, pendings, is_mass=False)
+        keyboard = (
+            get_divergence_digest_keyboard(batch_id, open_count=open_count)
+            if open_count > 0
+            else None
+        )
+
+        bot = await self._get_bot()
+        for chat_id, message_id in refs:
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Не удалось обновить дайджест расхождений (chat={}, msg={}): {}",
+                    chat_id, message_id, e,
+                )

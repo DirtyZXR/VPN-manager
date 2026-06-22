@@ -48,6 +48,25 @@ class Settings(BaseSettings):
         description="XUI client timeout in seconds",
     )
 
+    # Реконсиляция расхождений БД ↔ панель
+    reconcile_mode: str = Field(
+        default="ask",
+        description="Режим обработки расхождений: ask | auto | report",
+    )
+    reconcile_mass_threshold: int = Field(
+        default=5,
+        description="Порог массового расхождения за проход на сервер — выше форсит ask",
+    )
+
+    @field_validator("reconcile_mode")
+    @classmethod
+    def validate_reconcile_mode(cls, value: str) -> str:
+        """Режим должен быть одним из поддерживаемых."""
+        allowed = {"ask", "auto", "report"}
+        if value not in allowed:
+            raise ValueError(f"RECONCILE_MODE должен быть одним из {sorted(allowed)}")
+        return value
+
     @field_validator("encryption_key")
     @classmethod
     def validate_encryption_key(cls, value: str) -> str:
