@@ -65,4 +65,6 @@ def mock_settings():
         settings.log_level = "DEBUG"
         settings.xui_timeout = 30
         settings.admin_ids = {123456789}
+        settings.reconcile_mode = "ask"
+        settings.reconcile_mass_threshold = 5
         yield settings
