@@ -296,3 +296,48 @@ async def test_sync_cycle_survives_failing_xui_server(test_session, mock_setting
         await test_session.refresh(srv)
         assert srv.sync_status == "error", f"сервер {sid} не получил статус error"
         assert "Password is required" in (srv.sync_error or "")
+
+
+@pytest.mark.asyncio
+async def test_sync_server_inbounds_serializes_dict_settings(test_session, mock_settings):
+    """Регресс: новый inbound из XUI приходит с settings в виде dict.
+
+    Раньше ветка создания писала dict в settings_json как есть, из-за чего
+    sqlite падал с ProgrammingError ("type 'dict' is not supported"). Теперь
+    settings должен сериализоваться в JSON-строку, как и в ветке обновления.
+    """
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select
+
+    server = Server(name="S", ip_address="10.0.0.9", is_active=True)
+    test_session.add(server)
+    await test_session.flush()
+
+    settings_dict = {
+        "clients": [{"id": "d9b46e3d", "email": "cdn1", "enable": True}],
+        "decryption": "none",
+        "encryption": "none",
+    }
+    xui_ib = SimpleNamespace(
+        id=8,
+        settings=settings_dict,  # именно dict, а не строка
+        remark="CDN-XHTTP",
+        protocol="vless",
+        port=2087,
+    )
+    fake_client = SimpleNamespace(get_inbounds=AsyncMock(return_value=[xui_ib]))
+
+    service = SyncService(test_session)
+    # Не должно бросать ProgrammingError
+    await service._sync_server_inbounds(server, fake_client)
+    await test_session.commit()
+
+    row = (
+        await test_session.execute(select(XUIInbound).where(XUIInbound.xui_id == 8))
+    ).scalar_one()
+    assert isinstance(row.settings_json, str)
+    assert json.loads(row.settings_json) == settings_dict
+    assert row.client_count == 1
