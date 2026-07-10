@@ -1,5 +1,7 @@
 """Экран и мастер импорта созданных вручную клиентов XUI-панели."""
 
+import html
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
@@ -156,7 +158,7 @@ async def unmanaged_accept(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.update_data(umc_server_id=int(server_id), umc_panel_email=email)
     await callback.message.edit_text(
-        f"Импорт клиента <code>{email}</code>\nК кому привязать подписку?",
+        f"Импорт клиента <code>{html.escape(email)}</code>\nК кому привязать подписку?",
         parse_mode="HTML",
         reply_markup=get_unmanaged_import_wizard_keyboard(int(server_id), int(idx)),
     )
@@ -181,16 +183,24 @@ async def unmanaged_new_client_name(message: Message, state: FSMContext) -> None
     server_id = data.get("umc_server_id")
     panel_email = data.get("umc_panel_email")
     await state.clear()
+    if not server_id or not panel_email:
+        await message.answer("❌ Контекст импорта устарел, начните заново.")
+        return
 
-    async with async_session_factory() as session:
-        server = await _load_xui_server(session, int(server_id))
-        if server is None:
-            await message.answer("❌ Сервер не найден.")
-            return
-        svc = ManualClientService(session)
-        client = await svc.create_import_client(name)
-        sub = await svc.import_client(server, panel_email, client.id)
-        await session.commit()
+    try:
+        async with async_session_factory() as session:
+            server = await _load_xui_server(session, int(server_id))
+            if server is None:
+                await message.answer("❌ Сервер не найден.")
+                return
+            svc = ManualClientService(session)
+            client = await svc.create_import_client(name)
+            sub = await svc.import_client(server, panel_email, client.id)
+            await session.commit()
+    except Exception as e:
+        logger.error("Ошибка импорта '{}': {}", panel_email, e)
+        await message.answer("❌ Ошибка импорта, см. логи.")
+        return
 
     await _import_result(message, sub, panel_email)
 
@@ -238,13 +248,18 @@ async def unmanaged_pick_client(callback: CallbackQuery, state: FSMContext) -> N
         await callback.answer("Контекст устарел, начните заново", show_alert=True)
         return
 
-    async with async_session_factory() as session:
-        server = await _load_xui_server(session, int(server_id))
-        if server is None:
-            await callback.answer("Сервер не найден", show_alert=True)
-            return
-        sub = await ManualClientService(session).import_client(server, panel_email, client_id)
-        await session.commit()
+    try:
+        async with async_session_factory() as session:
+            server = await _load_xui_server(session, int(server_id))
+            if server is None:
+                await callback.answer("Сервер не найден", show_alert=True)
+                return
+            sub = await ManualClientService(session).import_client(server, panel_email, client_id)
+            await session.commit()
+    except Exception as e:
+        logger.error("Ошибка импорта '{}': {}", panel_email, e)
+        await callback.answer("❌ Ошибка импорта, см. логи", show_alert=True)
+        return
 
     await _import_result(callback.message, sub, panel_email)
     await callback.answer()
@@ -262,7 +277,7 @@ async def unmanaged_delete_confirm(callback: CallbackQuery, state: FSMContext) -
     builder.button(text="🔙 Отмена", callback_data=f"uimp:server:{server_id}")
     builder.adjust(1)
     await callback.message.edit_text(
-        f"Удалить клиента <code>{email}</code> с панели? Действие необратимо.",
+        f"Удалить клиента <code>{html.escape(email)}</code> с панели? Действие необратимо.",
         parse_mode="HTML",
         reply_markup=builder.as_markup(),
     )
@@ -298,14 +313,15 @@ async def _import_result(message: Message, sub, panel_email: str) -> None:
     builder.adjust(1)
     if sub is None:
         await message.answer(
-            f"❌ Клиент <code>{panel_email}</code> больше не найден на панели.",
+            f"❌ Клиент <code>{html.escape(panel_email)}</code> больше не найден на панели.",
             parse_mode="HTML",
             reply_markup=builder.as_markup(),
         )
         return
     await message.answer(
-        f"✅ Клиент <code>{panel_email}</code> импортирован "
-        f"(подписка «{sub.name}», токен <code>{sub.subscription_token}</code>).",
+        f"✅ Клиент <code>{html.escape(panel_email)}</code> импортирован "
+        f"(подписка «{html.escape(sub.name or '')}», "
+        f"токен <code>{html.escape(sub.subscription_token or '')}</code>).",
         parse_mode="HTML",
         reply_markup=builder.as_markup(),
     )
