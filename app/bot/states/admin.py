@@ -77,6 +77,13 @@ class ClientManagement(StatesGroup):
     waiting_for_notes = State()
 
 
+class ManualImport(StatesGroup):
+    """Мастер импорта созданного вручную клиента с панели."""
+
+    choosing_client = State()
+    entering_new_name = State()
+
+
 class SubscriptionManagement(StatesGroup):
     """Subscription management states."""
 

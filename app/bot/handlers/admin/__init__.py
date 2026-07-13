@@ -5,6 +5,7 @@ from app.bot.handlers.admin import (
     clients,
     dashboard,
     divergences,
+    manual_clients,
     requests,
     servers,
     subscriptions,
@@ -21,5 +22,6 @@ __all__ = [
     "sync",
     "templates",
     "requests",
+    "manual_clients",
     "divergences",
 ]

@@ -115,6 +115,10 @@ def get_admin_infra_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(
         text=t("keyboards.main_menu.admin.sync", "🔄 Синхронизация"), callback_data="admin_sync"
     )
+    builder.button(
+        text=t("keyboards.unmanaged.menu", "🔍 Неуправляемые клиенты"),
+        callback_data="unmanaged_menu",
+    )
     builder.button(text=t("keyboards.common.back", "🔙 Назад"), callback_data="admin_menu")
     builder.adjust(1)
     return builder.as_markup()
@@ -1129,6 +1133,60 @@ def get_cancel_keyboard() -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
     builder.button(text=t("keyboards.common.cancel_icon", "❌ Отмена"), callback_data="cancel")
+    return builder.as_markup()
+
+
+def get_unmanaged_list_keyboard(
+    server_id: int, items: list, page: int = 0, per_page: int = 5
+) -> InlineKeyboardMarkup:
+    """Список неуправляемых клиентов сервера с действиями по каждому.
+
+    На importable-клиенте — «Принять» + «Удалить»; иначе только «Удалить».
+    """
+    builder = InlineKeyboardBuilder()
+    start = page * per_page
+    page_items = items[start : start + per_page]
+    for idx, it in enumerate(page_items, start=start):
+        marker = "✅" if it.importable else "⚠️"
+        builder.button(text=f"{marker} {it.email}", callback_data=f"uimp:noop:{server_id}:{idx}")
+        if it.importable:
+            builder.button(text="💾 Принять", callback_data=f"uimp:accept:{server_id}:{idx}")
+        builder.button(text="🗑 Удалить", callback_data=f"uimp:del:{server_id}:{idx}")
+
+    sizes = [3 if it.importable else 2 for it in page_items]
+    builder.adjust(*sizes)
+
+    total_pages = max(1, -(-len(items) // per_page))
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(text="⬅️", callback_data=f"uimp:page:{server_id}:{page - 1}")
+        )
+    if page < total_pages - 1:
+        nav.append(
+            InlineKeyboardButton(text="➡️", callback_data=f"uimp:page:{server_id}:{page + 1}")
+        )
+    if nav:
+        builder.row(*nav)
+    builder.row(
+        InlineKeyboardButton(
+            text=t("keyboards.common.back", "🔙 Назад"), callback_data="unmanaged_menu"
+        )
+    )
+    return builder.as_markup()
+
+
+def get_unmanaged_import_wizard_keyboard(server_id: int, idx: int) -> InlineKeyboardMarkup:
+    """Мастер привязки при импорте: создать нового клиента или выбрать существующего."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Создать нового", callback_data=f"uimp:new:{server_id}:{idx}")
+    builder.button(
+        text="👤 Выбрать существующего", callback_data=f"uimp:existing:{server_id}:{idx}"
+    )
+    builder.button(
+        text=t("keyboards.common.cancel", "🔙 Отмена"), callback_data=f"uimp:server:{server_id}"
+    )
+    builder.adjust(1)
     return builder.as_markup()
 
 
