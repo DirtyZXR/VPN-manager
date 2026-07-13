@@ -579,7 +579,7 @@ class SyncService:
                     remark=xui_ib.remark,
                     protocol=xui_ib.protocol,
                     port=xui_ib.port,
-                    settings_json=xui_ib.settings or "{}",
+                    settings_json=settings_str,
                     client_count=client_count,
                     is_active=True,
                     sync_status="synced",
