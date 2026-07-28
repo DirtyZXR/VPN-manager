@@ -355,6 +355,8 @@ class AmneziaAWGProvider(BaseVPNProvider):
         ])
         config_str = "\n".join(config_lines)
 
+        # Порт здесь обязан быть числом: клиент читает его как int и молча
+        # теряет строковое значение, оставляя подключение без endpoint'а.
         amnezia_json = {
             "client_priv_key": private_key,
             "client_pub_key": public_key,
@@ -363,7 +365,7 @@ class AmneziaAWGProvider(BaseVPNProvider):
             "psk_key": psk,
             "server_pub_key": server_pub_key,
             "hostName": host,
-            "port": port,
+            "port": int(awg.port),
             "mtu": "1280",
             "persistent_keep_alive": "25",
             "allowed_ips": ["0.0.0.0/0", "::/0"],
@@ -371,8 +373,11 @@ class AmneziaAWGProvider(BaseVPNProvider):
         }
         for key in obfs_keys:
             amnezia_json[key] = obfuscation.get(key, "")
+        # Пустые I-параметры доезжают до движка как `i2=` без значения и ломают
+        # разбор конфига, поэтому передаём только заполненные.
         for key in i_keys:
-            amnezia_json[key] = i_params.get(key, "")
+            if val := i_params.get(key, ""):
+                amnezia_json[key] = val
 
         subnet = f"{awg.subnet_ip}/{awg.subnet_cidr}" if awg.subnet_ip else "10.8.0.0/24"
         awg_container = {
